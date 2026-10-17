@@ -56,11 +56,8 @@ LOG_FILE=$(resolve_hook_fire_log_path 2>/dev/null) || LOG_FILE="$HOME/.claude/ho
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [dispatcher.sh] alias=$ALIAS PWD=$PWD HOME=$HOME PROJECT_ROOT=${PROJECT_ROOT:-<none>}" >> "$LOG_FILE" 2>/dev/null || true
 
-# No hooks directory -> pass stdin through unchanged
-if [ -z "$PROJECT_ROOT" ]; then
-  printf '%s' "$INPUT"
-  exit 0
-fi
+# SEE-1429 最终态：unified-hook 路由不依赖 PROJECT_ROOT（脚本自定位，注册链直指
+# 本仓检出）；PROJECT_ROOT 仅作为 firelog 落点/业务上下文，缺失不再短路透传。
 
 # Map alias to final business script.
 # Convention-based routing (SEE-1185 F4): alias maps to .claude/hooks/<alias>.sh;
