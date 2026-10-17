@@ -55,8 +55,8 @@ separator() {
 }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MCH_HOOK="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
-APS_HOOK="$PROJECT_ROOT/hooks/scripts/auto-pr-on-stop.sh"
+MCH_HOOK="$PROJECT_ROOT/claude-hooks/scripts/mention-check.sh"
+APS_HOOK="$PROJECT_ROOT/claude-hooks/scripts/auto-pr-on-stop.sh"
 
 # Sentinel path helpers
 sp()  { echo "/tmp/mention-check-pass-$1"; }

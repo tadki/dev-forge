@@ -10,7 +10,7 @@
 # guard the fix.
 #
 # v2 redirect (SEE-1330): v1 isCommentAdd 探针规则 → v2 when-ops.js 词法语义。
-# Testee: node -e 'require("$PROJECT_ROOT/hooks/unified/when-ops.js")'
+# Testee: node -e 'require("$PROJECT_ROOT/claude-hooks/unified/when-ops.js")'
 # 直接调用 extractCommands + parseCommand（经 createEvaluator 的
 # command/current op 等价树），对每条原用例命令断言 probe 条件
 # {op:"command",scope:"current",pattern:"multica issue comment add(\\s|$)"}
@@ -38,7 +38,7 @@ fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL + 1)); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WHEN_OPS_JS="$PROJECT_ROOT/hooks/unified/when-ops.js"
+WHEN_OPS_JS="$PROJECT_ROOT/claude-hooks/unified/when-ops.js"
 
 if [ ! -f "$WHEN_OPS_JS" ]; then
     echo "ERROR: when-ops.js not found at $WHEN_OPS_JS"

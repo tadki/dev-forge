@@ -2,7 +2,7 @@
 # test_bash_executed_see656.sh
 # E2E Test Suite for SEE-656/SEE-660/SEE-663: bash_executed condition operator
 # v2 redirect (SEE-1330): v1 `bash_executed` → v2 `{op:"command", scope:"run"}`.
-# Testee: bash $PROJECT_ROOT/hooks/unified/unified-hook.sh
+# Testee: bash $PROJECT_ROOT/claude-hooks/unified/unified-hook.sh
 # ENGINE: .claude/hooks/unified/engine.js + when-ops.js evalCommandRun
 # Env: MULTICA_AGENT_NAME / MULTICA_TASK_ID (UUID, per-run unique, required by
 # engine to load transcript) / HOOK_SCOPE_ID (per-run unique UUID) / PWD /
@@ -55,7 +55,7 @@ separator() {
 }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-UNIFIED_HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
+UNIFIED_HOOK="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
 
 if [ ! -f "$UNIFIED_HOOK" ]; then
     echo "ERROR: unified-hook.sh missing: $UNIFIED_HOOK"

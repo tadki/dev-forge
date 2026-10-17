@@ -43,7 +43,7 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-HOOK_SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/hooks/scripts/mention-check.sh"
+HOOK_SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/claude-hooks/scripts/mention-check.sh"
 
 run_hook() {
     local INPUT="$1"

@@ -31,7 +31,7 @@ pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS + 1)); }
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL + 1)); }
 
 WORKTREE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK_SCRIPT="$WORKTREE_DIR/hooks/scripts/push-guard.sh"
+HOOK_SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/push-guard.sh"
 ATLAS_ID="fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
 
 echo "============================================"

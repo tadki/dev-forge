@@ -16,10 +16,10 @@ skip() { echo -e "  ${YELLOW}[SKIP]${NC} $1"; RESULTS+=("SKIP|$1"); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENTRY="$REPO_ROOT/hooks/unified/unified-hook.sh"
-ENGINE="$REPO_ROOT/hooks/unified/engine.js"
-DISPATCHER_SRC="$REPO_ROOT/hooks/dispatcher.sh"
-VALIDATOR="$REPO_ROOT/hooks/unified/validate-rules.js"
+ENTRY="$REPO_ROOT/claude-hooks/unified/unified-hook.sh"
+ENGINE="$REPO_ROOT/claude-hooks/unified/engine.js"
+DISPATCHER_SRC="$REPO_ROOT/claude-hooks/dispatcher.sh"
+VALIDATOR="$REPO_ROOT/claude-hooks/validate-rules.js"
 FIXTURE="$(mktemp -d /tmp/v2engine-p0.XXXXXX)"
 RULES="$FIXTURE/rules-v2.json"
 FIRELOG="$FIXTURE/hook-fire.log"
@@ -155,7 +155,7 @@ separator "Prerequisites"
 [ -f "$ENTRY" ] && pass "unified-hook.sh exists" || { fail "unified-hook.sh MISSING"; exit 1; }
 [ -f "$ENGINE" ] && pass "engine.js exists" || { fail "engine.js MISSING"; exit 1; }
 [ -f "$VALIDATOR" ] && pass "validate-rules.js exists" || { fail "validate-rules.js MISSING"; exit 1; }
-node -e "JSON.parse(require('fs').readFileSync('$REPO_ROOT/hooks/unified/rules-v2.json','utf8'))" 2>/dev/null \
+node -e "JSON.parse(require('fs').readFileSync('$REPO_ROOT/claude-hooks/unified/rules-v2.json','utf8'))" 2>/dev/null \
     && pass "rules-v2.json valid JSON" || fail "rules-v2.json INVALID"
 LINES=$(wc -l < "$ENGINE")
 [ "$LINES" -lt 800 ] && pass "engine.js $LINES lines < 800" || fail "engine.js $LINES lines >= 800"
@@ -495,7 +495,8 @@ assert_firelog_has "10a: result line action kind" "action=context"
 DISP_FIXTURE="$FIXTURE/disp"
 mkdir -p "$DISP_FIXTURE/unified"
 cp "$DISPATCHER_SRC" "$DISP_FIXTURE/dispatcher.sh"
-cp "$REPO_ROOT/hooks/unified/"unified-hook.sh "$REPO_ROOT/hooks/unified/"engine.js "$REPO_ROOT/hooks/unified/"when-ops.js "$REPO_ROOT/hooks/unified/"validate-rules.js "$DISP_FIXTURE/unified/"
+cp "$REPO_ROOT/claude-hooks/unified/"unified-hook.sh "$REPO_ROOT/claude-hooks/unified/"engine.js "$REPO_ROOT/claude-hooks/unified/"when-ops.js "$DISP_FIXTURE/unified/"
+cp "$REPO_ROOT/claude-hooks/validate-rules.js" "$DISP_FIXTURE/"
 mkdir -p "$DISP_FIXTURE/unified/rules.d"
 # probe 规则替代真实 rules-v2.json（真实规则 agents 门控会静默透传，断言需确定性命中）
 printf '{"version":2,"rules":[{"name":"audit-me","on":{"in":["PreToolUse"]},"when":{"op":"tool","in":["Bash"]},"action":[{"op":"context","message":"[audit]"}]}]}' > "$DISP_FIXTURE/unified/rules-v2.json"
@@ -929,7 +930,7 @@ OUTU=$(printf '%s' "$RAW_IN" | CLAUDE_PROJECT_DIR="$REPO_ROOT" HOOK_FIRE_LOG="$F
 if node -e "
 const fs=require('fs');
 const m=JSON.parse(fs.readFileSync('$REPO_ROOT/bootstrap/hooks-registration.json'));
-const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/hooks/unified/rules.d/runscript-mounts.json'));
+const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json'));
 const targets=new Set();
 for (const r of rules.rules) for (const a of (r.action||[])) if (a.op==='run_script') targets.add(a.path.replace(/^\$\{HOOKS_DIR\}\//,''));
 const missing=[...targets].filter(t=>!(m.runtime_artifacts||[]).includes(t));
@@ -947,7 +948,7 @@ fs.writeFileSync('$FIXTURE/manifest-holed.json', JSON.stringify(m));"
 node -e "
 const fs=require('fs');
 const m=JSON.parse(fs.readFileSync('$FIXTURE/manifest-holed.json'));
-const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/hooks/unified/rules.d/runscript-mounts.json'));
+const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json'));
 const targets=new Set();
 for (const r of rules.rules) for (const a of (r.action||[])) if (a.op==='run_script') targets.add(a.path.replace(/^\$\{HOOKS_DIR\}\//,''));
 const missing=[...targets].filter(t=>!(m.runtime_artifacts||[]).includes(t));

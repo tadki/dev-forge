@@ -45,7 +45,7 @@ separator() {
 }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/auto-pr-on-stop.sh"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/scripts/auto-pr-on-stop.sh"
 
 TEST_TMPDIR=""
 ORIG_DIR="$(pwd)"

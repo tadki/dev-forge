@@ -1,5 +1,5 @@
 [Unit]
-Description=King of Likes dev tool chain (multica daemon + repo-sync)
+Description=dev-forge tool chain (multica daemon + target-repo repo-sync)
 After=network-online.target
 Wants=network-online.target
 
@@ -13,15 +13,16 @@ Group=jerry
 # absolute path, matching the legacy multica-daemon.service that runs fine.
 WorkingDirectory=/home/jerry
 
-# Plan 2 (SEE-894): the self-launch tool chain is collapsed to a single script.
-# Paths and user are HARDCODED to the WSL checkout — change them here (and in
-# toolchain-start.sh) if the checkout moves. TARGET_REPO_ROOT resolves the
-# __TARGET_REPO_ROOT__ sentinel inside repo-sync/repo_sync_config.json.
-Environment=TARGET_REPO_ROOT=/mnt/d/GodotProjects/king-of-likes
+# SEE-1429 rev B: zero coupling — the unit carries NO checkout path literals.
+# TARGET_REPO_ROOT (the tool-chain host repo) is injected via EnvironmentFile,
+# written by `bootstrap.sh --write-toolchain-env` at install time.
+EnvironmentFile=/home/jerry/.config/dev-forge/toolchain.env
 
 # Login shell so the multica CLI is on PATH. The script backgrounds repo-sync
 # then execs the multica daemon in the foreground, so MainPID == the daemon.
-ExecStart=/bin/bash -l /mnt/d/GodotProjects/king-of-likes/launch/toolchain-start.sh
+# ExecStart path = this repo's canonical checkout (dev-forge itself), not a
+# target-repo path.
+ExecStart=/bin/bash -l /home/jerry/tools/dev-forge/launch/toolchain-start.sh
 
 # Plan 2 tradeoff: no explicit ExecStop. systemd's default stop sends SIGTERM
 # to the whole control group (KillMode=control-group), which coarse-stops both

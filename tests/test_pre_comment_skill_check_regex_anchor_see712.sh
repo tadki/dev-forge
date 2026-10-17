@@ -37,9 +37,9 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # pipe-aware command_matches 正则；v2 统一引擎下源级等价物 = when-ops.js 的 extractCommands
 # heredoc-pipe 提取（pipeRe）+ rules-v2.json 内 comment_add 类规则的 command pattern（base+sub
 # 前缀锚定运行时等价，语义时钟对 v1 正则行为见下方 Node 纯正则校验段）。
-REAL_HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
-WHEN_OPS="$PROJECT_ROOT/hooks/unified/when-ops.js"
-RULES_V2="$PROJECT_ROOT/hooks/unified/rules-v2.json"
+REAL_HOOK="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
+WHEN_OPS="$PROJECT_ROOT/claude-hooks/unified/when-ops.js"
+RULES_V2="$PROJECT_ROOT/claude-hooks/unified/rules-v2.json"
 
 # Source-level fix verification: pipe-aware extraction + comment_add anchored pattern in v2
 FIXED_REGEX=$(grep -F 'pipeRe' "$WHEN_OPS" | head -1)

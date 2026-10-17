@@ -41,12 +41,12 @@ separator() {
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 for _ in 1 2 3 4 5; do
-    if [ -f "$PROJECT_ROOT/hooks/scripts/mention-check.sh" ]; then
+    if [ -f "$PROJECT_ROOT/claude-hooks/scripts/mention-check.sh" ]; then
         break
     fi
     PROJECT_ROOT="$(dirname "$PROJECT_ROOT")"
 done
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/scripts/mention-check.sh"
 
 TEST_COUNTER=0
 

@@ -35,8 +35,8 @@ separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RULES="$PROJECT_ROOT/hooks/unified/rules-v2.json"
-HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
+RULES="$PROJECT_ROOT/claude-hooks/unified/rules-v2.json"
+HOOK="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
 TMP_OUT=$(mktemp)
 TMP_CFG=$(mktemp)
 TMP_LOG=$(mktemp)
@@ -275,8 +275,8 @@ separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RULES="$PROJECT_ROOT/hooks/unified/rules-v2.json"
-HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
+RULES="$PROJECT_ROOT/claude-hooks/unified/rules-v2.json"
+HOOK="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
 TMP_OUT=$(mktemp)
 TMP_CFG=$(mktemp)
 TMP_LOG=$(mktemp)

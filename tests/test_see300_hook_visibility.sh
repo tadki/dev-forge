@@ -48,7 +48,7 @@ separator() {
 # Resolve paths dynamically (avoid stale agent-specific workdir paths).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/.."
-HOOKS_DIR="$PROJECT_ROOT/hooks"
+HOOKS_DIR="$PROJECT_ROOT/claude-hooks"
 TEST_TMP="$PROJECT_ROOT/tests/_fixtures/see300"
 GDFORMAT_HOOK="$HOOKS_DIR/scripts/gdformat-gdlint.sh"
 

@@ -19,11 +19,11 @@ fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RULES_V2="$REPO_ROOT/hooks/unified/rules-v2.json"
-RULES_D="$REPO_ROOT/hooks/unified/rules.d"
-VALIDATOR="$REPO_ROOT/hooks/unified/validate-rules.js"
+RULES_V2="$REPO_ROOT/claude-hooks/unified/rules-v2.json"
+RULES_D="$REPO_ROOT/claude-hooks/unified/rules.d"
+VALIDATOR="$REPO_ROOT/claude-hooks/validate-rules.js"
 MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
-AUTO_PR="$REPO_ROOT/hooks/scripts/auto-pr-on-stop.sh"
+AUTO_PR="$REPO_ROOT/claude-hooks/scripts/auto-pr-on-stop.sh"
 GUIDE="$REPO_ROOT/docs/hooks-implementation-guide.md"
 
 FIXTURE="$(mktemp -d /tmp/see1388-guards.XXXXXX)"
@@ -50,9 +50,9 @@ fi
 # 1c: 旧名活引用零命中（判据：grep -rn <旧名> .claude/hooks .dev/tests = 0）
 # 模式动态拼装——本测试文件自身不得成为命中源
 OLDNAME="p1-""runscript""-mounts"
-HITS=$(grep -rn "$OLDNAME" "$REPO_ROOT/hooks" "$REPO_ROOT/.dev/tests" 2>/dev/null | wc -l)
+HITS=$(grep -rn "$OLDNAME" "$REPO_ROOT/claude-hooks" "$REPO_ROOT/.dev/tests" 2>/dev/null | wc -l)
 [ "$HITS" -eq 0 ] && pass "1c: 旧名 $OLDNAME 活引用零命中（.claude/hooks + .dev/tests）" \
-    || fail "1c: 旧名活引用残留: $(grep -rn "$OLDNAME" "$REPO_ROOT/hooks" "$REPO_ROOT/.dev/tests" 2>/dev/null | head -3)"
+    || fail "1c: 旧名活引用残留: $(grep -rn "$OLDNAME" "$REPO_ROOT/claude-hooks" "$REPO_ROOT/.dev/tests" 2>/dev/null | head -3)"
 
 #####################################################################
 separator "2. SPEC-005 owner/blocking 治理字段（fingerprint cd568f2f8786）"
@@ -128,13 +128,13 @@ separator "4. SPEC-013 reconcile-working-branch.sh 归位（fingerprint 76f04e58
 #####################################################################
 
 # 4a: 原路径零残留
-[ ! -e "$REPO_ROOT/hooks/scripts/reconcile-working-branch.sh" ] \
+[ ! -e "$REPO_ROOT/claude-hooks/scripts/reconcile-working-branch.sh" ] \
     && pass "4a: 原路径 .claude/hooks/scripts/ 零残留" \
     || fail "4a: reconcile 回原路径（SPEC-013 回退）"
 
 # 4b: reconcile-working-branch.sh 归属 KOL 侧（SEE-1429 迁移设计：非注册脚本保留 KOL 原位），
 # dev-forge 内不承载——断言本仓无该脚本即可（与 4a 同语义，4b 降级为归属声明）。
-[ ! -e "$REPO_ROOT/hooks/scripts/reconcile-working-branch.sh" ] \
+[ ! -e "$REPO_ROOT/claude-hooks/scripts/reconcile-working-branch.sh" ] \
     && pass "4b: reconcile 归属 KOL，dev-forge 零承载" \
     || fail "4b: reconcile 不应出现在 dev-forge"
 
@@ -147,13 +147,13 @@ fi
 
 # 4d: 活引用全指向新路径——旧路径串在 hooks 部署域/CI/git hooks 零命中
 OLDREF='hooks/scripts/reconcile''-working''-branch'
-OLDHITS=$(grep -rn "$OLDREF" "$REPO_ROOT/.claude" "$REPO_ROOT/hooks" "$REPO_ROOT/hooks/scripts" "$REPO_ROOT/.github" "$REPO_ROOT/.githooks" 2>/dev/null | wc -l)
+OLDHITS=$(grep -rn "$OLDREF" "$REPO_ROOT/.claude" "$REPO_ROOT/claude-hooks" "$REPO_ROOT/claude-hooks/scripts" "$REPO_ROOT/.github" "$REPO_ROOT/.githooks" 2>/dev/null | wc -l)
 [ "$OLDHITS" -eq 0 ] && pass "4d: 旧路径串活引用零命中（部署域/CI/git hooks）" \
-    || fail "4d: 旧路径串活引用残留: $(grep -rn "$OLDREF" "$REPO_ROOT/.claude" "$REPO_ROOT/hooks" "$REPO_ROOT/hooks/scripts" "$REPO_ROOT/.github" "$REPO_ROOT/.githooks" 2>/dev/null | head -3)"
+    || fail "4d: 旧路径串活引用残留: $(grep -rn "$OLDREF" "$REPO_ROOT/.claude" "$REPO_ROOT/claude-hooks" "$REPO_ROOT/claude-hooks/scripts" "$REPO_ROOT/.github" "$REPO_ROOT/.githooks" 2>/dev/null | head -3)"
 
 # 4e: 既有 reconcile 套件锚定新路径（套件路径漂移即同步红）
 for S in test_reconcile_working_branch_args_see954.sh test_reconcile_working_branch_flow_see1042.sh; do
-    grep -q 'SCRIPT="$WORKTREE_DIR/hooks/scripts/reconcile-working-branch.sh"' "$REPO_ROOT/tests/$S" \
+    grep -q 'SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/reconcile-working-branch.sh"' "$REPO_ROOT/tests/$S" \
         && pass "4e: $S 锚定新路径" \
         || fail "4e: $S 未锚定新路径"
 done

@@ -6,8 +6,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../hooks/scripts/repo-checkout.sh"
-GUARD_SCRIPT="$SCRIPT_DIR/../hooks/scripts/push-guard.sh"
+HOOK_SCRIPT="$SCRIPT_DIR/../claude-hooks/scripts/repo-checkout.sh"
+GUARD_SCRIPT="$SCRIPT_DIR/../claude-hooks/scripts/push-guard.sh"
 
 PASS=0
 FAIL=0

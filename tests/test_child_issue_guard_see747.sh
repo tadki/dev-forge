@@ -41,8 +41,8 @@ separator() {
 }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
-RULES_FILE="$PROJECT_ROOT/hooks/unified/rules-v2.json"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
+RULES_FILE="$PROJECT_ROOT/claude-hooks/unified/rules-v2.json"
 
 # --- Test infrastructure (SEE-764 unified engine → SEE-1330 v2 redirect) ---
 

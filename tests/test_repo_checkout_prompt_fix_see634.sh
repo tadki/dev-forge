@@ -4,7 +4,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TARGET="$REPO_ROOT/hooks/scripts/repo-checkout.sh"
+TARGET="$REPO_ROOT/claude-hooks/scripts/repo-checkout.sh"
 OLD_REV="e05aa15"
 NEW_REV="b091d3a"
 

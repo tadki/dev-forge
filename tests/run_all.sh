@@ -106,7 +106,7 @@ echo "=== node --test validator"
 # SEE-1381 §SPEC-016：validator 位置双落点回退——本分支在 .claude/hooks/tests/，
 # SEE-1382 于 master 归位至 .dev/tests/hooks/（merge checkout 任一态取在者）。
 VALIDATOR=""
-for _c in "$REPO_ROOT/hooks/tests/validator.test.mjs" "$REPO_ROOT/tests/validator.test.mjs"; do
+for _c in "$REPO_ROOT/claude-hooks/tests/validator.test.mjs" "$REPO_ROOT/tests/validator.test.mjs"; do
     [ -f "$_c" ] && { VALIDATOR="$_c"; break; }
 done
 if [ -n "$VALIDATOR" ] && node --test "$VALIDATOR" > /tmp/runall-validator.err 2>&1; then

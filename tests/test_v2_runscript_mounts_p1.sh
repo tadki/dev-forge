@@ -16,7 +16,7 @@ fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); RESULTS+=("FAIL|$1"
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOKS="$REPO_ROOT/hooks"
+HOOKS="$REPO_ROOT/claude-hooks"
 ENTRY="$HOOKS/unified/unified-hook.sh"
 ENGINE="$HOOKS/unified/engine.js"
 FIXTURE="$(mktemp -d /tmp/v2rs-mounts.XXXXXX)"
@@ -257,7 +257,7 @@ mkdir -p "$FIXTURE/deployhome/.claude/hooks/unified"
 for f in unified-hook.sh engine.js when-ops.js rules-v2.json; do
     cp "$HOOKS/unified/$f" "$FIXTURE/deployhome/.claude/hooks/unified/" 2>/dev/null
 done
-cp "$REPO_ROOT/hooks/validate-rules.js" "$FIXTURE/deployhome/.claude/hooks/"
+cp "$REPO_ROOT/claude-hooks/validate-rules.js" "$FIXTURE/deployhome/.claude/hooks/"
 printf '{"version":2,"v1_compat":false,"rules":[]}' > "$RULES"
 cp "$RULES" "$FIXTURE/deployhome/.claude/hooks/unified/rules-v2.json"
 mkdir -p "$FIXTURE/deployhome/.claude/hooks/unified/rules.d"

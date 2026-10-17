@@ -40,7 +40,7 @@ separator() {
 }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/scripts/mention-check.sh"
 
 TEST_COUNTER=0
 

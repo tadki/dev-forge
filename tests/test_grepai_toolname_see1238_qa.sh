@@ -29,8 +29,8 @@ separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
-RULES="$PROJECT_ROOT/hooks/unified/rules-v2.json"
+HOOK="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
+RULES="$PROJECT_ROOT/claude-hooks/unified/rules-v2.json"
 PRE_FIX_COMMIT="867d7cfa"
 TASK_TAG="see1238r2v2-$$"
 

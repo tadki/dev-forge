@@ -32,7 +32,7 @@ fail() {
 }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REAL_HOOK="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
+REAL_HOOK="$PROJECT_ROOT/claude-hooks/scripts/mention-check.sh"
 
 # Extract the regex line from the hook script to confirm fix
 FIXED_REGEX=$(grep -F '(?:^|\\|)' "$REAL_HOOK" | head -1)

@@ -12,8 +12,8 @@ fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DISPATCHER="$REPO_ROOT/hooks/dispatcher.sh"
-UNIFIED="$REPO_ROOT/hooks/unified"
+DISPATCHER="$REPO_ROOT/claude-hooks/dispatcher.sh"
+UNIFIED="$REPO_ROOT/claude-hooks/unified"
 ENGINE="$UNIFIED/engine.js"
 ENTRY="$UNIFIED/unified-hook.sh"
 WHEN_OPS="$UNIFIED/when-ops.js"
@@ -21,18 +21,18 @@ RULES="$UNIFIED/rules-v2.json"
 RULES_D="$UNIFIED/rules.d/runscript-mounts.json"
 MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
 INSTALLER="$REPO_ROOT/bootstrap/bootstrap.sh"
-VALIDATOR="$REPO_ROOT/hooks/unified/validate-rules.js"
+VALIDATOR="$REPO_ROOT/claude-hooks/validate-rules.js"
 
 separator "1. 调用链组件在位"
 for f in "$DISPATCHER" "$ENGINE" "$ENTRY" "$WHEN_OPS" "$RULES" "$RULES_D" "$MANIFEST" "$INSTALLER" "$VALIDATOR" \
-         "$REPO_ROOT/hooks/scripts/gdformat-gdlint.sh" \
-         "$REPO_ROOT/hooks/scripts/mention-check.sh" \
-         "$REPO_ROOT/hooks/scripts/push-guard.sh" \
-         "$REPO_ROOT/hooks/scripts/auto-pr-on-stop.sh" \
-         "$REPO_ROOT/hooks/scripts/repo-checkout.sh" \
-         "$REPO_ROOT/hooks/scripts/atlas-taskflow-mark-a.sh" \
-         "$REPO_ROOT/hooks/scripts/atlas-taskflow-mark-b.sh" \
-         "$REPO_ROOT/hooks/scripts/atlas-taskflow-exit-reminder.sh"; do
+         "$REPO_ROOT/claude-hooks/scripts/gdformat-gdlint.sh" \
+         "$REPO_ROOT/claude-hooks/scripts/mention-check.sh" \
+         "$REPO_ROOT/claude-hooks/scripts/push-guard.sh" \
+         "$REPO_ROOT/claude-hooks/scripts/auto-pr-on-stop.sh" \
+         "$REPO_ROOT/claude-hooks/scripts/repo-checkout.sh" \
+         "$REPO_ROOT/claude-hooks/scripts/atlas-taskflow-mark-a.sh" \
+         "$REPO_ROOT/claude-hooks/scripts/atlas-taskflow-mark-b.sh" \
+         "$REPO_ROOT/claude-hooks/scripts/atlas-taskflow-exit-reminder.sh"; do
   [ -f "$f" ] && pass "在位: $(basename "$f")" || fail "缺失: $f"
 done
 
@@ -46,7 +46,7 @@ if grep -q 'pwd)/unified/unified-hook.sh' "$DISPATCHER"; then pass "自定位路
 separator "3. v1 兼容层退役"
 [ ! -f "$UNIFIED/desugar.js" ] && pass "desugar.js 已退役" || fail "desugar.js 仍存在"
 grep -rq 'v1_compat\|v1_rules_file' "$UNIFIED" 2>/dev/null && fail "unified 树存在 v1 兼容字段残留" || pass "unified 树 v1 兼容字段零残留"
-[ -f "$REPO_ROOT/hooks/pre-comment-skill-check.sh" ] || [ -f "$REPO_ROOT/hooks/tscn-tres-guard.sh" ] \
+[ -f "$REPO_ROOT/claude-hooks/pre-comment-skill-check.sh" ] || [ -f "$REPO_ROOT/claude-hooks/tscn-tres-guard.sh" ] \
   && echo -e "  ${CYAN}[NOTE]${NC} 死文件物理删除随 S22 §7.2 裁定收尾批执行（当前允许留仓）" \
   || pass "v1 死文件已物理删除"
 

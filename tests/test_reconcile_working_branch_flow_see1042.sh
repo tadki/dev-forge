@@ -13,7 +13,7 @@ pass(){ echo -e "  \033[0;32m[PASS]\033[0m $1"; PASS=$((PASS+1)); }
 fail(){ echo -e "  \033[0;31m[FAIL]\033[0m $1"; FAIL=$((FAIL+1)); }
 
 WORKTREE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$WORKTREE_DIR/hooks/scripts/reconcile-working-branch.sh"
+SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/reconcile-working-branch.sh"
 WORKING_BRANCH="test/wb-see1042"
 RECONCILE_BRANCH="reconcile/${WORKING_BRANCH//\//-}"
 
