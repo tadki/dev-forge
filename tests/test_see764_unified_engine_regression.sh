@@ -60,8 +60,8 @@ separator() {
 }
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
-RULES_FILE="$PROJECT_ROOT/hooks/unified/rules-v2.json"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
+RULES_FILE="$PROJECT_ROOT/claude-hooks/unified/rules-v2.json"
 # SEE-1381 §SPEC-014 对齐现行实现（SEE-1333 D4 终态）：skill-check deny ×4 与
 # agent remind ×4 的 one_shot 窗口 = [MULTICA_AGENT_NAME, HOOK_ISSUE_ID]；引擎对
 # 空窗口变量 fail-open skip。生产环境平台注入 MULTICA_ISSUE_ID——套件等价注入。

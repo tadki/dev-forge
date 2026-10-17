@@ -171,7 +171,7 @@ exec "/home/jerry/.claude/hooks/dispatcher.sh" "$ALIAS"
 直接在 settings.json 中调用 `dispatcher.sh` 会有引号问题：
 
 ```json
-"command": "~/.claude/hooks/dispatcher.sh \"$HOME/.claude/hooks/dispatcher.sh\" PreToolUse"
+"command": "~/tools/dev-forge/claude-hooks/dispatcher.sh \"$OLD_GLOBAL_POS/dispatcher.sh\" PreToolUse"  # v1 时代引号问题示例（历史，OLD_GLOBAL_POS = 旧全局部署位）
 ```
 
 引入 wrapper 后，command 只包含简单路径 + 参数，不含任何引号。
@@ -225,8 +225,8 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [dispatcher.sh] alias=$ALIAS ..." >> "$LO
 # 未知 alias 静默透传（fail-open）。
 case "$ALIAS" in
   unified-hook)
-    SCRIPT="$HOME/.claude/hooks/unified/unified-hook.sh"
-    [ -f "$SCRIPT" ] || SCRIPT="$PROJECT_ROOT/.claude/hooks/unified/unified-hook.sh"
+    # SEE-1429 最终态：脚本自身相对定位（注册链直指 dev-forge 检出，无兜底分支）。
+    SCRIPT="$(cd "$(dirname "$0")" && pwd)/unified/unified-hook.sh"
     ;;
   *)
     SCRIPT=""

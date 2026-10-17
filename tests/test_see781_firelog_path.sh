@@ -27,8 +27,8 @@ warn() { echo -e "  ${YELLOW}[WARN]${NC} $1"; WARN=$((WARN + 1)); RESULTS+=("WAR
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 PROJECT_ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-GLOBAL_HOOKS_DIR="$HOME/.claude/hooks"
-REPO_HOOKS_DIR="$PROJECT_ROOT_DIR/.dev/hooks"
+GLOBAL_HOOKS_DIR="$PROJECT_ROOT_DIR/claude-hooks"
+REPO_HOOKS_DIR="$PROJECT_ROOT_DIR/claude-hooks"
 ORIG_DIR="$(pwd)"
 
 # ==============================================================
