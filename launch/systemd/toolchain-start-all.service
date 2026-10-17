@@ -1,0 +1,46 @@
+[Unit]
+Description=King of Likes dev tool chain (multica daemon + repo-sync)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jerry
+Group=jerry
+# NOTE: do NOT use the %h specifier here. In a system service the systemd
+# manager (running as root) expands %h to /root, not to User='s home, so the
+# jerry service cannot chdir into it ("Permission denied"). Use the explicit
+# absolute path, matching the legacy multica-daemon.service that runs fine.
+WorkingDirectory=/home/jerry
+
+# Plan 2 (SEE-894): the self-launch tool chain is collapsed to a single script.
+# Paths and user are HARDCODED to the WSL checkout — change them here (and in
+# toolchain-start.sh) if the checkout moves. TARGET_REPO_ROOT resolves the
+# __TARGET_REPO_ROOT__ sentinel inside repo-sync/repo_sync_config.json.
+Environment=TARGET_REPO_ROOT=/mnt/d/GodotProjects/king-of-likes
+
+# Login shell so the multica CLI is on PATH. The script backgrounds repo-sync
+# then execs the multica daemon in the foreground, so MainPID == the daemon.
+ExecStart=/bin/bash -l /mnt/d/GodotProjects/king-of-likes/launch/toolchain-start.sh
+
+# Plan 2 tradeoff: no explicit ExecStop. systemd's default stop sends SIGTERM
+# to the whole control group (KillMode=control-group), which coarse-stops both
+# the foreground daemon and the backgrounded repo-sync. There is no graceful
+# agent-task drain and no PID-file idempotency — accepted by the simplification.
+
+# SEE-1001: Restart=always. The daemon exits 0 when told to stop via
+# `multica daemon stop` (and the upgrade path used to call exactly that), which
+# under the old Restart=on-failure left it down for good and dropped it out of
+# systemd supervision. Always-restart keeps the tool chain self-healing; an
+# intended stop must go through `systemctl stop toolchain-start-all.service`
+# (which suppresses Restart=), and the upgrade script now does exactly that.
+Restart=always
+RestartSec=10
+# Loosened from the SEE-894 defaults (3/300s): always-restart can bounce during
+# a CLI upgrade or a transient bind failure, so give recovery headroom while
+# still letting systemd surrender on a genuine infinite crash-loop.
+StartLimitInterval=300
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

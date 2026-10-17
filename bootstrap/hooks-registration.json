@@ -1,0 +1,76 @@
+{
+  "version": 2,
+  "description": "SEE-1330 v2 unified-hook 声明式注册清单（settings 注册无仓库主副本时的真源，关键实施决策 4）",
+  "alias": "unified-hook",
+  "wrapper": "hook-wrapper.sh",
+  "matcher": "*",
+  "hook_points": [
+    "PreToolUse",
+    "PostToolUse",
+    "SessionStart",
+    "SessionEnd",
+    "Stop",
+    "SubagentStop",
+    "UserPromptSubmit",
+    "Notification",
+    "PreCompact"
+  ],
+  "runtime_artifacts": [
+    "unified/unified-hook.sh",
+    "unified/engine.js",
+    "unified/when-ops.js",
+    "unified/rules-v2.json",
+    "unified/rules.d/runscript-mounts.json",
+    "scripts/gdformat-gdlint.sh",
+    "scripts/mention-check.sh",
+    "scripts/push-guard.sh",
+    "scripts/atlas-taskflow-mark-a.sh",
+    "scripts/atlas-taskflow-mark-b.sh",
+    "scripts/atlas-taskflow-exit-reminder.sh",
+    "scripts/auto-pr-on-stop.sh",
+    "scripts/repo-checkout.sh",
+    "hook-wrapper.sh",
+    "dispatcher.sh",
+    "scripts/mcp-tool-presence.sh",
+    "scripts/godot-mcp-launch-path.lib.sh",
+    "scripts/lib/gitlink-probe.sh",
+    "scripts/lib/gitlink-sync-hint.sh",
+    "scripts/lib/hook-fire-path.lib.sh"
+  ],
+  "executable_artifacts": [
+    "unified/unified-hook.sh"
+  ],
+  "validator_artifact": "validate-rules.js",
+  "phases": {
+    "P0": {
+      "register_v2": true,
+      "disable_v1": []
+    },
+    "P1": {
+      "register_v2": true,
+      "disable_v1": [
+        "skill-check",
+        "skill-check-post",
+        "mention-check",
+        "push-guard",
+        "tscn-tres-guard",
+        "gdformat-gdlint",
+        "atlas-taskflow-mark-a",
+        "atlas-taskflow-mark-b",
+        "atlas-taskflow-exit-reminder"
+      ]
+    },
+    "P2": {
+      "register_v2": true,
+      "disable_v1": [
+        "auto-pr"
+      ]
+    },
+    "P3": {
+      "register_v2": true,
+      "disable_v1": [
+        "repo-checkout"
+      ]
+    }
+  }
+}
