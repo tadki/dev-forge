@@ -7,22 +7,21 @@
 # Invoked as ExecStart by launch/systemd/toolchain-start-all.service, or run
 # manually:   bash launch/toolchain-start.sh
 #
-# Plan 2 intentionally trades away the previous layering (machine env file,
-# project JSON config loader, PID-file idempotency, graceful agent-task drain,
-# and the migration/upgrade helpers) for a minimal 1-unit-1-script shape. The
-# repo checkout path and user are HARDCODED below — edit them here if the WSL
-# checkout moves. Known accepted tradeoffs:
-#   * hardcoded WSL path / user (no per-machine override)
+# SEE-1429 rev B: zero coupling — target repo path comes ONLY from env
+# (TARGET_REPO_ROOT, injected via EnvironmentFile ~/.config/dev-forge/toolchain.env
+# written by bootstrap). No hardcoded checkout path; fail fast when unset.
+# Known accepted tradeoffs:
 #   * SIGTERM coarse stop (no graceful drain of running agent tasks)
 #   * no PID-file idempotency for repo-sync (rely on systemd single-instance)
 #   * no migrate-to-start-all helper for legacy unit rollover
 
 set -euo pipefail
 
-# Hardcoded main-repo checkout (Plan 2 tradeoff: no machine env override).
-REPO_ROOT="${TARGET_REPO_ROOT:-/mnt/d/GodotProjects/king-of-likes}"
+# Target repo checkout: env-injected only (no hardcoded path).
+REPO_ROOT="${TARGET_REPO_ROOT:?TARGET_REPO_ROOT not set - expected from ~/.config/dev-forge/toolchain.env (bootstrap writes it)}"
+[ -d "$REPO_ROOT/.dev" ] || { echo "[start] ERROR: $REPO_ROOT/.dev not found (wrong TARGET_REPO_ROOT?)" >&2; exit 1; }
 DEV_DIR="$REPO_ROOT/.dev"
-DAEMON_LOG="${KOL_DAEMON_LOG:-$HOME/.multica/daemon.log}"
+DAEMON_LOG="${TOOLCHAIN_DAEMON_LOG:-$HOME/.multica/daemon.log}"
 
 # repo_sync_config.json uses the __TARGET_REPO_ROOT__ sentinel; the daemon
 # resolves it from this env var at config-load time.
