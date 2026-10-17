@@ -27,8 +27,8 @@
 ## P4 KOL 清理与引用修复
 
 1. KOL 侧 `git rm` 迁出目录（`.claude/hooks/`、`.dev/hooks/`、`.dev/docs/claude/`、`.dev/autopilots/`、`.dev/launch/`、`.dev/systemd/`、`.dev/tests/hooks/`），commit 走 KOL 共享分支（可 revert = 回退面）。
-2. 全仓 grep `dev/hooks|dev/autopilots|dev/launch|dev/systemd|docs/claude|KOL_REPO_ROOT|kingoflikes-start` 逐条修复。
-3. systemd：`systemctl --user daemon-reload && systemctl --user reenable toolchain-start-all`（原 kingoflikes-start-all.service 已改名）。
+2. 全仓 grep 旧标识符（旧根变量 / 旧启动脚本名 / 旧 systemd 单元名 / 迁出目录路径字面量）逐条修复——具体 pattern 见 Archi §1.2 引用面清单。
+3. systemd：`systemctl --user daemon-reload && systemctl --user reenable toolchain-start-all`（旧单元名已改名）。
 
 ## 回退设计
 
