@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const validator = require('./validate-rules.js');
+const validator = require('../validate-rules.js');
 const { createEvaluator } = require('./when-ops.js');
 
 const AGENT_NAME = process.env.MULTICA_AGENT_NAME || '';

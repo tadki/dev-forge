@@ -12,11 +12,11 @@
 ## P1 注册链切换
 
 1. `bash bootstrap/bootstrap.sh`（备份 settings → 渲染 9 时点注册行 → 幂等校验）。
-2. 判据 1：settings diff 仅 9 行注册路径，全部指向 `~/tools/dev-forge/hooks/hook-wrapper.sh`。
+2. 判据 1：settings diff 仅 9 行注册路径，全部指向 `~/tools/dev-forge/claude-hooks/hook-wrapper.sh`。
 
 ## P2 触发验证
 
-- push-guard firelog 行 + `rules=21` 数一致；SessionStart repo-checkout 链；deny 语义（mention-check/child-issue-guard 命中）；one_shot state 写入（`hooks/unified/state/` 新位成功、无 WARN 劣化）。
+- push-guard firelog 行 + `rules=21` 数一致；SessionStart repo-checkout 链；deny 语义（mention-check/child-issue-guard 命中）；one_shot state 写入（`claude-hooks/unified/state/` 新位成功、无 WARN 劣化）。
 - 判据 2：firelog 新行 `script=` 字段为 dev-forge 路径。
 
 ## P3 清运行位
