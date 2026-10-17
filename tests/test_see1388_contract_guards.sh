@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 RULES_V2="$REPO_ROOT/hooks/unified/rules-v2.json"
 RULES_D="$REPO_ROOT/hooks/unified/rules.d"
 VALIDATOR="$REPO_ROOT/hooks/validate-rules.js"
-MANIFEST="$REPO_ROOT/hooks/hooks-registration.json"
+MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
 AUTO_PR="$REPO_ROOT/hooks/scripts/auto-pr-on-stop.sh"
 GUIDE="$REPO_ROOT/.dev/docs/claude/hooks-implementation-guide.md"
 

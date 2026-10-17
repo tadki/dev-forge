@@ -19,7 +19,7 @@ ENTRY="$UNIFIED/unified-hook.sh"
 WHEN_OPS="$UNIFIED/when-ops.js"
 RULES="$UNIFIED/rules-v2.json"
 RULES_D="$UNIFIED/rules.d/runscript-mounts.json"
-MANIFEST="$REPO_ROOT/hooks/hooks-registration.json"
+MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
 INSTALLER="$REPO_ROOT/hooks/install-hooks.sh"
 VALIDATOR="$REPO_ROOT/hooks/validate-rules.js"
 

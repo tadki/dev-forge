@@ -17,7 +17,7 @@ separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 INSTALLER="$REPO_ROOT/hooks/install-hooks.sh"
-MANIFEST="$REPO_ROOT/hooks/hooks-registration.json"
+MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
 FIXTURE="$(mktemp -d /tmp/v2installer-p0.XXXXXX)"
 SETTINGS="$FIXTURE/home/.claude/settings.json"
 GLOBAL_HOOKS="$FIXTURE/home/.claude/hooks"

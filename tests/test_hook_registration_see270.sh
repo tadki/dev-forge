@@ -44,7 +44,7 @@ done
 [ "$V1_LEFT" -eq 0 ] && pass "11 个 v1 alias 注册行全部清零"
 
 separator "3. 注册清单真源存在性"
-if [ -f "$REPO_ROOT/hooks/hooks-registration.json" ]; then
+if [ -f "$REPO_ROOT/bootstrap/hooks-registration.json" ]; then
   pass "hooks-registration.json 在位（逐时点比对由 installer §9a 完整性探针承接）"
 else
   fail "hooks-registration.json 不存在"

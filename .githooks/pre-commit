@@ -1,0 +1,7 @@
+#!/bin/bash
+# dev-forge pre-commit: bash -n over staged .sh files
+fail=0
+for f in $(git diff --cached --name-only --diff-filter=ACM | grep '\.sh$'); do
+  bash -n "$f" || { echo "bash -n FAIL: $f"; fail=1; }
+done
+exit $fail
