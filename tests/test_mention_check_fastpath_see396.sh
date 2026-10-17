@@ -37,7 +37,7 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
 
 run_hook() {

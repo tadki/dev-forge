@@ -26,7 +26,7 @@ fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL + 1)); RESULTS+=("FAIL|$
 warn() { echo -e "  ${YELLOW}[WARN]${NC} $1"; WARN=$((WARN + 1)); RESULTS+=("WARN|$1"); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
-PROJECT_ROOT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GLOBAL_HOOKS_DIR="$HOME/.claude/hooks"
 REPO_HOOKS_DIR="$PROJECT_ROOT_DIR/.dev/hooks"
 ORIG_DIR="$(pwd)"

@@ -16,7 +16,7 @@ pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); }
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENTRY="$REPO_ROOT/hooks/unified/unified-hook.sh"
 ENGINE="$REPO_ROOT/hooks/unified/engine.js"
 LIB="$REPO_ROOT/hooks/scripts/lib/hook-fire-path.lib.sh"

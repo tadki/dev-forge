@@ -84,7 +84,7 @@ fi
 # --- Test 2: Runtime routing verification ---
 separator "2. Runtime: Project Root Resolution"
 
-WORKDIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
+WORKDIR="$(cd "$(dirname "$0")/../.." && pwd)"
 REPO_DIR="$WORKDIR/KingOfLikes-Godot"
 WSL_DIR="/mnt/d/GodotProjects/king-of-likes"
 

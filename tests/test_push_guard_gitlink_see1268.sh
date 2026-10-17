@@ -13,7 +13,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../../.."
+REPO_ROOT="$SCRIPT_DIR/.."
 PASS=0
 FAIL=0
 TMP=""

@@ -55,7 +55,7 @@ separator() {
 }
 
 # .dev/tests/hooks/ -> ../../.. -> project root
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
 
 if [ ! -f "$HOOK_SCRIPT" ]; then

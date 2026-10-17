@@ -28,7 +28,7 @@ warn() { echo -e "  ${YELLOW}[WARN]${NC} $1"; WARN=$((WARN+1)); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
 RULES="$PROJECT_ROOT/hooks/unified/rules-v2.json"
 PRE_FIX_COMMIT="867d7cfa"

@@ -56,7 +56,7 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UNIFIED_HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
 WHEN_OPS_JS="$PROJECT_ROOT/hooks/unified/when-ops.js"
 ENGINE_JS="$PROJECT_ROOT/hooks/unified/engine.js"

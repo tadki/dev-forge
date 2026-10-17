@@ -24,7 +24,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../../.."
+REPO_ROOT="$SCRIPT_DIR/.."
 REPO_CHECKOUT="$REPO_ROOT/hooks/scripts/repo-checkout.sh"
 DELETED_REBASE_HOOK="$REPO_ROOT/hooks/rebase-before-work.sh"
 

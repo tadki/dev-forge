@@ -54,7 +54,7 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MCH_HOOK="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
 APS_HOOK="$PROJECT_ROOT/hooks/scripts/auto-pr-on-stop.sh"
 

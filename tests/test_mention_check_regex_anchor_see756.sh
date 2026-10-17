@@ -31,7 +31,7 @@ fail() {
     RESULTS+=("FAIL|$1")
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REAL_HOOK="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
 
 # Extract the regex line from the hook script to confirm fix

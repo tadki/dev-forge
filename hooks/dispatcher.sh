@@ -69,7 +69,7 @@ fi
 # Dynamic firelog path: repo-level when available, global fallback（单源实现 SEE-1388 SPEC-002）
 # FIRELOG_NO_PWD_SCAN=1 保留 dispatcher 既有形态：仅用自身算出的 PROJECT_ROOT，无则全局兜底。
 _lib_dir="$(cd "$(dirname "$0")" && pwd)"
-for _cand in "$_lib_dir/../scripts/lib/hook-fire-path.lib.sh"; do
+for _cand in "$_lib_dir/scripts/lib/hook-fire-path.lib.sh"; do
   [ -f "$_cand" ] && . "$_cand" && break
 done
 FIRELOG_NO_PWD_SCAN=1

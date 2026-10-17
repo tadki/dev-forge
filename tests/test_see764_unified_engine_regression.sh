@@ -59,7 +59,7 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK_SCRIPT="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
 RULES_FILE="$PROJECT_ROOT/hooks/unified/rules-v2.json"
 # SEE-1381 §SPEC-014 对齐现行实现（SEE-1333 D4 终态）：skill-check deny ×4 与

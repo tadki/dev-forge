@@ -18,13 +18,13 @@ pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); }
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RULES_V2="$REPO_ROOT/hooks/unified/rules-v2.json"
 RULES_D="$REPO_ROOT/hooks/unified/rules.d"
-VALIDATOR="$REPO_ROOT/hooks/validate-rules.js"
+VALIDATOR="$REPO_ROOT/hooks/unified/validate-rules.js"
 MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
 AUTO_PR="$REPO_ROOT/hooks/scripts/auto-pr-on-stop.sh"
-GUIDE="$REPO_ROOT/.dev/docs/claude/hooks-implementation-guide.md"
+GUIDE="$REPO_ROOT/docs/hooks-implementation-guide.md"
 
 FIXTURE="$(mktemp -d /tmp/see1388-guards.XXXXXX)"
 trap 'rm -rf "$FIXTURE"' EXIT
@@ -132,10 +132,11 @@ separator "4. SPEC-013 reconcile-working-branch.sh 归位（fingerprint 76f04e58
     && pass "4a: 原路径 .claude/hooks/scripts/ 零残留" \
     || fail "4a: reconcile 回原路径（SPEC-013 回退）"
 
-# 4b: 新路径存在且可执行
-[ -x "$REPO_ROOT/hooks/scripts/reconcile-working-branch.sh" ] \
-    && pass "4b: 新路径 .dev/scripts/ 存在且 100755" \
-    || fail "4b: 新路径缺失或丢执行位"
+# 4b: reconcile-working-branch.sh 归属 KOL 侧（SEE-1429 迁移设计：非注册脚本保留 KOL 原位），
+# dev-forge 内不承载——断言本仓无该脚本即可（与 4a 同语义，4b 降级为归属声明）。
+[ ! -e "$REPO_ROOT/hooks/scripts/reconcile-working-branch.sh" ] \
+    && pass "4b: reconcile 归属 KOL，dev-forge 零承载" \
+    || fail "4b: reconcile 不应出现在 dev-forge"
 
 # 4c: 部署清单无 reconcile 条目（退出部署域后清单保留即死链）
 if node -e "const m=require('$MANIFEST'); process.exit((m.runtime_artifacts||[]).some(a=>a.includes('reconcile-working-branch'))?0:1)"; then

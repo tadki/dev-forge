@@ -11,7 +11,7 @@ pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); }
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DISPATCHER="$REPO_ROOT/hooks/dispatcher.sh"
 UNIFIED="$REPO_ROOT/hooks/unified"
 ENGINE="$UNIFIED/engine.js"
@@ -20,8 +20,8 @@ WHEN_OPS="$UNIFIED/when-ops.js"
 RULES="$UNIFIED/rules-v2.json"
 RULES_D="$UNIFIED/rules.d/runscript-mounts.json"
 MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
-INSTALLER="$REPO_ROOT/hooks/install-hooks.sh"
-VALIDATOR="$REPO_ROOT/hooks/validate-rules.js"
+INSTALLER="$REPO_ROOT/bootstrap/bootstrap.sh"
+VALIDATOR="$REPO_ROOT/hooks/unified/validate-rules.js"
 
 separator "1. 调用链组件在位"
 for f in "$DISPATCHER" "$ENGINE" "$ENTRY" "$WHEN_OPS" "$RULES" "$RULES_D" "$MANIFEST" "$INSTALLER" "$VALIDATOR" \
@@ -41,7 +41,7 @@ if grep -q 'unified-hook)' "$DISPATCHER"; then pass "unified-hook case 在位"; 
 V1_CASES=$(grep -cE "^[[:space:]]+(skill-check|skill-check-post|mention-check|push-guard|auto-pr|tscn-tres-guard|gdformat-gdlint)\)" "$DISPATCHER" 2>/dev/null)
 V1_CASES=${V1_CASES:-0}
 [ "$V1_CASES" -eq 0 ] && pass "v1 alias case = 0（单一路由）" || fail "v1 alias case 残留 $V1_CASES 个"
-if grep -q 'HOME/.claude/hooks/unified/unified-hook.sh' "$DISPATCHER"; then pass "全局部署位优先路由在位"; else fail "全局优先路由缺失"; fi
+if grep -q 'pwd)/unified/unified-hook.sh' "$DISPATCHER"; then pass "自定位路由在位（dev-forge 最终态）"; else fail "unified-hook 路由缺失"; fi
 
 separator "3. v1 兼容层退役"
 [ ! -f "$UNIFIED/desugar.js" ] && pass "desugar.js 已退役" || fail "desugar.js 仍存在"

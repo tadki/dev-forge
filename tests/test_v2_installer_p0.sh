@@ -15,8 +15,8 @@ pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); RESULTS+=("PASS|$
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); RESULTS+=("FAIL|$1"); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-INSTALLER="$REPO_ROOT/hooks/install-hooks.sh"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+INSTALLER="$REPO_ROOT/bootstrap/bootstrap.sh"
 MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
 FIXTURE="$(mktemp -d /tmp/v2installer-p0.XXXXXX)"
 SETTINGS="$FIXTURE/home/.claude/settings.json"

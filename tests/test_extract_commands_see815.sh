@@ -45,7 +45,7 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WHEN_OPS_JS="$PROJECT_ROOT/hooks/unified/when-ops.js"
 
 if [ ! -f "$WHEN_OPS_JS" ]; then

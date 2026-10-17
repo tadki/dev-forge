@@ -32,7 +32,7 @@ fail() {
     RESULTS+=("FAIL|$1")
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # S5 再定向说明 (SEE-1330 S5)：v1 时代本套件的源级断言检查 pre-comment-skill-check.sh 内的
 # pipe-aware command_matches 正则；v2 统一引擎下源级等价物 = when-ops.js 的 extractCommands
 # heredoc-pipe 提取（pipeRe）+ rules-v2.json 内 comment_add 类规则的 command pattern（base+sub
