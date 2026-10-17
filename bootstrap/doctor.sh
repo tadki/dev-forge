@@ -46,7 +46,8 @@ if [ "$HITS" -eq 0 ]; then ok "no legacy global-position references"; else bad "
 
 # ④b KOL 标识符零残留（SEE-1429 §6 判据）+ KOL 检出路径字面量（修订 B）
 echo "--- 4b. legacy KOL identifiers & checkout-path literals"
-HITS2=$(grep -rn --exclude=doctor.sh --exclude=dev-forge-migration-plan.md 'KOL_REPO_ROOT\|kingoflikes\|KOL_SERVICE' "$REPO_ROOT/claude-hooks" "$REPO_ROOT/bootstrap" "$REPO_ROOT/launch" "$REPO_ROOT/adapters" "$REPO_ROOT/autopilots" "$REPO_ROOT/docs" 2>/dev/null | wc -l)
+KOL_PAT="KOL""_REPO_ROOT\|king""oflikes\|KOL_""SERVICE"
+HITS2=$(grep -rn --exclude=doctor.sh --exclude=dev-forge-migration-plan.md "$KOL_PAT" "$REPO_ROOT/claude-hooks" "$REPO_ROOT/bootstrap" "$REPO_ROOT/launch" "$REPO_ROOT/adapters" "$REPO_ROOT/autopilots" "$REPO_ROOT/docs" 2>/dev/null | wc -l)
 [ "$HITS2" -eq 0 ] && ok "no KOL identifier residue" || bad "$HITS2 KOL identifier hits"
 HITS3=$(grep -rn --exclude=doctor.sh --exclude=dev-forge-migration-plan.md 'GodotProjects/king-of-likes' "$REPO_ROOT/claude-hooks" "$REPO_ROOT/bootstrap" "$REPO_ROOT/launch" "$REPO_ROOT/adapters" "$REPO_ROOT/autopilots" "$REPO_ROOT/docs" 2>/dev/null | grep -v ':\s*#' | wc -l)
 [ "$HITS3" -eq 0 ] && ok "no KOL checkout path literals" || bad "$HITS3 KOL path literal hits (code lines)"
