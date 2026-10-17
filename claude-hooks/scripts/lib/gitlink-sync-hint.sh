@@ -13,10 +13,9 @@
 # state.json 缺失/损坏/无相关条目 → 无输出、rc 0（静默跳过）。
 #
 # 配置：GITLINK_SYNC_STATE_FILE 覆盖 state 路径；默认 TARGET_REPO_ROOT/.dev/logs/
-# repo-sync-state.json（machine-neutral，与 config 同模式）；TARGET_REPO_ROOT 未设
-# 时的最终回退：WSL 环境探测（/proc/version microsoft 标识，SEE-1381 §SPEC-018
-# ——与 §SPEC-017 dispatcher.sh 同构的三级解析）成立时才触挂载点 D-drive 布局；
-# 非 WSL（CI/裸 Linux）候选拿不到即走 fail-soft 静默退出，不断链不炸。
+# repo-sync-state.json（machine-neutral，与 config 同模式）。SEE-1429 最终态：
+# TARGET_REPO_ROOT 未设时不再回退 WSL 挂载点硬编码候选（零检出路径耦合，修订 B）
+# ——state 保持空走 fail-soft 静默退出，不断链不炸。
 #
 # 用法（repo-checkout.sh 内）：
 #   GITLINK_SYNC_HINT=$(bash .claude/hooks/scripts/lib/gitlink-sync-hint.sh)
@@ -27,16 +26,6 @@ set -u
 state="${GITLINK_SYNC_STATE_FILE:-}"
 if [ -z "$state" ] && [ -n "${TARGET_REPO_ROOT:-}" ]; then
   state="${TARGET_REPO_ROOT%/}/.dev/logs/repo-sync-state.json"
-fi
-if [ -z "$state" ]; then
-  # 最终回退（仅 WSL）：挂载点候选存在才采用——否则 state 保持空走 fail-soft
-  if grep -qi microsoft /proc/version 2>/dev/null; then
-    for candidate in \
-      "/mnt/d/GodotProjects/king-of-likes/.dev/logs/repo-sync-state.json" \
-      "/mnt/c/Users/$USER/GodotProjects/king-of-likes/.dev/logs/repo-sync-state.json"; do
-      [ -f "$candidate" ] && { state="$candidate"; break; }
-    done
-  fi
 fi
 [ -f "$state" ] || exit 0
 # python 段消费最终 state 路径（覆盖与派生均在 bash 侧统一裁定）

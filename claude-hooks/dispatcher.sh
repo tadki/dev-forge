@@ -15,34 +15,12 @@ done
 # Trim trailing newline added by the loop
 INPUT="${INPUT%$'\n'}"
 
-# Environment-aware project directory fallback (SEE-1381 §SPEC-017)：
-# 不再硬编码 WSL 挂载点——显式 TARGET_REPO_ROOT 环境变量优先（与 .dev/systemd/
-# toolchain-start-all.service 的哨兵约定同源），WSL 场景仅由环境探测推导
-# （非 WSL 环境 /mnt/* 不存在即自然为空，alias 路由不再透传前断链）。
+# Environment-aware project directory fallback（SEE-1381 §SPEC-017 → SEE-1429 最终态）：
+# 显式 TARGET_REPO_ROOT 环境变量优先（与 toolchain.env 注入约定同源）。dev-forge
+# 与任何具体检出解耦——仓内不含检出路径字面量，环境注入是唯一通道（修订 B）。
 ADDITIONAL_DIRS=""
 if [ -n "$TARGET_REPO_ROOT" ] && [ -d "$TARGET_REPO_ROOT/.claude/hooks" ]; then
   ADDITIONAL_DIRS="$TARGET_REPO_ROOT"
-else
-  # WSL 环境探测：仅 WSL 下才扫描挂载点（/proc/version 含 microsoft 标识）
-  if grep -qi microsoft /proc/version 2>/dev/null; then
-    WSL_CANDIDATES=(
-      "/mnt/d/GodotProjects/king-of-likes"
-      "/mnt/c/Users/$USER/GodotProjects/king-of-likes"
-    )
-    # Also scan /mnt/c/Users/*/GodotProjects/king-of-likes for other users
-    for user_dir in /mnt/c/Users/*/GodotProjects/king-of-likes; do
-      if [ -d "$user_dir" ]; then
-        WSL_CANDIDATES+=("$user_dir")
-      fi
-    done
-    # Pick the first existing candidate
-    for candidate in "${WSL_CANDIDATES[@]}"; do
-      if [ -d "$candidate" ]; then
-        ADDITIONAL_DIRS="$candidate"
-        break
-      fi
-    done
-  fi
 fi
 
 # Find project root containing .claude/hooks/
