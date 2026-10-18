@@ -691,6 +691,56 @@ def ensure_on_master_branch(
     return True, f"switched from {current} to master", had_stash
 
 
+def _handle_remote_ahead(
+    config: dict[str, Any],
+    logger: logging.Logger,
+    direction: Direction,
+    dry_run: bool,
+    subprocess_timeout: int | None,
+) -> dict[str, Any]:
+    """REMOTE_AHEAD path: pull ff-only (BIDIRECTIONAL only).
+
+    SEE-1406 前移移植（自 gqt 2315 行硬化版）：run_sync 的 REMOTE_AHEAD 内联块
+    原样抽取为独立函数（与 gqt 版签名一致），供 SEE-1406 结构断言测试检查；
+    语义与抽取前逐行一致（PUSH_ONLY 在此分支被拒）。
+    """
+    repo_path = config["repo_path"]
+    remote = config["remote"]
+    branch = config["branch"]
+    stash_on_dirty = config.get("stash_on_dirty", True)
+    result: dict[str, Any] = {
+        "action": "pull",
+        "state": SyncState.REMOTE_AHEAD.value,
+        "success": True,
+        "message": "",
+        "dry_run": dry_run,
+    }
+    if direction != Direction.BIDIRECTIONAL:
+        result["action"] = "none"
+        result["message"] = "remote ahead, but direction restricts to push-only"
+        logger.info("remote ahead, skipped per direction")
+        return result
+    if dry_run:
+        result["message"] = "dry-run: would pull"
+        logger.info("dry-run: would pull")
+        return result
+    ok, msg = do_pull_ff_only(
+        repo_path,
+        remote,
+        branch,
+        stash_on_dirty,
+        timeout=subprocess_timeout,
+    )
+    result["success"] = ok
+    result["message"] = msg
+    if ok:
+        logger.info("pull success: %s", msg)
+    else:
+        result["error_category"] = classify_error(msg)
+        logger.error("pull failed: %s (category=%s)", msg, result["error_category"])
+    return result
+
+
 def _master_guard_blockers(
     repo_path: str, timeout: int | None = None
 ) -> tuple[bool, str]:
@@ -2017,30 +2067,9 @@ def run_sync(
             return result
 
         if state == SyncState.REMOTE_AHEAD:
-            if direction == Direction.BIDIRECTIONAL:
-                if dry_run:
-                    result["action"] = "pull"
-                    result["message"] = "dry-run: would pull"
-                    logger.info("dry-run: would pull")
-                else:
-                    ok, msg = do_pull_ff_only(
-                        repo_path,
-                        remote,
-                        branch,
-                        stash_on_dirty,
-                        timeout=subprocess_timeout,
-                    )
-                    result["action"] = "pull"
-                    result["success"] = ok
-                    result["message"] = msg
-                    if ok:
-                        logger.info("pull success: %s", msg)
-                    else:
-                        result["error_category"] = classify_error(msg)
-                        logger.error("pull failed: %s (category=%s)", msg, result["error_category"])
-            else:
-                result["message"] = "remote ahead, but direction restricts to push-only"
-                logger.info("remote ahead, skipped per direction")
+            result = _handle_remote_ahead(
+                config, logger, direction, dry_run, subprocess_timeout
+            )
             write_state(config, result)
             return result
 
