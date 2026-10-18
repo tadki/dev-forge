@@ -201,10 +201,81 @@ def test_detector_classifies_unmaterialized_as_no(unmaterialized_repo):
     assert sweep._submodule_materialized(str(parent)) == "no"
 
 
-def test_detector_classifies_materialized_as_yes_or_unknown(materialized_repo):
-    """A materialized submodule (real clone + .gitmodules) must never be 'no'."""
+def test_detector_classifies_materialized_as_yes(materialized_repo):
+    """A materialized submodule (real clone + .gitmodules) is exactly 'yes'.
+
+    Exact (not set-membership): a detector that collapsed healthy states to
+    'unknown' or 'no' would break the three-state contract this guard leans on.
+    """
     parent, _s1 = materialized_repo
-    assert sweep._submodule_materialized(str(parent)) in ("yes", "unknown")
+    assert sweep._submodule_materialized(str(parent)) == "yes"
+
+
+def test_detector_classifies_plain_directory_as_yes(tmp_path):
+    """addons/godot_mcp tracked as a plain directory (mode 100644 tree, not a
+    160000 gitlink) is 'yes' — there is nothing to skip, comparison must run."""
+    base = tmp_path / "plain"
+    parent = _init_repo(base / "parent")
+    _write(
+        str(parent / "addons" / "godot_mcp" / "a.txt"),
+        "vendored content\n",
+    )
+    _git("add", "-A", cwd=parent)
+    _git("commit", "-q", "-m", "plain dir, no gitlink", cwd=parent)
+
+    assert sweep._submodule_materialized(str(parent)) == "yes"
+
+
+def test_detector_classifies_registered_but_empty_dir_as_no(unmaterialized_repo):
+    """Registered gitlink + existing-but-EMPTY addons/godot_mcp dir is 'no'.
+
+    Covers the scandir branch (dir present, holds no entries) — distinct from
+    the isdir branch (dir absent) exercised by test_detector_classifies_
+    unmaterialized_as_no. A detector bug on this path (e.g. any->all, or
+    defaulting to 'yes') would re-open the SEE-1433 false-critical hole for
+    the empty-directory flavor of unmaterialized checkout.
+    """
+    parent, _s1 = unmaterialized_repo
+    os.makedirs(str(parent / "addons" / "godot_mcp"))
+
+    assert sweep._submodule_materialized(str(parent)) == "no"
+
+
+def test_detector_git_probe_failure_is_unknown(unmaterialized_repo, monkeypatch):
+    """git ls-files failing must yield 'unknown', never a skip-eligible 'no'.
+
+    Fail-closed: a broken detector must keep the comparison running (real
+    criticals still possible) rather than silently drop redline coverage.
+    """
+    parent, _s1 = unmaterialized_repo
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("git unavailable")
+
+    monkeypatch.setattr(sweep.subprocess, "run", _boom)
+
+    assert sweep._submodule_materialized(str(parent)) == "unknown"
+
+
+def test_detector_scandir_failure_is_unknown(unmaterialized_repo, monkeypatch):
+    """os.scandir failing on an existing addon dir must yield 'unknown'.
+
+    Exact 'unknown' (not 'no'): 'no' here would skip the comparison based on
+    an undetectable state — the exact fail-open this guard forbids.
+    """
+    parent, _s1 = unmaterialized_repo
+    addon_dir = str(parent / "addons" / "godot_mcp")
+    os.makedirs(addon_dir)
+    real_scandir = os.scandir
+
+    def _scandir_boom(path):
+        if str(path) == addon_dir:
+            raise OSError("scandir denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr(sweep.os, "scandir", _scandir_boom)
+
+    assert sweep._submodule_materialized(str(parent)) == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -213,13 +284,15 @@ def test_detector_classifies_materialized_as_yes_or_unknown(materialized_repo):
 
 
 def test_heartbeat_summary_carries_skipped_marker():
+    """Exact equality: kills dropped/reshuffled segments (e.g. losing `new=`,
+    swapping total/new) that substring checks would let survive."""
     summary = sweep.build_heartbeat_summary(5, 2, redline_skipped=True)
-    assert "findings=5" in summary
-    assert "redline=skipped_uninitialized" in summary
+    assert summary == "findings=5 new=2 redline=skipped_uninitialized"
 
 
 def test_heartbeat_summary_no_marker_when_materialized():
     summary = sweep.build_heartbeat_summary(5, 2, redline_skipped=False)
+    assert summary == "findings=5 new=2"
     assert "redline=skipped_uninitialized" not in summary
 
 
@@ -249,3 +322,88 @@ def test_unknown_state_fails_closed(patrol, materialized_repo, monkeypatch):
     # artifact); NEW for the real addon file also stays critical.
     assert sorted(_critical_rules(findings)) == ["REDLINE_DELETED", "REDLINE_NEW"]
     assert not [f for f in findings if f["rule_id"] == "REDLINE_SKIPPED_UNINITIALIZED"]
+
+
+# ---------------------------------------------------------------------------
+# Hardening additions: exact skip contract, guard-line polarity, dual-mode
+# side-effect freedom.
+# ---------------------------------------------------------------------------
+
+
+def test_skipped_finding_contract_exact(patrol, unmaterialized_repo):
+    """The downgrade warning's full contract, pinned exactly.
+
+    severity is the literal 'warn' (never critical, and not merely
+    not-critical); line 0 and the submodule path make dedup stable; the
+    message must carry the SOP remediation hint so the on-call can act.
+    """
+    parent, _s1 = unmaterialized_repo
+    _store_manifest({"addons/godot_mcp/a.txt": _sha256("a-one\n")})
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    skipped = [f for f in findings if f["rule_id"] == "REDLINE_SKIPPED_UNINITIALIZED"]
+    assert len(skipped) == 1
+    f = skipped[0]
+    assert f["severity"] == "warn"
+    assert f["severity"] == sweep.SEVERITY_WARN
+    assert f["severity"] != sweep.SEVERITY_CRITICAL
+    assert f["file"] == "addons/godot_mcp/"
+    assert f["line"] == 0
+    assert "NOT materialized" in f["message"]
+    assert "git submodule update --init" in f["message"]
+
+
+def test_materialized_repo_comparison_still_runs(patrol, materialized_repo):
+    """Guard polarity: only a positively-proven 'no' may skip.
+
+    A materialized repo with a tampered addon file (differs from BOTH the
+    stored manifest and the pinned fork tree) must still produce a real
+    REDLINE_MODIFIED critical — a mutant that flips the guard to skip on
+    'yes' (or unconditionally) dies here, not just in the detector unit
+    tests.
+    """
+    parent, _s1 = materialized_repo
+    stored = {"addons/godot_mcp/a.txt": _sha256("a-one\n")}
+    _store_manifest(stored)
+    # Tamper on disk: current sha != stored sha, and disk blob != pinned tree
+    # blob, so SEE-1332 artifact classification cannot absorb it.
+    _write(str(parent / "addons" / "godot_mcp" / "a.txt"), "tampered\n")
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    assert "REDLINE_MODIFIED" in _critical_rules(findings)
+    assert not [f for f in findings if f["rule_id"] == "REDLINE_SKIPPED_UNINITIALIZED"]
+
+
+def test_unmaterialized_no_touch_in_dry_run_mode(patrol, unmaterialized_repo):
+    """Dry-run + skip: manifest/pointer untouched (real-run twin of
+    test_unmaterialized_does_not_rewrite_manifest_or_pointer)."""
+    parent, s1 = unmaterialized_repo
+    _store_manifest({"addons/godot_mcp/a.txt": _sha256("a-one\n")})
+    with open(sweep.REDLINE_POINTER_FILE, "w", encoding="utf-8") as f:
+        json.dump({"pointer": s1, "generated_at": "2026-10-17T00:00:00+00:00"}, f)
+    manifest_before = _read(sweep.REDLINE_MANIFEST)
+    pointer_before = _read(sweep.REDLINE_POINTER_FILE)
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    assert _critical_rules(findings) == []
+    assert _read(sweep.REDLINE_MANIFEST) == manifest_before
+    assert _read(sweep.REDLINE_POINTER_FILE) == pointer_before
+
+
+def test_materialized_first_run_initializes_manifest(patrol, materialized_repo):
+    """Materialized first run: REDLINE_INIT + manifest stored — the exact
+    behavior the skip path must suppress for unmaterialized repos (twin of
+    test_unmaterialized_first_run_does_not_initialize_empty_manifest). No
+    test anywhere in tests/ reached this pre-guard branch before hardening."""
+    parent, _s1 = materialized_repo
+
+    findings = sweep.check_redline(str(parent), dry_run=False)
+
+    assert [f["rule_id"] for f in findings] == ["REDLINE_INIT"]
+    assert _critical_rules(findings) == []
+    with open(sweep.REDLINE_MANIFEST, encoding="utf-8") as f:
+        stored = json.load(f)
+    assert stored == {"addons/godot_mcp/a.txt": _sha256("a-one\n")}
