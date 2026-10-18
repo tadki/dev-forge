@@ -86,7 +86,10 @@ def load_config(config_path: Path | str | None = None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def setup_logging(config: dict[str, Any], quiet: bool = False) -> logging.Logger:
+def setup_logging(
+    config: dict[str, Any], quiet: bool = False, dry_run: bool = False,
+    file_log: bool = True,
+) -> logging.Logger:
     logger = logging.getLogger("repo_sync")
     logger.setLevel(logging.DEBUG)
 
@@ -99,18 +102,51 @@ def setup_logging(config: dict[str, Any], quiet: bool = False) -> logging.Logger
         handler.setFormatter(logging.Formatter(LOG_FORMAT))
         logger.addHandler(handler)
 
-    # File log
-    log_dir = Path(config["log_dir"])
-    log_dir.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_dir / "repo-sync.log", encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    logger.addHandler(file_handler)
+    # File log writes into the checkout (log_dir defaults relative to
+    # repo_path); dry-run (SPEC-012) skips it unless the caller explicitly
+    # placed log_dir outside repo_path (test harnesses).
+    if file_log and (
+        not dry_run
+        or not _path_inside_repo(config, config.get("log_dir", ""))
+    ):
+        log_dir = Path(config["log_dir"])
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(
+            log_dir / "repo-sync.log", encoding="utf-8"
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        logger.addHandler(file_handler)
 
     return logger
 
 
+def _path_inside_repo(config: dict[str, Any], raw_path: str) -> bool:
+    """True when raw_path resolves inside repo_path (dry-run write boundary:
+    SPEC-012 requires zero writes into the target checkout, while state/log
+    paths explicitly placed outside (test harnesses) stay writable)."""
+    if not raw_path:
+        return False
+    repo_root = Path(os.path.expanduser(config["repo_path"])).resolve()
+    try:
+        candidate = Path(raw_path).resolve()
+    except OSError:
+        return True
+    try:
+        candidate.relative_to(repo_root)
+    except ValueError:
+        return False
+    return True
+
+
 def write_state(config: dict[str, Any], state: dict[str, Any]) -> None:
+    # dry-run 是纯观测语义（SPEC-012）：state 决断不得落盘进 repo_path，
+    # 否则对规范检出的验收会留下 .dev/logs/ 未跟踪残留；显式指到外部的
+    # state 路径（测试夹具）不在边界内，照写。
+    if state.get("dry_run", False) and _path_inside_repo(
+        config, config.get("state_file", "")
+    ):
+        return
     state_path = Path(config["state_file"])
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -602,21 +638,9 @@ def ensure_on_master_branch(
     if current == "master":
         return True, "already on master", False
 
-    # 3. In-progress operation (#3)
-    if has_git_operation_in_progress(repo_path):
-        return (
-            False,
-            "merge/rebase/cherry-pick in progress; abort required before switching",
-            False,
-        )
-
-    # 4. Submodule intermediate state (#4)
-    if has_submodule_changes(repo_path, timeout=timeout):
-        return (
-            False,
-            "submodule in intermediate state; manual cleanup required",
-            False,
-        )
+    blocked, reason = _master_guard_blockers(repo_path, timeout=timeout)
+    if blocked:
+        return False, reason, False
 
     # 5. Worktree occupation (#7) — transient skip
     occupied, wt_path = is_master_worktree_occupied(repo_path, timeout=timeout)
@@ -665,6 +689,32 @@ def ensure_on_master_branch(
 
     logger.info("branch guard: switched from %s to master", current)
     return True, f"switched from {current} to master", had_stash
+
+
+def _master_guard_blockers(
+    repo_path: str, timeout: int | None = None
+) -> tuple[bool, str]:
+    """Blocking preconditions for the branch guard (boundary matrix #3/#4).
+
+    Returns (blocked, reason). Worktree occupation and dirty-tree cases are
+    handled by the caller (they are skip/stash cases, not hard blockers).
+
+    SEE-1406 前移移植（自 gqt 2315 行硬化版，c7649f1/791fa4f 同源）：guard
+    阻断项抽取为独立函数，便于单测与 dry-run 判定复用；行为与内联版一致。
+    """
+    # 3. In-progress operation (#3)
+    if has_git_operation_in_progress(repo_path):
+        return (
+            True,
+            "merge/rebase/cherry-pick in progress; abort required before switching",
+        )
+    # 4. Submodule intermediate state (#4)
+    if has_submodule_changes(repo_path, timeout=timeout):
+        return (
+            True,
+            "submodule in intermediate state; manual cleanup required",
+        )
+    return False, ""
 
 
 def git_fetch(
@@ -2088,7 +2138,7 @@ def main() -> int:
     args = parser.parse_args()
 
     config = load_config(args.config)
-    logger = setup_logging(config, quiet=args.quiet)
+    logger = setup_logging(config, quiet=args.quiet, dry_run=args.dry_run)
 
     lock_path = config.get("lock_file", "/tmp/repo-sync.lock")
     lock_fd = acquire_lock(lock_path, timeout=args.lock_timeout)
