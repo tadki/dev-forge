@@ -5,11 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=jerry
-Group=jerry
-# NOTE: do NOT use the %h specifier here. In a system service the systemd
-# manager (running as root) expands %h to /root, not to User='s home, so the
-# jerry service cannot chdir into it ("Permission denied"). Use the explicit
+# NOTE: this is a systemd --user unit: do NOT set User=/Group= here. The user
+# manager has no privilege to switch users/groups (fails 216/GROUP "Failed to
+# determine supplementary groups"). The unit always runs as the invoking user.
 # absolute path, matching the legacy multica-daemon.service that runs fine.
 WorkingDirectory=/home/jerry
 
