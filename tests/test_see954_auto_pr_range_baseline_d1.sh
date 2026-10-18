@@ -20,8 +20,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../../.."
-HOOK="$REPO_ROOT/hooks/scripts/auto-pr-on-stop.sh"
+REPO_ROOT="$SCRIPT_DIR/.."
+HOOK="$REPO_ROOT/claude-hooks/scripts/auto-pr-on-stop.sh"
 
 PASS=0; FAIL=0
 pass(){ echo "  PASS: $1"; PASS=$((PASS+1)); }

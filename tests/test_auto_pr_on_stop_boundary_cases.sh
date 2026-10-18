@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Boundary cases for the SEE-1033 NO_REFSPEC guard.
 
-ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
+ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 HOOK_PATH="$ROOT_DIR/.claude/hooks/auto-pr-on-stop.sh"
 TEST_DIR=$(mktemp -d)
 REMOTE_DIR="$TEST_DIR/remote.git"

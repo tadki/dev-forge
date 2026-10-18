@@ -9,7 +9,7 @@ set -euo pipefail
 # Case 2: feature/<X> branch + empty WORKING_BRANCH -> guard NOT triggered (regression
 #         guard so the fix does not over-block legitimate local-dev pushes).
 
-ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
+ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 HOOK_PATH="$ROOT_DIR/.claude/hooks/auto-pr-on-stop.sh"
 TEST_DIR=$(mktemp -d)
 REMOTE_DIR="$TEST_DIR/remote.git"

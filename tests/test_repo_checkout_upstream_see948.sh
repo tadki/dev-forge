@@ -9,7 +9,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../../.."
+REPO_ROOT="$SCRIPT_DIR/.."
 TMPDIR=""
 PASS=0
 FAIL=0
@@ -28,7 +28,7 @@ WB="shared/SEE-948"
 extract_helper_lib() {
     local lib_file="$1"
     local hook_at_feature
-    hook_at_feature="$REPO_ROOT/hooks/scripts/repo-checkout.sh"
+    hook_at_feature="$REPO_ROOT/claude-hooks/scripts/repo-checkout.sh"
 
     # Prefer the feature/SEE-954 branch version; fall back to the working tree.
     local content

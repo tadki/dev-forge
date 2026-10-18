@@ -5,7 +5,7 @@
 #
 # v2 redirect (SEE-1330): v1 `command_matches` → v2 `when-ops.js` 的
 # extractCommands / splitShellCommands / parseCommand + evalCommandCurrent。
-# Testee: node -e 'require("$PROJECT_ROOT/hooks/unified/when-ops.js")'
+# Testee: node -e 'require("$PROJECT_ROOT/claude-hooks/unified/when-ops.js")'
 # 直接调用 createEvaluator，对每条原用例命令断言 child-issue-guard 条件
 # {op:"command",scope:"current",pattern:"multica issue (create|update)",
 #  has_flag:"--parent",flag_has_value:true} 的 fire / not-fire（即 BLOCK/ALLOW）。
@@ -45,8 +45,8 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-WHEN_OPS_JS="$PROJECT_ROOT/hooks/unified/when-ops.js"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WHEN_OPS_JS="$PROJECT_ROOT/claude-hooks/unified/when-ops.js"
 
 if [ ! -f "$WHEN_OPS_JS" ]; then
     echo "ERROR: when-ops.js not found at $WHEN_OPS_JS"

@@ -10,7 +10,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../../.."
+REPO_ROOT="$SCRIPT_DIR/.."
 TMPDIR=""
 PASS=0
 FAIL=0
@@ -29,7 +29,7 @@ gq() { git -c protocol.file.allow=always "$@"; }
 # (everything from output_hint through align_agent_branch_to_working_branch's
 # closing brace, plus the ensure_submodules_materialized block).
 extract_helper_lib() {
-    local src="$REPO_ROOT/hooks/scripts/repo-checkout.sh"
+    local src="$REPO_ROOT/claude-hooks/scripts/repo-checkout.sh"
     local out_file="$1"
     local end_line
     end_line=$(grep -n '^try_auto_create_shared_branch()' "$src" | head -1 | cut -d: -f1)

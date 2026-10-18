@@ -13,7 +13,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../../.."
+REPO_ROOT="$SCRIPT_DIR/.."
 PASS=0
 FAIL=0
 TMP=""
@@ -28,7 +28,7 @@ gq() { git -c protocol.file.allow=always "$@"; }
 
 # Extract only the Check-8 block from push-guard.sh.
 extract_check8() {
-    local src="$REPO_ROOT/hooks/scripts/push-guard.sh" out="$1"
+    local src="$REPO_ROOT/claude-hooks/scripts/push-guard.sh" out="$1"
     local start end
     start=$(grep -n 'Check 8 (SEE-1268 GAP-1' "$src" | head -1 | cut -d: -f1)
     end=$(grep -n '^# All checks passed' "$src" | head -1 | cut -d: -f1)
@@ -81,7 +81,7 @@ run_check8() {
     local check8="$1" work="$2"
     mkdir -p "$work/.claude/hooks"
     mkdir -p "$work/.claude/hooks/scripts"
-    ln -sfn "$REPO_ROOT/hooks/scripts/lib" "$work/.claude/hooks/scripts/lib"
+    ln -sfn "$REPO_ROOT/claude-hooks/scripts/lib" "$work/.claude/hooks/scripts/lib"
     (
         export GIT_ROOT="$work"
         source "$check8"

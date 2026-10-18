@@ -34,8 +34,8 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/atlas-taskflow-mark-a.sh"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/scripts/atlas-taskflow-mark-a.sh"
 
 # Real issue ID and task ID for testing
 REAL_ISSUE_ID="0261d5ab-4b5d-4c59-8a7c-43c019ac3d73"

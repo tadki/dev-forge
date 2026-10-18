@@ -50,8 +50,8 @@ separator() {
 
 # Resolve paths relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/repo-checkout.sh"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/scripts/repo-checkout.sh"
 WORKDIR_ROOT="$(cd "$PROJECT_ROOT/.." && pwd)"
 MARKER_FILE="$WORKDIR_ROOT/.repos-checked-out"
 

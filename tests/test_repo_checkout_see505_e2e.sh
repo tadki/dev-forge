@@ -36,7 +36,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/../hooks/scripts/repo-checkout.sh"
+HOOK_SCRIPT="$SCRIPT_DIR/../claude-hooks/scripts/repo-checkout.sh"
 PASS=0
 FAIL=0
 SANDBOX_ROOT=""
@@ -46,7 +46,7 @@ SANDBOX_ROOT=""
 # update --init` 时会把共享 submodule module config 的 core.worktree 改写到本
 # /tmp 场景路径，真实检出 `git status` 随即 fatal。快照 + EXIT 恢复根治。
 # SEE-1396：保护目标从已拆除的 .dev/qa-toolkit 改到当前仍挂载的 addons/godot_mcp。
-REAL_GITDIR="$(cd "$SCRIPT_DIR/../.." && git rev-parse --absolute-git-dir 2>/dev/null)"
+REAL_GITDIR="$(cd "$SCRIPT_DIR/.." && git rev-parse --absolute-git-dir 2>/dev/null)"
 MODULE_CONFIG=""
 MODULE_CONFIG_SNAP=""
 if [ -n "$REAL_GITDIR" ] && [ -f "$REAL_GITDIR/modules/addons/godot_mcp/config" ]; then
@@ -119,7 +119,7 @@ scenario_1() {
     echo "=== Scenario 1: Fresh workdir (no marker), repo present ==="
     local wd="$SANDBOX_ROOT/scenario1"
     mkdir -p "$wd"
-    cp -a "$SCRIPT_DIR/../../.." "$wd/KingOfLikes-Godot"
+    cp -a "$SCRIPT_DIR/.." "$wd/KingOfLikes-Godot"
 
     local out
     out=$(cd "$wd" && bash "$HOOK_SCRIPT" 2>&1)

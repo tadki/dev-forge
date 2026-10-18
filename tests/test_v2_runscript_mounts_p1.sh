@@ -15,8 +15,8 @@ pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); RESULTS+=("PASS|$
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); RESULTS+=("FAIL|$1"); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-HOOKS="$REPO_ROOT/hooks"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOOKS="$REPO_ROOT/claude-hooks"
 ENTRY="$HOOKS/unified/unified-hook.sh"
 ENGINE="$HOOKS/unified/engine.js"
 FIXTURE="$(mktemp -d /tmp/v2rs-mounts.XXXXXX)"
@@ -27,9 +27,16 @@ cleanup_sentinels() { rm -f /tmp/.hook-fired-* /tmp/mention-check-* /tmp/atlas-t
 trap 'rm -rf "$FIXTURE"; cleanup_sentinels' EXIT
 
 # fixture hooks 标准布局：config 在 hooks/unified/ 下 → 引擎 HOOKS_DIR=hooks 根（脚本副本 + rules.d 就位）
+# fixture host repo：push-guard 语义需要 PROJECT_ROOT 指向一个带 master 的 git 仓库
+HOSTREPO="$FIXTURE/hostrepo"; mkdir -p "$HOSTREPO"
+git -C "$HOSTREPO" init -q -b master 2>/dev/null || git -C "$HOSTREPO" init -q
+git -C "$HOSTREPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null
+git -C "$HOSTREPO" branch -q -M master 2>/dev/null || true
 HOOKSROOT="$FIXTURE/fakehome/.claude/hooks"
 mkdir -p "$HOOKSROOT/unified/rules.d"
 cp "$HOOKS/unified/rules.d/runscript-mounts.json" "$HOOKSROOT/unified/rules.d/"
+mkdir -p "$HOOKSROOT/scripts/lib"
+cp "$HOOKS/scripts/lib/"*.sh "$HOOKSROOT/scripts/lib/" 2>/dev/null
 for f in gdformat-gdlint.sh push-guard.sh mention-check.sh atlas-taskflow-mark-a.sh atlas-taskflow-mark-b.sh atlas-taskflow-exit-reminder.sh; do
     mkdir -p "$HOOKSROOT/scripts"
     cp "$HOOKS/scripts/$f" "$HOOKSROOT/scripts/"
@@ -45,15 +52,15 @@ run_mounts() {
     local INPUT="$1"
     cleanup_sentinels
     : > "$FIRELOG"
-    HOOK_STDOUT=$(printf '%s' "$INPUT" | \
+    HOOK_STDOUT=$(cd "$FIXTURE" && printf '%s' "$INPUT" | \
         UNIFIED_RULES_FILE="$RULES" \
         HOOK_FIRE_LOG="$FIRELOG" \
         HOOK_STATE_DIR="$STATE" \
-        CLAUDE_PROJECT_DIR="$REPO_ROOT" \
+        CLAUDE_PROJECT_DIR="$HOSTREPO" PROJECT_ROOT="$HOSTREPO" \
         MULTICA_AGENT_NAME="${V6_AGENT:-}" \
         MULTICA_TASK_ID="${V6_TASK_ID:-}" \
         HOOK_SCOPE_ID="${V6_SCOPE_ID:-}" \
-        PWD="${V6_PWD:-$REPO_ROOT}" \
+        PWD="${V6_PWD:-$HOSTREPO}" \
         bash "$ENTRY" 2>"$FIXTURE/stderr.txt")
     HOOK_EXIT=$?
     HOOK_STDERR=$(cat "$FIXTURE/stderr.txt")
@@ -64,15 +71,15 @@ run_mounts() {
 run_mounts_keep() {
     local INPUT="$1"
     : > "$FIRELOG"
-    HOOK_STDOUT=$(printf '%s' "$INPUT" | \
+    HOOK_STDOUT=$(cd "$FIXTURE" && printf '%s' "$INPUT" | \
         UNIFIED_RULES_FILE="$RULES" \
         HOOK_FIRE_LOG="$FIRELOG" \
         HOOK_STATE_DIR="$STATE" \
-        CLAUDE_PROJECT_DIR="$REPO_ROOT" \
+        CLAUDE_PROJECT_DIR="$HOSTREPO" PROJECT_ROOT="$HOSTREPO" \
         MULTICA_AGENT_NAME="${V6_AGENT:-}" \
         MULTICA_TASK_ID="${V6_TASK_ID:-}" \
         HOOK_SCOPE_ID="${V6_SCOPE_ID:-}" \
-        PWD="${V6_PWD:-$REPO_ROOT}" \
+        PWD="${V6_PWD:-$HOSTREPO}" \
         bash "$ENTRY" 2>"$FIXTURE/stderr.txt")
     HOOK_EXIT=$?
     HOOK_STDERR=$(cat "$FIXTURE/stderr.txt")
@@ -87,7 +94,7 @@ run_engine() {
     HOOK_STDOUT=$(printf '%s' "$INPUT" | \
         UNIFIED_RULES_FILE="$RULES" HOOK_FIRE_LOG="$FIRELOG" \
         MULTICA_AGENT_NAME="${V6_AGENT:-}" MULTICA_TASK_ID="${V6_TASK_ID:-}" \
-        HOOK_SCOPE_ID="${V6_SCOPE_ID:-}" PWD="${V6_PWD:-$REPO_ROOT}" \
+        HOOK_SCOPE_ID="${V6_SCOPE_ID:-}" PWD="${V6_PWD:-$HOSTREPO}" \
         node "$ENGINE" 2>"$FIXTURE/stderr.txt")
     HOOK_EXIT=$?
     HOOK_STDERR=$(cat "$FIXTURE/stderr.txt")
@@ -250,7 +257,7 @@ mkdir -p "$FIXTURE/deployhome/.claude/hooks/unified"
 for f in unified-hook.sh engine.js when-ops.js rules-v2.json; do
     cp "$HOOKS/unified/$f" "$FIXTURE/deployhome/.claude/hooks/unified/" 2>/dev/null
 done
-cp "$REPO_ROOT/hooks/validate-rules.js" "$FIXTURE/deployhome/.claude/hooks/"
+cp "$REPO_ROOT/claude-hooks/validate-rules.js" "$FIXTURE/deployhome/.claude/hooks/"
 printf '{"version":2,"v1_compat":false,"rules":[]}' > "$RULES"
 cp "$RULES" "$FIXTURE/deployhome/.claude/hooks/unified/rules-v2.json"
 mkdir -p "$FIXTURE/deployhome/.claude/hooks/unified/rules.d"
@@ -541,7 +548,7 @@ P() { # $1 label  $2 rules-json  $3 payload  [$4 extra-env passthrough via PROBE
   rm -f "$FIXTURE/probe.flag"
   OUTP=$(printf '%s' "$3" | env UNIFIED_RULES_FILE="$RULES" HOOK_FIRE_LOG="$FIRELOG" \
     MULTICA_AGENT_NAME="${V6_AGENT:-}" MULTICA_TASK_ID="${V6_TASK_ID:-}" \
-    HOOK_SCOPE_ID="${V6_SCOPE_ID:-}" PWD="${V6_PWD:-$REPO_ROOT}" \
+    HOOK_SCOPE_ID="${V6_SCOPE_ID:-}" PWD="${V6_PWD:-$HOSTREPO}" \
     PROBE_FLAG="$FIXTURE/probe.flag" \
     node "$ENGINE" 2>/dev/null); EX=$?
   LASTP="$OUTP"; LASTEX=$EX

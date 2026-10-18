@@ -171,7 +171,7 @@ exec "/home/jerry/.claude/hooks/dispatcher.sh" "$ALIAS"
 直接在 settings.json 中调用 `dispatcher.sh` 会有引号问题：
 
 ```json
-"command": "~/.claude/hooks/dispatcher.sh \"$HOME/.claude/hooks/dispatcher.sh\" PreToolUse"
+"command": "~/tools/dev-forge/claude-hooks/dispatcher.sh \"$OLD_GLOBAL_POS/dispatcher.sh\" PreToolUse"  # v1 时代引号问题示例（历史，OLD_GLOBAL_POS = 旧全局部署位）
 ```
 
 引入 wrapper 后，command 只包含简单路径 + 参数，不含任何引号。
@@ -225,8 +225,8 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [dispatcher.sh] alias=$ALIAS ..." >> "$LO
 # 未知 alias 静默透传（fail-open）。
 case "$ALIAS" in
   unified-hook)
-    SCRIPT="$HOME/.claude/hooks/unified/unified-hook.sh"
-    [ -f "$SCRIPT" ] || SCRIPT="$PROJECT_ROOT/.claude/hooks/unified/unified-hook.sh"
+    # SEE-1429 最终态：脚本自身相对定位（注册链直指 dev-forge 检出，无兜底分支）。
+    SCRIPT="$(cd "$(dirname "$0")" && pwd)/unified/unified-hook.sh"
     ;;
   *)
     SCRIPT=""
@@ -268,9 +268,9 @@ dispatcher.sh 按以下顺序搜索包含 `.claude/hooks/` 的项目根目录：
 | 1 | `$CLAUDE_PROJECT_DIR` | CC 自动注入的项目目录 |
 | 2 | `$PWD` | 当前工作目录 |
 | 3 | `$PWD/*/`（一级子目录） | 覆盖 Multica workdir 模式（repo checkout 在子目录中） |
-| 4 | `WSL_CANDIDATES` | WSL 本地主仓库路径（如 `/mnt/d/GodotProjects/king-of-likes` 或 `/mnt/c/Users/$USER/GodotProjects/king-of-likes`；是 **D/C 盘下 GodotProjects 里的 king-of-likes 仓库**，不是 `/mnt/d` 或 `/mnt/c` 盘根），最后兜底 |
+| 4 | `TARGET_REPO_ROOT` 环境变量 | 显式注入的目标仓库根（toolchain.env / systemd EnvironmentFile）。SEE-1429 最终态：**WSL 挂载点硬编码候选已退役**（零检出路径耦合，修订 B）——此前版本曾内置 D/C 盘 GodotProjects 主仓库候选 |
 
-**WSL_CANDIDATES 的关键作用**：本地 WSL 开发时，`$PWD` 可能不在项目目录内，而 `WSL_CANDIDATES` 指向常驻存在的本地主仓库路径（`/mnt/d/GodotProjects/king-of-likes` 或 `/mnt/c/Users/$USER/GodotProjects/king-of-likes`），确保本地 CC 会话也能找到项目 hooks。注意这些路径是仓库所在位置，不是 `/mnt/d` 或 `/mnt/c` 盘根。
+**TARGET_REPO_ROOT 的关键作用**：本地会话 `$PWD` 不在项目目录内时，环境注入的目标仓库根确保 dispatcher 仍能定位宿主仓库 hooks 语义。dev-forge 仓内不含任何检出路径字面量——路径字面量只经 bootstrap 写入的 `~/.config/dev-forge/toolchain.env` 流入运行时。
 
 ### 4.3 stdin 读取的 WSL 兼容处理
 

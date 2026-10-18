@@ -52,9 +52,9 @@ separator() {
     echo -e "${CYAN}=== $1 ===${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/pre-comment-skill-check.sh"
-CONFIG_FILE="$PROJECT_ROOT/hooks/skill-check-rules.json"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/pre-comment-skill-check.sh"
+CONFIG_FILE="$PROJECT_ROOT/claude-hooks/skill-check-rules.json"
 
 if [ ! -f "$HOOK_SCRIPT" ]; then
     echo "ERROR: Hook script not found at $HOOK_SCRIPT"

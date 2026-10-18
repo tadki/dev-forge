@@ -5,7 +5,7 @@
 #            isolation of args matching (command leakage fix), transcript + bash cmd extraction
 #
 # v2 redirect (SEE-1330): v1 `bash_executed` → v2 `{op:"command", scope:"run"}`.
-# Testee: bash $PROJECT_ROOT/hooks/unified/unified-hook.sh
+# Testee: bash $PROJECT_ROOT/claude-hooks/unified/unified-hook.sh
 # ENGINE: .claude/hooks/unified/engine.js (evalCommandRun) + when-ops.js
 # Env: MULTICA_AGENT_NAME / MULTICA_TASK_ID (UUID format — engine requires
 # ^[0-9a-f-]{36}$ to load transcript) / HOOK_SCOPE_ID (per-run unique UUID) /
@@ -56,10 +56,10 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-UNIFIED_HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
-WHEN_OPS_JS="$PROJECT_ROOT/hooks/unified/when-ops.js"
-ENGINE_JS="$PROJECT_ROOT/hooks/unified/engine.js"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+UNIFIED_HOOK="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
+WHEN_OPS_JS="$PROJECT_ROOT/claude-hooks/unified/when-ops.js"
+ENGINE_JS="$PROJECT_ROOT/claude-hooks/unified/engine.js"
 
 for f in "$UNIFIED_HOOK" "$WHEN_OPS_JS" "$ENGINE_JS"; do
     if [ ! -f "$f" ]; then

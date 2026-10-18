@@ -25,8 +25,8 @@ PASS=0; FAIL=0
 pass(){ echo -e "  \033[0;32m[PASS]\033[0m $1"; PASS=$((PASS+1)); }
 fail(){ echo -e "  \033[0;31m[FAIL]\033[0m $1"; FAIL=$((FAIL+1)); }
 
-WORKTREE_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-HOOK_SCRIPT="$WORKTREE_DIR/hooks/scripts/push-guard.sh"
+WORKTREE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK_SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/push-guard.sh"
 
 echo "=== SEE-954 LOW-1: push-guard force-push detection hardening ==="
 

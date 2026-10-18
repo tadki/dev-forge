@@ -15,9 +15,9 @@ pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); RESULTS+=("PASS|$
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL+1)); RESULTS+=("FAIL|$1"); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-INSTALLER="$REPO_ROOT/hooks/install-hooks.sh"
-MANIFEST="$REPO_ROOT/hooks/hooks-registration.json"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+INSTALLER="$REPO_ROOT/bootstrap/bootstrap.sh"
+MANIFEST="$REPO_ROOT/bootstrap/hooks-registration.json"
 FIXTURE="$(mktemp -d /tmp/v2installer-p0.XXXXXX)"
 SETTINGS="$FIXTURE/home/.claude/settings.json"
 GLOBAL_HOOKS="$FIXTURE/home/.claude/hooks"
@@ -217,7 +217,7 @@ DEPLOY_LOG_1="$FIXTURE/install1.log"; DEPLOY_LOG_2="$FIXTURE/install2.log"
 DEP1=$(grep -c "deployed:" "$DEPLOY_LOG_1" || true)
 DEP2=$(grep -c "deployed:" "$DEPLOY_LOG_2" || true)
 [ "$DEP2" -eq 0 ] && [ "$DEP1" -gt 0 ] && pass "6c: 2nd install deploys nothing (idempotent)" || fail "6c: deploy counts 1st=$DEP1 2nd=$DEP2"
-cmp -s "$GLOBAL_HOOKS/unified/engine.js" "$REPO_ROOT/hooks/unified/engine.js" && pass "6d: deployed engine.js matches repo" || fail "6d: engine.js drifted"
+cmp -s "$GLOBAL_HOOKS/unified/engine.js" "$REPO_ROOT/claude-hooks/unified/engine.js" && pass "6d: deployed engine.js matches repo" || fail "6d: engine.js drifted"
 
 # 全局兜底规则配置：部署位 rules-v2.json 可被引擎 __dirname 兜底发现。
 # P1 再定向说明（S5）：repo 真源 rules-v2.json 自 P1 起含 14 条规则（不再为空），本用例的
@@ -322,7 +322,7 @@ separator "9. Deploy completeness (incident-6 regression pin)"
 
 # 9a 清单覆盖挂载脚本全集（rules.d 每条 run_script path 必须在 runtime_artifacts）
 MOUNT_SCRIPTS=$(node -e "
-const r = require('$REPO_ROOT/hooks/unified/rules.d/runscript-mounts.json');
+const r = require('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json');
 const m = require('$MANIFEST');
 const need = [...new Set(r.rules.filter(x=>x.action[0].op==='run_script').map(x=>x.action[0].path.replace('\${HOOKS_DIR}/','')))].sort();
 const have = m.runtime_artifacts.filter(a=>!a.startsWith('unified/')).sort();
@@ -337,8 +337,8 @@ console.log(missing.length === 0 ? 'COMPLETE' : 'MISSING:' + missing.join(','));
 # dispatcher.sh 的仓库单源在 .dev/hooks/（SEE-1388 SPEC-006 入册）。
 DEP_MISSING=0
 for A in $(node -e "const m=require('$MANIFEST'); console.log(m.runtime_artifacts.join(' '))"); do
-    SRC="$REPO_ROOT/hooks/$A"
-    [ -f "$SRC" ] || SRC="$REPO_ROOT/hooks/$A"
+    SRC="$REPO_ROOT/claude-hooks/$A"
+    [ -f "$SRC" ] || SRC="$REPO_ROOT/claude-hooks/$A"
     if [ ! -f "$GLOBAL_HOOKS/$A" ] || ! cmp -s "$SRC" "$GLOBAL_HOOKS/$A"; then
         DEP_MISSING=1
         fail "9b: deployed artifact missing/drifted: $A"

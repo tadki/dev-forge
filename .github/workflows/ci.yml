@@ -1,0 +1,40 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shell syntax check (bash -n)
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            bash -n "$f" || { echo "bash -n FAIL: $f"; fail=1; }
+          done < <(find hooks bootstrap launch adapters autopilots tests -name "*.sh" 2>/dev/null)
+          exit $fail
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning $(find hooks bootstrap launch adapters -name "*.sh") || true
+  engine-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: P0 engine suite
+        run: bash tests/test_v2_unified_engine_p0.sh
+      - name: validator
+        run: node --test tests/validator.test.mjs
+      - name: pytest autopilot suites
+        run: |
+          pip install -q pytest
+          pytest tests/ -k "py" -q || true

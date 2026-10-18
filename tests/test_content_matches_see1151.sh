@@ -9,7 +9,7 @@
 #
 # v2 redirect (SEE-1330): v1 `content_matches` → v2 `content` op。
 # 两层 testee：
-#   A) 词法/内容源层：node -e 'require("$PROJECT_ROOT/hooks/unified/when-ops.js")'
+#   A) 词法/内容源层：node -e 'require("$PROJECT_ROOT/claude-hooks/unified/when-ops.js")'
 #      createEvaluator 的 content op（--content / --content-file / null 数据源）+ 正则。
 #   B) 引擎层（oneshot/sentinel/agents/transcript 需完整协议）：unified-hook.sh +
 #      UNIFIED_RULES_FILE fixture + multica PATH shim（per-task transcript 文件）+
@@ -49,9 +49,9 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-WHEN_OPS_JS="$PROJECT_ROOT/hooks/unified/when-ops.js"
-UNIFIED_HOOK="$PROJECT_ROOT/hooks/unified/unified-hook.sh"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WHEN_OPS_JS="$PROJECT_ROOT/claude-hooks/unified/when-ops.js"
+UNIFIED_HOOK="$PROJECT_ROOT/claude-hooks/unified/unified-hook.sh"
 
 for f in "$WHEN_OPS_JS" "$UNIFIED_HOOK"; do
     if [ ! -f "$f" ]; then

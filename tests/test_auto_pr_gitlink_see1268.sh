@@ -10,7 +10,7 @@
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../../.."
+REPO_ROOT="$SCRIPT_DIR/.."
 PASS=0; FAIL=0; TMP=""
 cleanup() { [ -n "$TMP" ] && [ -d "$TMP" ] && rm -rf "$TMP"; }
 trap cleanup EXIT
@@ -21,7 +21,7 @@ gq() { git -c protocol.file.allow=always "$@"; }
 # Extract the (d) sequence: 判定块 + `git add -A` + 后置 gitlink unstage.
 # Ends right before the SEE-905 screenshots unstage (out of scope).
 extract_d_sequence() {
-    local src="$REPO_ROOT/hooks/scripts/auto-pr-on-stop.sh" out="$1"
+    local src="$REPO_ROOT/claude-hooks/scripts/auto-pr-on-stop.sh" out="$1"
     local start end
     start=$(grep -n 'SEE-1268 §7.4(d) gitlink 条件保留' "$src" | head -1 | cut -d: -f1)
     end=$(grep -n '^  # Unstage godot-mcp E2E screenshots' "$src" | head -1 | cut -d: -f1)
@@ -80,7 +80,7 @@ run_d_sequence() {
     local seq="$1" work="$2"
     mkdir -p "$work/.claude/hooks"
     mkdir -p "$work/.claude/hooks/scripts"
-    ln -sfn "$REPO_ROOT/hooks/scripts/lib" "$work/.claude/hooks/scripts/lib"
+    ln -sfn "$REPO_ROOT/claude-hooks/scripts/lib" "$work/.claude/hooks/scripts/lib"
     (
         cd "$work"
         source "$seq"

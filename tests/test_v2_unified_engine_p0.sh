@@ -16,10 +16,10 @@ skip() { echo -e "  ${YELLOW}[SKIP]${NC} $1"; RESULTS+=("SKIP|$1"); }
 separator() { echo ""; echo -e "${CYAN}--- $1 ---${NC}"; }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENTRY="$REPO_ROOT/hooks/unified/unified-hook.sh"
-ENGINE="$REPO_ROOT/hooks/unified/engine.js"
-DISPATCHER_SRC="$REPO_ROOT/hooks/dispatcher.sh"
-VALIDATOR="$REPO_ROOT/hooks/unified/validate-rules.js"
+ENTRY="$REPO_ROOT/claude-hooks/unified/unified-hook.sh"
+ENGINE="$REPO_ROOT/claude-hooks/unified/engine.js"
+DISPATCHER_SRC="$REPO_ROOT/claude-hooks/dispatcher.sh"
+VALIDATOR="$REPO_ROOT/claude-hooks/validate-rules.js"
 FIXTURE="$(mktemp -d /tmp/v2engine-p0.XXXXXX)"
 RULES="$FIXTURE/rules-v2.json"
 FIRELOG="$FIXTURE/hook-fire.log"
@@ -155,7 +155,7 @@ separator "Prerequisites"
 [ -f "$ENTRY" ] && pass "unified-hook.sh exists" || { fail "unified-hook.sh MISSING"; exit 1; }
 [ -f "$ENGINE" ] && pass "engine.js exists" || { fail "engine.js MISSING"; exit 1; }
 [ -f "$VALIDATOR" ] && pass "validate-rules.js exists" || { fail "validate-rules.js MISSING"; exit 1; }
-node -e "JSON.parse(require('fs').readFileSync('$REPO_ROOT/hooks/unified/rules-v2.json','utf8'))" 2>/dev/null \
+node -e "JSON.parse(require('fs').readFileSync('$REPO_ROOT/claude-hooks/unified/rules-v2.json','utf8'))" 2>/dev/null \
     && pass "rules-v2.json valid JSON" || fail "rules-v2.json INVALID"
 LINES=$(wc -l < "$ENGINE")
 [ "$LINES" -lt 800 ] && pass "engine.js $LINES lines < 800" || fail "engine.js $LINES lines >= 800"
@@ -495,7 +495,8 @@ assert_firelog_has "10a: result line action kind" "action=context"
 DISP_FIXTURE="$FIXTURE/disp"
 mkdir -p "$DISP_FIXTURE/unified"
 cp "$DISPATCHER_SRC" "$DISP_FIXTURE/dispatcher.sh"
-cp "$REPO_ROOT/hooks/unified/"unified-hook.sh "$REPO_ROOT/hooks/unified/"engine.js "$REPO_ROOT/hooks/unified/"when-ops.js "$REPO_ROOT/hooks/unified/"validate-rules.js "$DISP_FIXTURE/unified/"
+cp "$REPO_ROOT/claude-hooks/unified/"unified-hook.sh "$REPO_ROOT/claude-hooks/unified/"engine.js "$REPO_ROOT/claude-hooks/unified/"when-ops.js "$DISP_FIXTURE/unified/"
+cp "$REPO_ROOT/claude-hooks/validate-rules.js" "$DISP_FIXTURE/"
 mkdir -p "$DISP_FIXTURE/unified/rules.d"
 # probe 规则替代真实 rules-v2.json（真实规则 agents 门控会静默透传，断言需确定性命中）
 printf '{"version":2,"rules":[{"name":"audit-me","on":{"in":["PreToolUse"]},"when":{"op":"tool","in":["Bash"]},"action":[{"op":"context","message":"[audit]"}]}]}' > "$DISP_FIXTURE/unified/rules-v2.json"
@@ -530,11 +531,12 @@ else
     fail "10c: relative route broken. got: '${DISP_OUT:0:120}'"
 fi
 
-# 10d 事故复现用例（P1 cutover 全局优先修正）：项目 checkout 存在异构 v2 配置时，
-# 会话必须加载全局部署位配置 —— per-checkout 配置差异不得泄漏进生产会话。
+# 10d 最终态语义改写：dispatcher 无任何兜底/全局路由分支，唯一配置源 = 脚本自身
+# 目录（注册链直指唯一检出）。断言：CLAUDE_PROJECT_DIR 指向含异构 v2 配置的
+# checkout 时，该配置不参与求值（fixture unified/rules-v2.json 的 probe 规则独占），
+# per-checkout 配置泄漏在结构上不可能。
 mkdir -p "$FIXTURE/globalhome/.claude/hooks/unified/rules.d"
-printf '{"version":2,"rules":[{"name":"global-probe","on":{"in":["PreToolUse"]},"action":[{"op":"context","message":"[global-config-fired]"}]}]}' > "$GLOBAL_HOOKS/rules-v2.json"
-# 异构 checkout：含与全局不同的 probe 规则
+printf '{"version":2,"rules":[{"name":"global-probe","on":{"in":["PreToolUse"]},"action":[{"op":"context","message":"[global-config-fired]"}]}]}' > "$FIXTURE/globalhome/.claude/hooks/unified/rules-v2.json"
 mkdir -p "$FIXTURE/hetero-checkout/.claude/hooks/unified/rules.d"
 printf '{"version":2,"rules":[{"name":"hetero-probe","on":{"in":["PreToolUse"]},"action":[{"op":"context","message":"[hetero-checkout-fired]"}]}]}' > "$FIXTURE/hetero-checkout/.claude/hooks/unified/rules-v2.json"
 : > "$FIRELOG"
@@ -542,10 +544,10 @@ DISP_OUT=$(cd "$FIXTURE/hetero-checkout" && printf '%s' '{"hook_event_name":"Pre
     HOME="$FIXTURE/globalhome" HOOK_STATE_DIR="$FIXTURE/globalhome/state" CLAUDE_PROJECT_DIR="$FIXTURE/hetero-checkout" \
     HOOK_FIRE_LOG="$FIRELOG" MULTICA_TASK_ID="cccc2222-3333-4444-5555-666666666666" \
     bash "$DISP_FIXTURE/dispatcher.sh" unified-hook 2>/dev/null)
-if echo "$DISP_OUT" | grep -q "global-config-fired"; then
-    pass "10d: incident repro — global config wins over heterogeneous checkout"
+if echo "$DISP_OUT" | grep -q '"additionalContext"' && echo "$DISP_OUT" | grep -q '\[audit\]'; then
+    pass "10d: incident repro — self-located config wins, no fallback channels"
 else
-    fail "10d: per-checkout config leaked. got: '${DISP_OUT:0:120}'"
+    fail "10d: route semantics broken. got: '${DISP_OUT:0:120}'"
 fi
 if echo "$DISP_OUT" | grep -q "hetero-checkout-fired"; then
     fail "10d: heterogeneous checkout rules evaluated (incident regression)"
@@ -927,8 +929,8 @@ OUTU=$(printf '%s' "$RAW_IN" | CLAUDE_PROJECT_DIR="$REPO_ROOT" HOOK_FIRE_LOG="$F
 # 构造 rules.d 副本 + 删掉 manifest 中一个挂载脚本条目 → 部署完整性探针逻辑必须判 INCOMPLETE
 if node -e "
 const fs=require('fs');
-const m=JSON.parse(fs.readFileSync('$REPO_ROOT/hooks/hooks-registration.json'));
-const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/hooks/unified/rules.d/runscript-mounts.json'));
+const m=JSON.parse(fs.readFileSync('$REPO_ROOT/bootstrap/hooks-registration.json'));
+const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json'));
 const targets=new Set();
 for (const r of rules.rules) for (const a of (r.action||[])) if (a.op==='run_script') targets.add(a.path.replace(/^\$\{HOOKS_DIR\}\//,''));
 const missing=[...targets].filter(t=>!(m.runtime_artifacts||[]).includes(t));
@@ -940,13 +942,13 @@ fi
 # 漏列场景注入（fixture 副本）→ 探针必判 INCOMPLETE
 node -e "
 const fs=require('fs');
-const m=JSON.parse(fs.readFileSync('$REPO_ROOT/hooks/hooks-registration.json'));
+const m=JSON.parse(fs.readFileSync('$REPO_ROOT/bootstrap/hooks-registration.json'));
 m.runtime_artifacts=(m.runtime_artifacts||[]).filter(t=>t!=='scripts/mention-check.sh');
 fs.writeFileSync('$FIXTURE/manifest-holed.json', JSON.stringify(m));"
 node -e "
 const fs=require('fs');
 const m=JSON.parse(fs.readFileSync('$FIXTURE/manifest-holed.json'));
-const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/hooks/unified/rules.d/runscript-mounts.json'));
+const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json'));
 const targets=new Set();
 for (const r of rules.rules) for (const a of (r.action||[])) if (a.op==='run_script') targets.add(a.path.replace(/^\$\{HOOKS_DIR\}\//,''));
 const missing=[...targets].filter(t=>!(m.runtime_artifacts||[]).includes(t));
@@ -960,8 +962,8 @@ process.exit(missing.length>0?0:1);" && pass "21c: holed manifest detected (leak
 # 行锚定真仓库根（fixture 内无该文件，须真跑才算数）。
 RUNNER="$REPO_ROOT/tests/run_all.sh"
 RUNNER_COPY="$FIXTURE/run_all_copy.sh"
-mkdir -p "$FIXTURE/.dev/tests/hooks"
-printf '#!/bin/bash\nexit 7\n' > "$FIXTURE/.dev/tests/hooks/test_s20_fail.sh"
+mkdir -p "$FIXTURE/tests"
+printf '#!/bin/bash\nexit 7\n' > "$FIXTURE/tests/test_s20_fail.sh"
 python3 - "$RUNNER" "$RUNNER_COPY" "$FIXTURE" <<'RNPY'
 import sys, os
 src, dst, fx = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -971,9 +973,9 @@ s = s.replace('REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"', 'REPO_ROOT=%r' % 
 # .dev/tests/hooks/）——副本树内两处皆不存在，须预注入真仓库实际在位的路径；
 # 副本自身的候选回退循环仅在命中时覆写，预设值安全。
 repo = src.replace('/.dev/tests/hooks/run_all.sh', '')
-real_val = repo + '/.claude/hooks/tests/validator.test.mjs'
+real_val = repo + '/tests/validator.test.mjs' if not repo.endswith('/tests/run_all.sh') else repo.rsplit('/tests/run_all.sh',1)[0] + '/tests/validator.test.mjs'
 if not os.path.isfile(real_val):
-    real_val = repo + '/.dev/tests/hooks/validator.test.mjs'
+    real_val = repo + '/tests/validator.test.mjs' if not repo.endswith('/tests/run_all.sh') else repo.rsplit('/tests/run_all.sh',1)[0] + '/tests/validator.test.mjs'
 s = s.replace('VALIDATOR=""', 'VALIDATOR=%r' % real_val)
 open(dst, 'w').write(s)
 RNPY
@@ -985,7 +987,7 @@ else
 fi
 # 健康路径：glob 式 runner 无文件名锚点可 sed，健康切换作用于 fixture 套件文件
 # 本身（fail → exit 0），验证 ALL GREEN 报告与零退出
-printf '#!/bin/bash\nexit 0\n' > "$FIXTURE/.dev/tests/hooks/test_s20_fail.sh"
+printf '#!/bin/bash\nexit 0\n' > "$FIXTURE/tests/test_s20_fail.sh"
 if bash "$RUNNER_COPY" > /tmp/s20-healthy-out.log 2>&1; then
     grep -q "ALL GREEN" /tmp/s20-healthy-out.log && pass "21d: run_all healthy path ALL GREEN" || fail "21d: no ALL GREEN report"
 else

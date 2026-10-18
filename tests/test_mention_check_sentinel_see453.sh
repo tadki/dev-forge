@@ -47,8 +47,8 @@ separator() {
     echo -e "${CYAN}--- $1 ---${NC}"
 }
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-HOOK_SCRIPT="$PROJECT_ROOT/hooks/scripts/mention-check.sh"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOOK_SCRIPT="$PROJECT_ROOT/claude-hooks/scripts/mention-check.sh"
 
 # Unique task IDs per scenario (PID-suffixed for isolation)
 TASK_S1="see453-s1-$$"  # Scenario 1: NO_MENTION sentinel

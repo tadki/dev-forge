@@ -27,7 +27,7 @@ FAIL=0
 pass() { echo -e "  ${GREEN}[PASS]${NC} $1"; PASS=$((PASS + 1)); }
 fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL + 1)); }
 
-HOOK_SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/hooks/scripts/push-guard.sh"
+HOOK_SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/claude-hooks/scripts/push-guard.sh"
 
 # Extract Phase 1 node script from push-guard.sh
 # Lines between 'node -e "' and '" 2>/dev/null)'

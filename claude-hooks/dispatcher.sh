@@ -15,34 +15,12 @@ done
 # Trim trailing newline added by the loop
 INPUT="${INPUT%$'\n'}"
 
-# Environment-aware project directory fallback (SEE-1381 §SPEC-017)：
-# 不再硬编码 WSL 挂载点——显式 TARGET_REPO_ROOT 环境变量优先（与 .dev/systemd/
-# toolchain-start-all.service 的哨兵约定同源），WSL 场景仅由环境探测推导
-# （非 WSL 环境 /mnt/* 不存在即自然为空，alias 路由不再透传前断链）。
+# Environment-aware project directory fallback（SEE-1381 §SPEC-017 → SEE-1429 最终态）：
+# 显式 TARGET_REPO_ROOT 环境变量优先（与 toolchain.env 注入约定同源）。dev-forge
+# 与任何具体检出解耦——仓内不含检出路径字面量，环境注入是唯一通道（修订 B）。
 ADDITIONAL_DIRS=""
 if [ -n "$TARGET_REPO_ROOT" ] && [ -d "$TARGET_REPO_ROOT/.claude/hooks" ]; then
   ADDITIONAL_DIRS="$TARGET_REPO_ROOT"
-else
-  # WSL 环境探测：仅 WSL 下才扫描挂载点（/proc/version 含 microsoft 标识）
-  if grep -qi microsoft /proc/version 2>/dev/null; then
-    WSL_CANDIDATES=(
-      "/mnt/d/GodotProjects/king-of-likes"
-      "/mnt/c/Users/$USER/GodotProjects/king-of-likes"
-    )
-    # Also scan /mnt/c/Users/*/GodotProjects/king-of-likes for other users
-    for user_dir in /mnt/c/Users/*/GodotProjects/king-of-likes; do
-      if [ -d "$user_dir" ]; then
-        WSL_CANDIDATES+=("$user_dir")
-      fi
-    done
-    # Pick the first existing candidate
-    for candidate in "${WSL_CANDIDATES[@]}"; do
-      if [ -d "$candidate" ]; then
-        ADDITIONAL_DIRS="$candidate"
-        break
-      fi
-    done
-  fi
 fi
 
 # Find project root containing .claude/hooks/
@@ -69,7 +47,7 @@ fi
 # Dynamic firelog path: repo-level when available, global fallback（单源实现 SEE-1388 SPEC-002）
 # FIRELOG_NO_PWD_SCAN=1 保留 dispatcher 既有形态：仅用自身算出的 PROJECT_ROOT，无则全局兜底。
 _lib_dir="$(cd "$(dirname "$0")" && pwd)"
-for _cand in "$_lib_dir/../scripts/lib/hook-fire-path.lib.sh"; do
+for _cand in "$_lib_dir/scripts/lib/hook-fire-path.lib.sh"; do
   [ -f "$_cand" ] && . "$_cand" && break
 done
 FIRELOG_NO_PWD_SCAN=1
@@ -78,11 +56,8 @@ LOG_FILE=$(resolve_hook_fire_log_path 2>/dev/null) || LOG_FILE="$HOME/.claude/ho
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [dispatcher.sh] alias=$ALIAS PWD=$PWD HOME=$HOME PROJECT_ROOT=${PROJECT_ROOT:-<none>}" >> "$LOG_FILE" 2>/dev/null || true
 
-# No hooks directory -> pass stdin through unchanged
-if [ -z "$PROJECT_ROOT" ]; then
-  printf '%s' "$INPUT"
-  exit 0
-fi
+# SEE-1429 最终态：unified-hook 路由不依赖 PROJECT_ROOT（脚本自定位，注册链直指
+# 本仓检出）；PROJECT_ROOT 仅作为 firelog 落点/业务上下文，缺失不再短路透传。
 
 # Map alias to final business script.
 # Convention-based routing (SEE-1185 F4): alias maps to .claude/hooks/<alias>.sh;
