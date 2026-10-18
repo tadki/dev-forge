@@ -325,6 +325,15 @@ def write_baseline(metrics: dict, findings: list[str], dry_run: bool) -> None:
     append_jsonl(BASELINE_FILE, record)
 
 
+def build_heartbeat_summary(total_findings: int, new_findings: int, redline_skipped: bool = False) -> str:
+    """Compose the heartbeat summary line. A redline skip (SEE-1434) is always
+    surfaced so a missing-coverage run is distinguishable from a clean run."""
+    summary = f"findings={total_findings} new={new_findings}"
+    if redline_skipped:
+        summary += " redline=skipped_uninitialized"
+    return summary
+
+
 def write_heartbeat(status: str, summary: str, dry_run: bool) -> None:
     if dry_run:
         return
@@ -419,6 +428,39 @@ def _gitlink_pointer(repo_root: str) -> str:
     except (OSError, subprocess.SubprocessError):
         pass
     return ""
+
+
+def _submodule_materialized(repo_root: str) -> str:
+    """Classify the addons/godot_mcp gitlink materialization state (SEE-1434).
+
+    Returns "yes" (child worktree populated), "no" (registered gitlink whose
+    disk directory is missing or holds no files — the plain `multica repo
+    checkout` state), or "unknown" (detection itself failed). Only a
+    git-positive "no" may skip the redline comparison; "unknown" fails closed
+    so a broken detector can never silently drop redline coverage.
+    """
+    addon_dir = os.path.join(repo_root, "addons", "godot_mcp")
+    try:
+        registered = (
+            subprocess.run(
+                ["git", "-C", repo_root, "ls-files", "-s", "addons/godot_mcp"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            ).stdout.strip()
+        ).startswith("160000")
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if not registered:
+        return "yes"  # not a submodule at all: nothing to skip
+    if not os.path.isdir(addon_dir):
+        return "no"
+    try:
+        has_content = any(os.scandir(addon_dir))
+    except OSError:
+        return "unknown"
+    return "yes" if has_content else "no"
 
 
 def _save_pointer(pointer: str, dry_run: bool) -> None:
@@ -549,14 +591,44 @@ def _reset_redline_baseline(pointer: str, current: dict, artifacts: int, dry_run
     }
 
 
+def _redline_skipped_uninitialized() -> dict:
+    """Single explicit downgrade warning for an unmaterialized gitlink (SEE-1434).
+
+    Warn (never critical): coverage is MISSING, not violated — the SEE-1433
+    incident showed that comparing against an empty disk tree fabricates one
+    critical per stored manifest entry.
+    """
+    return {
+        "rule_id": "REDLINE_SKIPPED_UNINITIALIZED",
+        "severity": SEVERITY_WARN,
+        "file": "addons/godot_mcp/",
+        "line": 0,
+        "message": (
+            "Redline check skipped: addons/godot_mcp gitlink is NOT materialized "
+            "(run `git submodule update --init` to restore redline coverage). "
+            "No REDLINE_* findings are trustworthy in this state."
+        ),
+    }
+
+
 def check_redline(repo_root: str, dry_run: bool) -> list[dict]:
     """Verify addons/godot_mcp/ hashes against stored manifest. Returns findings.
+
+    SEE-1434 guard: when the gitlink is registered but NOT materialized, the
+    disk tree is empty and any comparison would fabricate one REDLINE_DELETED
+    per stored entry — skip entirely with a single explicit downgrade warning
+    instead, and never touch the stored manifest/pointer.
 
     SEE-1332: raw hits are classified against the gitlink pinned by parent
     HEAD; compliant bump artifacts (§SPEC-001) are not reported as critical.
     The manifest is re-blessed ONLY when every raw hit was an artifact, so a
     real violation can never be laundered into the baseline (§SPEC-002).
     """
+    if _submodule_materialized(repo_root) == "no":
+        # Skip is side-effect free: the stored manifest stays as-is so the
+        # next materialized run resumes the comparison cleanly.
+        return [_redline_skipped_uninitialized()]
+
     findings = []
     current = compute_redline_manifest(repo_root)
     stored = load_redline_manifest()
@@ -1540,6 +1612,9 @@ def main() -> int:
     # ------------------------------------------------------------------
     redline_findings = check_redline(repo_root, dry_run)
     all_findings.extend(redline_findings)
+    redline_skipped = any(
+        f["rule_id"] == "REDLINE_SKIPPED_UNINITIALIZED" for f in redline_findings
+    )
 
     # ------------------------------------------------------------------
     # L0 checks
@@ -1629,7 +1704,7 @@ def main() -> int:
     write_baseline(metrics, list(current_keys), dry_run)
     write_heartbeat(
         "ok" if _phase_error_count == 0 else "error",
-        f"findings={len(all_findings)} new={len(new_findings)}",
+        build_heartbeat_summary(len(all_findings), len(new_findings), redline_skipped),
         dry_run,
     )
 
