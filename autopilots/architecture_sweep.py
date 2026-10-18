@@ -441,15 +441,14 @@ def _submodule_materialized(repo_root: str) -> str:
     """
     addon_dir = os.path.join(repo_root, "addons", "godot_mcp")
     try:
-        registered = (
-            subprocess.run(
-                ["git", "-C", repo_root, "ls-files", "-s", "addons/godot_mcp"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            ).stdout.strip()
-        ).startswith("160000")
+        out = subprocess.run(
+            ["git", "-C", repo_root, "ls-files", "-s", "addons/godot_mcp"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        registered = out.stdout.strip().startswith("160000")
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     if not registered:
