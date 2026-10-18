@@ -2,111 +2,126 @@
 
 # dev-forge
 
-**Decoupled dev toolchain: Claude hooks engine, autopilots, launch sentinels, bootstrap/doctor.**
+**A self-hosted development toolchain: a JSON-configured hooks engine for Claude Code, scheduled patrol autopilots, and a bootstrap/doctor/rollback installer.**
 
-与 Multica / KOL（KingOfLikes）/ Claude Code 三方解耦的自研开发工具链仓库。
-全局 hooks 注册链直指本仓检出的绝对路径——本地改文件即生效，
-**单一真源 = 本地 editable 检出**，不再随任何项目每次检出。
-
-![ci](https://github.com/tadki/dev-forge/actions/workflows/ci.yml/badge.svg)
+[![ci](https://github.com/tadki/dev-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/tadki/dev-forge/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
 
 ---
 
-## Why dev-forge
+## What is this
 
-此前全套工具链（hooks 统一引擎、autopilots、启动哨兵）寄宿在 KingOfLikes 仓库的
-`.claude/hooks/` 与 `.dev/` 下，存在三重耦合：hooks 配置随 KOL 每次 checkout 漂移
-（双轨真源）、工具链只能在 KOL 会话内生效、KOL 仓库承载了与自己无关的开发流程代码。
+dev-forge is a standalone repository that hosts development tooling which used to
+live inside individual project repositories. It currently provides:
 
-dev-forge 的最终态（SEE-1429 定案）：
+- **Hooks engine** — a single JSON-configured rules engine wired into Claude Code's
+  nine hook points. Rules are data (`rules-v2.json` + `rules.d/*.json`), business
+  scripts are pluggable, and the engine is fail-open by design: any internal error
+  passes the original payload through instead of blocking the host tool.
+- **Autopilots** — scheduled patrol scripts (issue hygiene, repo checks, release
+  watching) that emit structured JSON for an agent to act on.
+- **Installer** — idempotent `bootstrap.sh` to wire the hooks into
+  `~/.claude/settings.json`, `doctor.sh` for repeatable health checks, and
+  `rollback.sh` to restore the previous registration.
+- **Launch sentinels** — a systemd service template + env-injected start script
+  for keeping daemons alive on a workstation.
 
-- **注册链直指**：`~/.claude/settings.json` 的 9 时点注册行渲染为
-  `~/tools/dev-forge/claude-hooks/hook-wrapper.sh <Event> unified-hook` 绝对路径，
-  CC 运行时直接读本仓检出内代码——无部署复制、无 symlink。
-- **零耦合**：本仓内不含任何 KOL/Multica 检出路径字面量；目标仓库路径一律经
-  环境注入（`TARGET_REPO_ROOT`）；`adapters/` 内单系统绑定工具单独收口。
-- **仓库级语义在 when 内表达**：引擎级总是加载全部规则，"这个仓库才触发"由规则
-  when 条件（路径 / env / agents 维度）+ dispatcher 的 PROJECT_ROOT/REPO_ROOT
-  探测实现——不靠每仓装引擎。
+Design principles:
 
-## Directory map
+- **Single source of truth** — register the hook entry by absolute path into this
+  checkout; editing a file here takes effect immediately. No deployment copying,
+  no symlinks.
+- **Decoupled** — no machine- or project-specific paths in code; target
+  repositories are provided via environment (`TARGET_REPO_ROOT`). Repo-scoped
+  behavior lives in rule `when` conditions, not in the engine.
+- **Data-driven** — adding or changing a rule is a JSON edit; adding a hook is
+  dropping a script and a rule mount.
 
-| 目录 | 语义 |
+## Repository layout
+
+| Directory | Purpose |
 |---|---|
-| `claude-hooks/` | hooks 运行链真源：`hook-wrapper.sh` → `dispatcher.sh` → `unified/`（engine.js + when-ops.js + rules-v2.json + rules.d/ + state/）→ `scripts/`（业务钩子 ×11 + lib/） |
-| `bootstrap/` | 一次性首装体系：`bootstrap.sh`（渲染 settings 注册行，幂等）、`doctor.sh`（可重复健康检查）、`rollback.sh`（恢复注册段）、`registry-patch.js` + `hooks-registration.json`（声明式注册清单） |
-| `adapters/` | **绑定单一外部系统的适配/运维工具，不做通用化改造**（Multica 升级 / Hindsight MCP launcher / workspace 环境检查） |
-| `autopilots/` | Multica 巡逻框架（×7 + helpers）；扫描目标配置化于 `configs/kol.json`（数据非代码，换目标 = 换 config） |
-| `launch/` | `toolchain-start.sh` 启动哨兵（目标仓路径经 EnvironmentFile 注入，零硬编码）+ `systemd/toolchain-start-all.service` |
-| `docs/` | hooks 三件套（guide / usage-rules / v2-migration-map）、迁移计划、cutover runbook；`docs/archive/` 收历史部署备份快照 |
-| `tests/` | shell 判据套件 + validator（`bash tests/run_all.sh`） |
+| `claude-hooks/` | The hooks runtime: `hook-wrapper.sh` → `dispatcher.sh` → `unified/` (engine + rules) → `scripts/` (business hooks + libs) |
+| `bootstrap/` | `bootstrap.sh` / `doctor.sh` / `rollback.sh` / `registry-patch.js` + declarative registration manifest |
+| `adapters/` | Small, single-purpose adapters for specific external systems (kept intentionally non-generic) |
+| `autopilots/` | Patrol scripts + shared Python helpers; scan targets configured via `configs/` |
+| `launch/` | `toolchain-start.sh` + `systemd/toolchain-start-all.service` |
+| `toolchain/` | Toolchain daily static checker |
+| `review-prompts/` | Prompt builders + templates for review patrols |
+| `scripts/` | Repo working-branch reconciliation helper |
+| `docs/` | Hooks implementation guide, usage rules, migration notes; `docs/archive/` for historical snapshots |
+| `tests/` | Shell suites + rule validator |
 
 ## Quick start
 
 ```bash
-# 0. 规范检出（唯一真源）
+# 1. Clone to a stable location
 gh repo clone tadki/dev-forge ~/tools/dev-forge
 
-# 1. 一次性首装：备份现 settings hooks 段 → 渲染 9 时点注册行 → 幂等校验
+# 2. One-time install: backs up the current hooks section,
+#    renders the 9 hook-point registrations, verifies idempotency
 bash bootstrap/bootstrap.sh
 
-# 1b. （systemd 场景）写 toolchain env（TARGET_REPO_ROOT = 工具链宿主仓库）
-bash bootstrap/bootstrap.sh --write-toolchain-env --target-repo-root /path/to/repo
-
-# 2. 健康检查（可重复执行）
+# 3. Health check (repeatable)
 bash bootstrap/doctor.sh
 
-# 3. 回退（恢复注册段备份）
+# 4. Roll back if needed (restores the registration backup)
 bash bootstrap/rollback.sh
 ```
 
-Cutover / 回退 / 逐项验证清单：[`docs/dev-forge-cutover.md`](docs/dev-forge-cutover.md)
-（顺序铁律：真源就位 → 注册切换 → 验证 → 清运行位 → 删旧物；双回退面独立）。
+For a workstation setup with systemd, also write the environment file:
 
-## Engine architecture
+```bash
+bash bootstrap/bootstrap.sh --write-toolchain-env --target-repo-root /path/to/your/repo
+cp launch/systemd/toolchain-start-all.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now toolchain-start-all
+```
+
+Cutover / rollback runbook: [`docs/dev-forge-cutover.md`](docs/dev-forge-cutover.md).
+
+## How the hooks engine works
 
 ```
-~/.claude/settings.json   ── 9 hook points (matcher *, command = 绝对路径)
-        │  bash
+~/.claude/settings.json   ── 9 hook points (absolute path into this checkout)
+        │
         ▼
-claude-hooks/hook-wrapper.sh      firelog 审计 + 转发
-        │  exec (脚本自定位)
+claude-hooks/hook-wrapper.sh       audit log + forward
         ▼
-claude-hooks/dispatcher.sh        PROJECT_ROOT / TARGET_REPO_ROOT 探测 + alias 路由
-        │                          （未知 alias 静默透传，fail-open）
+claude-hooks/dispatcher.sh         route by alias (unknown alias → pass through)
         ▼
 claude-hooks/unified/unified-hook.sh
-        │  node
         ▼
-claude-hooks/unified/engine.js    ── rules-v2.json + rules.d/*.json（when 树求值）
-        │                          ── run_script 挂载 scripts/*.sh（exit2 → deny 通道保真）
+claude-hooks/unified/engine.js     evaluates rules-v2.json + rules.d/*.json
+        │                          mounts scripts/*.sh via run_script
         ▼
 hookSpecificOutput (deny / context / modify) → Claude Code
 ```
 
-- **fail-open 硬约束**：node 缺失 / 引擎崩溃 / 配置损坏 → 透传原 stdin + exit 0 +
-  firelog 审计行——引擎故障绝不阻塞工具调用。
-- **one_shot 窗口**：`unified/state/`（gitignored）承载哨兵，multi-agent 场景按
-  issue/run 双维度分型。
+- Engine failures are fail-open: original stdin passes through with exit 0, plus
+  an audit line in the fire log.
+- One-shot suppression state lives in `unified/state/` (gitignored) and is
+  scoped per issue/run so multi-agent sessions don't suppress each other.
 
 ## Tests
 
 ```bash
-bash tests/run_all.sh          # 聚合 runner（目录发现，排除清单带归因标签）
-bash tests/test_v2_unified_engine_p0.sh   # 引擎核心套件
-node --test tests/validator.test.mjs      # 规则校验器
+bash tests/run_all.sh                     # aggregate runner
+node --test tests/validator.test.mjs      # rules validator
+python3 -m pytest tests/autopilots/ -q    # autopilot suites
 ```
-
-## License
-
-MIT — 与 godot-qa-toolkit 保持一致。
 
 ## Contributing
 
-- 唯一检出 `~/tools/dev-forge/`（main 常驻）；改动走共享分支 + PR，merge 策略
-  遵循仓库约定（禁 squash）。
-- hooks 规则分为两个 lane：`rules-v2.json`（引擎级）与 `rules.d/runscript-mounts.json`
-  （挂载级），两文件互不交叉编辑（见 docs/hooks-implementation-guide.md）。
-- `adapters/` 内工具例外：单系统绑定，不做通用化改造。
+- Work on branches and open PRs against `main` (merge commits only; squash is
+  disabled).
+- Hooks rules live in two non-overlapping lanes: `rules-v2.json` (engine-level)
+  and `rules.d/runscript-mounts.json` (script mounts). See
+  [docs/hooks-implementation-guide.md](docs/hooks-implementation-guide.md).
+- `adapters/` tools are bound to specific external systems on purpose and are
+  exempt from generalization.
+
+## License
+
+MIT
