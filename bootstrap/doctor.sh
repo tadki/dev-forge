@@ -47,9 +47,11 @@ if [ "$HITS" -eq 0 ]; then ok "no legacy global-position references"; else bad "
 # ④b KOL 标识符零残留（SEE-1429 §6 判据）+ KOL 检出路径字面量（修订 B）
 echo "--- 4b. legacy KOL identifiers & checkout-path literals"
 KOL_PAT="KOL""_REPO_ROOT\|king""oflikes\|KOL_""SERVICE"
-HITS2=$(grep -rn --exclude=doctor.sh --exclude=dev-forge-migration-plan.md "$KOL_PAT" "$REPO_ROOT/claude-hooks" "$REPO_ROOT/bootstrap" "$REPO_ROOT/launch" "$REPO_ROOT/adapters" "$REPO_ROOT/autopilots" "$REPO_ROOT/docs" 2>/dev/null | wc -l)
+# SEE-1430：docs/archive/hooks-old-* 为退役部署位快照，KOL 字面量是历史固有内容
+# （同 dev-forge-migration-plan.md 豁免先例 4187548），不参与零残留扫描。
+HITS2=$(grep -rn --exclude=doctor.sh --exclude=dev-forge-migration-plan.md --exclude-dir='hooks-old-*' "$KOL_PAT" "$REPO_ROOT/claude-hooks" "$REPO_ROOT/bootstrap" "$REPO_ROOT/launch" "$REPO_ROOT/adapters" "$REPO_ROOT/autopilots" "$REPO_ROOT/docs" 2>/dev/null | wc -l)
 [ "$HITS2" -eq 0 ] && ok "no KOL identifier residue" || bad "$HITS2 KOL identifier hits"
-HITS3=$(grep -rn --exclude=doctor.sh --exclude=dev-forge-migration-plan.md 'GodotProjects/king-of-likes' "$REPO_ROOT/claude-hooks" "$REPO_ROOT/bootstrap" "$REPO_ROOT/launch" "$REPO_ROOT/adapters" "$REPO_ROOT/autopilots" "$REPO_ROOT/docs" 2>/dev/null | grep -v ':\s*#' | wc -l)
+HITS3=$(grep -rn --exclude=doctor.sh --exclude=dev-forge-migration-plan.md --exclude-dir='hooks-old-*' 'GodotProjects/king-of-likes' "$REPO_ROOT/claude-hooks" "$REPO_ROOT/bootstrap" "$REPO_ROOT/launch" "$REPO_ROOT/adapters" "$REPO_ROOT/autopilots" "$REPO_ROOT/docs" 2>/dev/null | grep -v ':\s*#' | wc -l)
 [ "$HITS3" -eq 0 ] && ok "no KOL checkout path literals" || bad "$HITS3 KOL path literal hits (code lines)"
 
 # ⑤ settings registration consistency (only meaningful post-cutover)

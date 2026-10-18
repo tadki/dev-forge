@@ -1,0 +1,473 @@
+{
+  "version": 2,
+  "rules": [
+    {
+      "name": "atlas-workflow-skill-check",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Atlas"
+        ]
+      },
+      "one_shot": {
+        "scope": "issue"
+      },
+      "enabled": true,
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "multica issue comment add(\\s|$)"
+          },
+          {
+            "op": "not",
+            "arg": {
+              "op": "any",
+              "args": [
+                {
+                  "op": "used_skill",
+                  "skill": "taskflow"
+                },
+                {
+                  "op": "used_skill",
+                  "skill": "task-assign"
+                },
+                {
+                  "op": "used_skill",
+                  "skill": "code-review"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "**错误：发布 comment 已被拦截，必须进行自查** 。检测到本次 run 你未使用任何工作类技能，你必须回顾本次 run 性质，判定是否应使用以下技能：任务首次编排 -> /taskflow；任务流程中子步骤分配 -> /task-assign；PR 审核 -> /code-review。如适用必须立即激活技能并遵守指引重新执行任务流程。如要继续发布 comment 请回复以下内容后再尝试：\"本次任务为<任务简介>，我确认非任务首次编排、任务子步骤分配或PR审查任务，请予以放行\""
+        }
+      ]
+    },
+    {
+      "name": "revy-testing-skill-check",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Revy"
+        ]
+      },
+      "one_shot": {
+        "scope": "issue"
+      },
+      "enabled": true,
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "multica issue comment add(\\s|$)"
+          },
+          {
+            "op": "not",
+            "arg": {
+              "op": "used_skill",
+              "skill": "revy-testing"
+            }
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "**错误：发布 comment 已被拦截，必须进行自查** 。检测到本次 run 你未使用任何工作类技能，你必须回顾本次 run 性质，判定是否应使用以下技能：所有测试相关任务 -> /revy-testing。如适用必须立即激活技能并遵守指引重新执行任务流程。如要继续发布 comment 请回复以下内容后再尝试：\"本次任务为<任务简介>，我确认非任何测试类/QA任务，请予以放行\""
+        }
+      ]
+    },
+    {
+      "name": "archi-doc-edit-skill-check",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Archi"
+        ]
+      },
+      "one_shot": {
+        "scope": "issue"
+      },
+      "enabled": true,
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "multica issue comment add(\\s|$)"
+          },
+          {
+            "op": "not",
+            "arg": {
+              "op": "any",
+              "args": [
+                {
+                  "op": "used_skill",
+                  "skill": "doc-edit"
+                },
+                {
+                  "op": "used_skill",
+                  "skill": "edit-skill"
+                },
+                {
+                  "op": "used_skill",
+                  "skill": "edit-claude"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "**错误：发布 comment 已被拦截，必须进行自查** 。检测到本次 run 你未使用任何工作类技能，你必须回顾本次 run 性质，判定是否应使用以下技能：所有文档类、架构类、计划类任务 -> /doc-edit。如适用必须立即激活技能并遵守指引重新执行任务流程。如要继续发布 comment 请回复以下内容后再尝试：\"本次任务为<任务简介>，我确认非任何文档类、架构类、计划类任务，请予以放行\""
+        }
+      ]
+    },
+    {
+      "name": "bachi-coding-skill-check",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Bachi"
+        ]
+      },
+      "one_shot": {
+        "scope": "issue"
+      },
+      "enabled": true,
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "multica issue comment add(\\s|$)"
+          },
+          {
+            "op": "not",
+            "arg": {
+              "op": "used_skill",
+              "skill": "bachi-coding"
+            }
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "**错误：发布 comment 已被拦截，必须进行自查** 。检测到本次 run 你未使用任何工作类技能，你必须回顾本次 run 性质，判定是否应使用以下技能：所有后端开发/编码类任务 -> /bachi-coding。如适用必须立即激活技能并遵守指引重新执行任务流程。如要继续发布 comment 请回复以下内容后再尝试：\"本次任务为<任务简介>，我确认非任何后端开发/编码类任务，请予以放行\""
+        }
+      ]
+    },
+    {
+      "name": "atlas-bash-skill-reminder",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Atlas"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "context",
+          "message": "[atlas-bash-skill-reminder] 你正在以 Atlas（Team Leader）身份运行。\n[atlas-bash-skill-reminder] 技能提醒：\n[atlas-bash-skill-reminder]   - 任务编排 -> 调用 /taskflow\n[atlas-bash-skill-reminder]   - 任务分配 -> 调用 /taskassign\n[atlas-bash-skill-reminder]   - 项目探索 -> 调用 /explore\n[atlas-bash-skill-reminder]   - PR 审核 -> 调用 /code-review"
+        }
+      ],
+      "one_shot": {
+        "scope": "issue"
+      }
+    },
+    {
+      "name": "archi-doc-edit-reminder",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Archi"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "context",
+          "message": "[archi-doc-edit-reminder] 你正在以 Archi（架构/评审/文档 Agent）身份运行。\n[archi-doc-edit-reminder] 若当前任务涉及编辑文档（CLAUDE.md、技能文档、设计文档、计划文档等），调用 /doc-edit 加载专用文档编辑技能。"
+        }
+      ],
+      "one_shot": {
+        "scope": "issue"
+      }
+    },
+    {
+      "name": "revy-testing-reminder",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Revy"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "context",
+          "message": "[revy-testing-reminder] 你正在以 Revy（QA Agent）身份运行。\n[revy-testing-reminder] 对于测试类任务，调用 /revy-testing 加载完整 QA 工作流。"
+        }
+      ],
+      "one_shot": {
+        "scope": "issue"
+      }
+    },
+    {
+      "name": "bachi-coding-reminder",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Bachi"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "context",
+          "message": "[bachi-coding-reminder] 你正在以 Bachi（后端开发 Agent）身份运行。\n[bachi-coding-reminder] 对于后端/编码类任务，调用 /bachi-coding 加载专用编码技能。"
+        }
+      ],
+      "one_shot": {
+        "scope": "issue"
+      }
+    },
+    {
+      "name": "recall-reminder",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "context",
+          "message": "[recall-reminder] 必须激活 /recall 技能完整召回任务记忆 \n[recall-reminder] 必须使用 hindsight 工具召回「owner-order」页面并遵守规则。"
+        }
+      ],
+      "one_shot": {
+        "scope": "issue"
+      }
+    },
+    {
+      "name": "mention-confirm-check",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "one_shot": {
+        "scope": "run"
+      },
+      "enabled": true,
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "multica issue comment add(\\s|$)"
+          },
+          {
+            "op": "content",
+            "pattern": "\\[@[^\\]]+\\]\\(mention:\\/\\/(agent|member)\\/[^)]+\\)"
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "**错误：发布 comment 已被拦截，必须进行自查** 。检测到本条评论包含 @mention，必须确认以下两点：1) 本回复非纯确认性 comment（无新工作内容）；2) 已逐项复核评论中所有 @ 点位，确认只唤醒了必要的人员，未唤醒无需参与的成员。如确认无误，请回复以下内容后再尝试：\"本次回复为<任务简介/结果摘要>，我严格确认本回复非纯确认性回复，且已复核所有 @ 点位，严格确认将避免唤醒非必要参与人员，请予以放行\""
+        }
+      ]
+    },
+    {
+      "name": "child-issue-guard",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "enabled": true,
+      "when": {
+        "op": "command",
+        "scope": "current",
+        "pattern": "multica issue (create|update)",
+        "has_flag": "--parent",
+        "flag_has_value": true
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "[child-issue-guard] ERROR: 严禁创建任何子 issue。\nOwner 布置的 task 必须在单一 issue 中完成。\n使用 /task-assign 技能来获取更多关于子步骤分配的指引。"
+        }
+      ]
+    },
+    {
+      "name": "grepai-search-reminder",
+      "on": {
+        "in": [
+          "PostToolUse"
+        ]
+      },
+      "enabled": true,
+      "when": {
+        "op": "any",
+        "args": [
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "grep(\\s|$)"
+          },
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "rg(\\s|$)"
+          },
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "ag(\\s|$)"
+          },
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "ack(\\s|$)"
+          },
+          {
+            "op": "tool",
+            "in": [
+              "Grep"
+            ]
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "context",
+          "message": "[grepai-search-reminder] 提示：检测到你正在使用 grep 类查找工具。必须铭记：代码探索应优先使用 grepai MCP 工具集进行语义搜索，可按意图与语义命中代码，提高搜索精度与token效率。"
+        }
+      ]
+    },
+    {
+      "name": "tscn-tres-guard",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "enabled": true,
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "tool",
+            "in": [
+              "Write",
+              "Edit"
+            ]
+          },
+          {
+            "op": "file",
+            "patterns": [
+              "*.tscn",
+              "*.tres"
+            ]
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "context",
+          "message": "[tscn-tres-guard] You are about to Edit a Godot scene/resource file (.tscn/.tres).\nThese files contain fragile reference structures that pure-text replacement can easily break.\n\nMUST check before proceeding:\n  1. UID references (uid=\"uid://...\") — do NOT modify UID values\n  2. ExtResource IDs (id=\"...\" / ExtResource(\"...\")) — ensure all references update together\n  3. Node paths (parent=\"...\", from=\"...\", to=\"...\") — verify paths stay consistent\n  4. Signal connections ([connection signal=...]) — ensure from/to paths are valid\n  5. load_steps count — update if ext_resource/sub_resource count changes\n\nPROHIBITED:\n  - Renaming nodes without updating ALL referencing paths\n  - Deleting [ext_resource]/[sub_resource] without verifying no other line references the ID\n  - Modifying UID values (managed by Godot editor)\n  - Cross-file batch replacement of UIDs or ExtResource IDs\n\nPREFER: Use Godot editor for scene/resource changes. Only Edit pure-text property values.\nSee CLAUDE.md §7 for full .tscn/.tres editing safety guidelines."
+        }
+      ]
+    },
+    {
+      "name": "doc-reminder",
+      "on": {
+        "in": [
+          "PostToolUse"
+        ]
+      },
+      "enabled": false,
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "file",
+            "patterns": [
+              "*.md",
+              "*/docs/*",
+              "CLAUDE.md"
+            ]
+          },
+          {
+            "op": "not",
+            "arg": {
+              "op": "branch",
+              "in": [
+                "main",
+                "master"
+              ]
+            }
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "context",
+          "message": "[doc-reminder] 警告：在非 main/master 分支上编辑了文档文件。\n[doc-reminder] CLAUDE.md 规则：所有文档任务必须直接在 main/master 上完成并 commit+push。"
+        }
+      ]
+    }
+  ]
+}

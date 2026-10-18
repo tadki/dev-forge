@@ -1,0 +1,72 @@
+{
+  "description": "SEE-1330 P1 run_script 挂载规则（S6 Bachi lane 所有）。脚本本体零改动；本文件只承载触发条件配置 + 通道桥接参数。${HOOKS_DIR} 由引擎解析为 hooks 根目录（repo 布局与 ~/.claude/hooks 部署布局一致）。rules-v2.json 规则段归 S5 Fronti，两 lane 不得交叉编辑本文件与 rules-v2.json。",
+  "rules": [
+    {
+      "name": "gdformat-gdlint-mount",
+      "version_note": "S6 目标1：v1 PostToolUse Write|Edit 上 .gd 文件 → gdformat→gdlint→mcp-mouse-lint 三段串行；任一失败 exit 2 = fail-close",
+      "on": { "in": ["PostToolUse"] },
+      "when": { "op": "all", "args": [
+        { "op": "tool", "in": ["Write", "Edit"] },
+        { "op": "file", "patterns": ["*.gd"] }
+      ] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/gdformat-gdlint.sh", "timeout_ms": 120000, "deny_exit_codes": [2], "on_fail": "close" }]
+    },
+    {
+      "name": "atlas-taskflow-mark-a-mount",
+      "version_note": "S6 目标2：v1 matcher=Skill；skill 维度由脚本内判定保真（零改动）",
+      "on": { "in": ["PostToolUse"] },
+      "agents": { "include": ["Atlas"] },
+      "when": { "op": "tool", "in": ["Skill"] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/atlas-taskflow-mark-a.sh", "timeout_ms": 30000 }]
+    },
+    {
+      "name": "atlas-taskflow-mark-b-mount",
+      "version_note": "S6 目标2：v1 matcher=Bash；issue create 判定与状态写入在脚本内",
+      "on": { "in": ["PostToolUse"] },
+      "agents": { "include": ["Atlas"] },
+      "when": { "op": "tool", "in": ["Bash"] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/atlas-taskflow-mark-b.sh", "timeout_ms": 30000 }]
+    },
+    {
+      "name": "atlas-taskflow-exit-reminder-mount",
+      "version_note": "S6 目标2：v1 matcher=Bash PreToolUse；deny/reminder 分支在脚本内",
+      "on": { "in": ["PreToolUse"] },
+      "agents": { "include": ["Atlas"] },
+      "when": { "op": "tool", "in": ["Bash"] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/atlas-taskflow-exit-reminder.sh", "timeout_ms": 15000 }]
+    },
+    {
+      "name": "mention-check-mount",
+      "version_note": "S6 目标3：脚本零改动挂载；前端触发= v1 matcher Bash；2026-10-17 Owner 指示：@mention 强制仅对 Atlas 生效，agents 顶层由 except Chekky 收窄为 include Atlas",
+      "on": { "in": ["PreToolUse"] },
+      "agents": { "include": ["Atlas"] },
+      "when": { "op": "tool", "in": ["Bash"] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/mention-check.sh", "timeout_ms": 10000 }]
+    },
+    {
+      "name": "auto-pr-stop-mount",
+      "version_note": "S10/P2：v1 matcher=Stop；stop_hook_active 防循环双防线（引擎 payload op 第一道 + 脚本内 L23-37 第二道，见 §6.4）；脚本零改动，副作用全保真；fail-open 硬承诺由 run_script 缺省 on_fail=open 承载",
+      "on": { "in": ["Stop"] },
+      "when": { "op": "all", "args": [
+        { "op": "payload", "path": "stop_hook_active", "equals": false }
+      ] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/auto-pr-on-stop.sh", "timeout_ms": 300000 }]
+    },
+    {
+      "name": "repo-checkout-mount",
+      "version_note": "S14/P3：v1 matcher=SessionStart；10 分钟幂等 marker（.cc-aligned-* 600s）与 checkout 全链在脚本内零改动；jq 依赖由挂载层环境确认（run_script 全 env 继承）；fail-open 硬承诺由 on_fail 缺省 open 承载（失败 → 放行 + hint 语义脚本内保持）",
+      "on": { "in": ["SessionStart"] },
+      "when": { "op": "all", "args": [
+        { "op": "payload", "path": "hook_event_name", "equals": "SessionStart" }
+      ] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/repo-checkout.sh", "timeout_ms": 180000 }]
+    },
+    {
+      "name": "push-guard-mount",
+      "version_note": "S6 目标3：exit 2 = 故意 deny 通道（deny_exit_codes 转义）；其余失败按 v1 解析异常兜底放行（on_fail open）",
+      "on": { "in": ["PreToolUse"] },
+      "when": { "op": "tool", "in": ["Bash"] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/push-guard.sh", "timeout_ms": 10000, "deny_exit_codes": [2] }]
+    }
+  ]
+}

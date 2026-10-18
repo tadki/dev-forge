@@ -128,8 +128,9 @@ function ruleAgentsMatch(rule) {
 // /tmp/.hook-fired-* 旧双根根之一停止写入：兼容路径降级为只读（存量测试断言/人工排查）；
 // GC = ①命中写入主根后删除同键 /tmp 旧哨兵（每 run 收敛一档，双根计数不再失衡增长）；
 //    ②每次引擎运行扫描 /tmp/.hook-fired-* 中 mtime 超 SENTINEL_TTL_MS 的孤儿哨兵直接 GC。
-const STATE_ROOT = process.env.HOOK_STATE_DIR
-  || path.join(process.env.HOME || '/root', '.claude', 'hooks', 'unified', 'state');
+// SEE-1430 state-root 修补：部署位 = 本检出 unified/，兜底随部署位自定位（与
+// dispatcher 相对路由、firelog lib 深度同型）；HOOK_STATE_DIR 覆写保留。
+const STATE_ROOT = process.env.HOOK_STATE_DIR || path.join(__dirname, 'state');
 const SENTINEL_TTL_MS = 24 * 60 * 60 * 1000;
 
 // SEE-1333 §SPEC-013 隔离 invariant（组合语义，Owner 组合框架裁定 2026-09-21）：
