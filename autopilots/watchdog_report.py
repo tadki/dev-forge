@@ -5,7 +5,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-# Add .dev/autopilots to path for multica_helpers import
+# Add autopilots/ (repo-relative) to path for multica_helpers import
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

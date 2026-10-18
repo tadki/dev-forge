@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-# Ensure .dev/autopilots is on path
+# Ensure autopilots/ (repo-relative) is on path
 import sys
 
 scripts_dir = os.path.join(os.path.dirname(__file__), "..", "..", "autopilots")

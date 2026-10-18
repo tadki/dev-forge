@@ -19,7 +19,7 @@ import sys
 
 import pytest
 
-# Add .dev/autopilots to path for module imports
+# Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilots"))
 
 from agent_watchdog import execute_reruns
