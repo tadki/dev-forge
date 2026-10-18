@@ -14,7 +14,7 @@ import os
 import re
 import sys
 
-# Add .dev/autopilots to path for multica_helpers import
+# Add autopilots/ (repo-relative) to path for multica_helpers import
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from multica_helpers import AGENT_MAP, ATLAS_ID, multica_stdin_cmd

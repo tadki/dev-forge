@@ -9,7 +9,7 @@ import sys
 import unittest
 from unittest.mock import patch, MagicMock
 
-# Add .dev/autopilots to path for module imports
+# Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilots"))
 
 from push_comment_sender import (

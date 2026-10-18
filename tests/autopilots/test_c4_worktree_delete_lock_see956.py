@@ -14,7 +14,7 @@ import tempfile
 
 import pytest
 
-# Add .dev/autopilots to path for module imports
+# Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilots"))
 
 from local_repo_check import acquire_worktree_delete_lock, _worktree_is_locked
