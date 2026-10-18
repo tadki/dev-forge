@@ -5,7 +5,7 @@ Fetches GitHub releases for multica-ai/multica, compares against the
 locally installed version, and generates a structured changelog report.
 
 Can be run directly on Windows without bash:
-    python .dev/autopilots/version_check.py [--dry-run] [--no-dry-run] [--verbose]
+    python autopilots/version_check.py [--dry-run] [--no-dry-run] [--verbose]
 """
 
 import argparse
@@ -20,7 +20,7 @@ import time
 import urllib.request
 import urllib.error
 
-# Add .dev/autopilots to path for module imports
+# Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from multica_helpers import PidFileLock, WorkspaceMutex, multica_stdin_cmd
 

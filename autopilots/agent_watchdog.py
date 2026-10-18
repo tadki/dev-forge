@@ -6,8 +6,8 @@ killed by Multica's idle_watchdog (status=failed, error contains
 "idle watchdog"), and re-enqueues them via `multica issue rerun`.
 
 Usage:
-    python .dev/autopilots/agent_watchdog.py --dry-run
-    python .dev/autopilots/agent_watchdog.py --no-dry-run \\
+    python autopilots/agent_watchdog.py --dry-run
+    python autopilots/agent_watchdog.py --no-dry-run \\
         --execution-issue-id <uuid>
 """
 
@@ -19,7 +19,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
-# Add .dev/autopilots to path for module imports
+# Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from multica_helpers import (

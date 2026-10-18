@@ -44,7 +44,7 @@ separator() {
 
 # P4 收敛（SEE-1330）：v1 alias 路由删除——skill-check 等仅剩 unified-hook case；
 # 注册断言同步更新为收敛后语义。实机全局副本由 Atlas 在 P4 cutover 批同步，
-# 本地开发期间可能尚未收敛——统一以 .dev/hooks 真源为断言对象（只读，不触实机）。
+# 本地开发期间可能尚未收敛——统一以 claude-hooks/ 真源为断言对象（SEE-1430 迁 dev-forge）（只读，不触实机）。
 REPO_DISPATCHER="$(cd "$(dirname "$0")/.." && pwd)/claude-hooks/dispatcher.sh"
 DISPATCHER="$REPO_DISPATCHER"
 

@@ -5,7 +5,7 @@ Scans issues across all statuses, collects metadata, counts push reminders,
 checks run states, and outputs structured JSON for agent decision-making.
 
 Can be run directly on Windows without bash:
-    python .dev/autopilots/issue_status_check.py [--dry-run] [--no-dry-run] [--verbose] [--grace-period-minutes N]
+    python autopilots/issue_status_check.py [--dry-run] [--no-dry-run] [--verbose] [--grace-period-minutes N]
 
 Uses atomic OS-level file locking (fcntl.flock on Unix, msvcrt.locking on Windows)
 to prevent TOCTOU race conditions in PID file lock acquisition.
@@ -20,7 +20,7 @@ import time
 import signal
 import tempfile
 
-# Add .dev/autopilots to path for module imports
+# Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from push_comment_sender import (
     send_push_comments, PUSH_CONTENT_MARKERS, send_kill_switch_alert,

@@ -5,7 +5,7 @@ Scans worktree directories, collects metadata, checks git status,
 auto-deletes clean+pushed worktrees, and outputs structured JSON.
 
 Can be run directly on Windows without bash:
-    python .dev/autopilots/local_repo_check.py --workspace-root <path> [--dry-run]
+    python autopilots/local_repo_check.py --workspace-root <path> [--dry-run]
 """
 
 import argparse

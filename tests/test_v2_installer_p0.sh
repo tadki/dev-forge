@@ -334,7 +334,7 @@ console.log(missing.length === 0 ? 'COMPLETE' : 'MISSING:' + missing.join(','));
 
 # 9b install 后逐 artifact cmp 仓库真源 + 全部存在（事故 6 根因 = P2/P3 新增脚本缺失）
 # 源解析与 installer deploy_runtime 同序：.claude/hooks/ 相对为主，hook-wrapper.sh /
-# dispatcher.sh 的仓库单源在 .dev/hooks/（SEE-1388 SPEC-006 入册）。
+# dispatcher.sh 的仓库单源在 claude-hooks/（SEE-1388 SPEC-006 入册；SEE-1430 迁 dev-forge）。
 DEP_MISSING=0
 for A in $(node -e "const m=require('$MANIFEST'); console.log(m.runtime_artifacts.join(' '))"); do
     SRC="$REPO_ROOT/claude-hooks/$A"

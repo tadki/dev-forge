@@ -1,4 +1,4 @@
-hooks/unified/state/
+claude-hooks/unified/state/
 __pycache__/
 *.pyc
 node_modules/
