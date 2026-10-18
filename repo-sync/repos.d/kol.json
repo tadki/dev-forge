@@ -1,0 +1,23 @@
+{
+    "_comment": "SEE-1430b 仓库级注册层：每仓一份注册文件，loader 扫 repos.d/*.json 合并。repo_path 直写实值（__KOL_REPO_ROOT__ 哨兵废除）。新增仓库 = 落一份新 JSON，无需改脚本。",
+    "name": "kol",
+    "repo_path": "/mnt/d/GodotProjects/king-of-likes",
+    "remote": "origin",
+    "branch": "master",
+    "lock_file": "/tmp/king-of-likes-sync.lock",
+    "pid_file": "/tmp/king-of-likes-sync-daemon.pid",
+    "log_dir": "/mnt/d/GodotProjects/king-of-likes/.dev/logs",
+    "state_file": "/mnt/d/GodotProjects/king-of-likes/.dev/logs/repo-sync-state.json",
+    "alert_issue_id": "a3181de2-539c-4624-9db8-30b1003ec6f9",
+    "daemon_poll_interval_seconds": 5,
+    "daemon_max_consecutive_failures": 10,
+    "daemon_backoff_max_seconds": 300,
+    "subprocess_timeout_seconds": 120,
+    "fetch_retry_count": 3,
+    "fetch_retry_delay_seconds": 2.0,
+    "stash_on_dirty": true,
+    "gitlink_forward_enabled": true,
+    "conflict_resolution_strategy": "rebase_first",
+    "ff_only": true,
+    "dry_run": false
+}
