@@ -7,7 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const V = require('../../../.claude/hooks/validate-rules.js');
+// SEE-1430：真源随迁移落位本仓 claude-hooks/（旧全局部署位 ~/.claude/hooks 已退役）
+const V = require('../claude-hooks/validate-rules.js');
 
 const POINTS = V.HOOK_POINTS;
 const PRE = 'PreToolUse';
