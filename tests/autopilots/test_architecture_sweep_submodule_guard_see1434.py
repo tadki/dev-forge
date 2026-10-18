@@ -15,6 +15,7 @@ AND the index as a 160000 gitlink, but never materializes the child working
 tree — the exact state a plain `multica repo checkout` leaves behind.
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -56,30 +57,34 @@ def _read(path):
 
 
 def _sha256(content: str) -> str:
-    import hashlib
-
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _init_repo(path):
+    """Create an empty git repo at `path` with a fixed identity; returns path."""
+    path.mkdir(parents=True)
+    _git("init", "-q", "-b", "main", cwd=path)
+    _git("config", "user.email", "t@t.dev", cwd=path)
+    _git("config", "user.name", "t", cwd=path)
+    return path
+
+
+def _seed_subrepo(base):
+    """Fork repo holding one committed file; returns (repo_path, head_sha)."""
+    sub = _init_repo(base / "subrepo")
+    _write(str(sub / "a.txt"), "a-one\n")
+    _git("add", "-A", cwd=sub)
+    _git("commit", "-q", "-m", "s1", cwd=sub)
+    return sub, _git_out("rev-parse", "HEAD", cwd=sub)
 
 
 @pytest.fixture()
 def unmaterialized_repo(tmp_path):
     """Parent repo with a registered-but-unmaterialized addons/godot_mcp gitlink."""
     base = tmp_path / "fixture"
-    sub = base / "subrepo"
-    sub.mkdir(parents=True)
-    _git("init", "-q", "-b", "main", cwd=sub)
-    _git("config", "user.email", "t@t.dev", cwd=sub)
-    _git("config", "user.name", "t", cwd=sub)
-    _write(str(sub / "a.txt"), "a-one\n")
-    _git("add", "-A", cwd=sub)
-    _git("commit", "-q", "-m", "s1", cwd=sub)
-    s1 = _git_out("rev-parse", "HEAD", cwd=sub)
+    _sub, s1 = _seed_subrepo(base)
 
-    parent = base / "parent"
-    parent.mkdir(parents=True)
-    _git("init", "-q", "-b", "main", cwd=parent)
-    _git("config", "user.email", "t@t.dev", cwd=parent)
-    _git("config", "user.name", "t", cwd=parent)
+    parent = _init_repo(base / "parent")
     _write(
         str(parent / ".gitmodules"),
         '[submodule "addons/godot_mcp"]\n'
@@ -179,21 +184,9 @@ def test_unmaterialized_first_run_does_not_initialize_empty_manifest(patrol, unm
 def materialized_repo(tmp_path):
     """Parent repo whose addons/godot_mcp IS a real materialized submodule clone."""
     base = tmp_path / "mat"
-    sub = base / "subrepo"
-    sub.mkdir(parents=True)
-    _git("init", "-q", "-b", "main", cwd=sub)
-    _git("config", "user.email", "t@t.dev", cwd=sub)
-    _git("config", "user.name", "t", cwd=sub)
-    _write(str(sub / "a.txt"), "a-one\n")
-    _git("add", "-A", cwd=sub)
-    _git("commit", "-q", "-m", "s1", cwd=sub)
-    s1 = _git_out("rev-parse", "HEAD", cwd=sub)
+    sub, s1 = _seed_subrepo(base)
 
-    parent = base / "parent"
-    parent.mkdir(parents=True)
-    _git("init", "-q", "-b", "main", cwd=parent)
-    _git("config", "user.email", "t@t.dev", cwd=parent)
-    _git("config", "user.name", "t", cwd=parent)
+    parent = _init_repo(base / "parent")
     addon = parent / "addons" / "godot_mcp"
     _git("clone", "-q", str(sub), str(addon), cwd=parent)
     _git("update-index", "--add", "--cacheinfo", f"160000,{s1},addons/godot_mcp", cwd=parent)
