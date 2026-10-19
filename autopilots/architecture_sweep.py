@@ -124,6 +124,36 @@ EXCLUDED_PREFIXES = (
 MAX_FILE_LINES = 800
 MAX_FUNC_LINES = 50
 
+# SEE-1430c O1：红线常量可经 --config 覆盖（默认 configs/kol.json）。缺省/读取
+# 失败时保持上方硬编码值 = 行为完全兼容。检测语义不变，仅常量来源变化。
+DEFAULT_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "configs", "kol.json"
+)
+
+
+def apply_config(path: str) -> None:
+    """Override the red-line constants from a target config (best-effort).
+
+    Only two surfaces are wired (per SEE-1430c O1): `max_file_lines` and
+    `forbidden_identifiers`. Any read/parse failure leaves the built-in
+    defaults untouched (behaviour-compatible).
+    """
+    global MAX_FILE_LINES, GAMESTATE_MIRROR_FIELDS
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(cfg, dict):
+        return
+    limit = cfg.get("max_file_lines")
+    if isinstance(limit, int) and limit > 0:
+        MAX_FILE_LINES = limit
+    forbidden = cfg.get("forbidden_identifiers")
+    if isinstance(forbidden, list) and all(isinstance(x, str) for x in forbidden):
+        GAMESTATE_MIRROR_FIELDS = list(forbidden)
+
+
 # S1 (SEE-1226): cross-slot junit aggregation freshness window, aligned with
 # the weekly L1 cadence.
 JUNIT_MAX_AGE_DAYS = 7
@@ -221,6 +251,14 @@ def parse_args():
         default=os.environ.get("KILL_SWITCH", "false"),
         help="Kill switch: true/false. When true, suppress baseline/heartbeat "
              "writes (pure read-only output) (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("ARCH_SWEEP_CONFIG")
+        or os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "kol.json"),
+        help="Patrol target config JSON (default: configs/kol.json next to the script). "
+             "Missing/unreadable config falls back to the built-in defaults "
+             "(behaviour-compatible).",
     )
     return parser.parse_args()
 
@@ -1509,6 +1547,9 @@ def print_report(report: dict) -> None:
 
 def main() -> int:
     args = parse_args()
+    # SEE-1430c O1: wire the patrol target config (falls back to the built-in
+    # constants when the file is absent/unreadable — behaviour-compatible).
+    apply_config(args.config)
 
     # Locks: PID (per-script) + workspace mutex (cross-autopilot).
     _pid_lock = PidFileLock(os.path.join(tempfile.gettempdir(), "architecture_sweep.pid"))

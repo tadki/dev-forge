@@ -1,11 +1,27 @@
 {
-  "_comment": "SEE-1429 Phase 2：architecture_sweep 巡逻目标配置（数据非代码）。KOL 专属扫描目标 + 红线清单 + 排除面集中于此；脚本通用化，换目标 = 换 config 文件（--config / ARCH_SWEEP_CONFIG）。",
+  "_comment": "SEE-1429 Phase 2：architecture_sweep 巡逻目标配置（数据非代码）。KOL 专属扫描目标 + 红线清单 + 排除面集中于此；脚本通用化，换目标 = 换 config 文件（--config / ARCH_SWEEP_CONFIG）。 SEE-1430c O1：max_file_lines 与 forbidden_identifiers 已接线到脚本（缺省回退硬编码）。",
   "target": "kol",
   "repo_name": "KingOfLikes-Godot",
   "redline_dir": "addons/godot_mcp",
-  "excluded_dirs": [".godot", ".git", "tests/reports", "__pycache__", ".venv", "venv", "env"],
-  "excluded_prefixes": ["addons/gut/", "addons/godot_mcp/"],
+  "excluded_dirs": [
+    ".godot",
+    ".git",
+    "tests/reports",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env"
+  ],
+  "excluded_prefixes": [
+    "addons/gut/",
+    "addons/godot_mcp/"
+  ],
   "max_file_lines": 800,
   "max_func_lines": 50,
-  "forbidden_identifiers": ["total_likes", "total_clicks"]
+  "forbidden_identifiers": [
+    "player_level",
+    "gold",
+    "total_likes",
+    "total_clicks"
+  ]
 }
