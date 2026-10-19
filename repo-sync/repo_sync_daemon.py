@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Daemon process for repo bidirectional sync.
+"""Daemon process for repo local sync (pull-only; SEE-1430b 语义改向).
 
 Runs repo_sync.py in a loop with configurable poll interval.
 Supports nohup / systemd launch. Manages PID file and handles SIGTERM.
