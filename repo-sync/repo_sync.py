@@ -626,10 +626,11 @@ def ensure_on_master_branch(
     dry_run=True: only detection and reporting — no stash/switch/pop.
     """
     # 1. Config validation (#10)
-    if branch != "master":
+    # SEE-1430b: dev-forge itself registered on 'main' — accept both defaults.
+    if branch not in ("master", "main"):
         return (
             False,
-            f"config branch is '{branch}'; only 'master' is supported for main-repo protection",
+            f"config branch is '{branch}'; only 'master' or 'main' is supported for main-repo protection",
             False,
         )
 
