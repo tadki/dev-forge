@@ -1,0 +1,22 @@
+{
+    "_comment": "SEE-1430b 仓库级注册层：每仓一份注册文件，loader 扫 repos.d/*.json 合并。repo_path 直写实值。新增仓库 = 落一份新 JSON，无需改脚本。dev-forge 自身注册（Owner 2026-10-19 指令）——注意：daemon 若跑在本仓检出内，拉取时工作树可能脏（agent 工作目录），stash_on_dirty=true 已兜底。",
+    "name": "devforge",
+    "repo_path": "/home/jerry/tools/dev-forge",
+    "remote": "origin",
+    "branch": "main",
+    "lock_file": "/tmp/dev-forge-sync.lock",
+    "pid_file": "/tmp/dev-forge-sync-daemon.pid",
+    "log_dir": "/home/jerry/.multica/dev-forge-sync-logs",
+    "state_file": "/home/jerry/.multica/dev-forge-sync-logs/repo-sync-state.json",
+    "alert_issue_id": "a3181de2-539c-4624-9db8-30b1003ec6f9",
+    "daemon_poll_interval_seconds": 5,
+    "daemon_max_consecutive_failures": 10,
+    "daemon_backoff_max_seconds": 300,
+    "subprocess_timeout_seconds": 120,
+    "fetch_retry_count": 3,
+    "fetch_retry_delay_seconds": 2.0,
+    "stash_on_dirty": true,
+    "conflict_resolution_strategy": "rebase_first",
+    "ff_only": true,
+    "dry_run": false
+}
