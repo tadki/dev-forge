@@ -111,21 +111,16 @@ def temp_config(tmp_path):
 # ---------------------------------------------------------------------------
 
 class TestConfigPath:
-    def test_default_config_path_uses_with_name(self):
-        """
-        Defect 1: DEFAULT_CONFIG_PATH must use with_name(), not with_suffix().
+    def test_default_config_path_points_at_registered_repo(self):
+        """SEE-1430b registration layout: DEFAULT_CONFIG_PATH points into the
+        repos.d registry (kol.json), so a bare `load_config()` resolves a
+        registered repo without extra arguments."""
+        assert DEFAULT_CONFIG_PATH == Path(__file__).resolve().parents[3] / "repo-sync" / "repos.d" / "kol.json"
 
-        with_suffix("_config.json") is invalid in Python 3.14+ because
-        with_suffix() requires the suffix to start with a dot.
-        with_name("repo_sync_config.json") replaces the entire filename,
-        which is correct regardless of Python version.
-        """
-        # Path must end with the correct filename
-        assert str(DEFAULT_CONFIG_PATH).endswith("repo_sync_config.json")
-
-    def test_default_config_path_is_sibling_to_script(self):
-        """Ensure the config path resolves to a sibling of repo_sync.py."""
-        assert DEFAULT_CONFIG_PATH.name == "repo_sync_config.json"
+    def test_default_config_path_lives_under_registry_dir(self):
+        """Registration system: the default config lives under repos.d/ —
+        dropping a new <name>.json there registers a new repository."""
+        assert DEFAULT_CONFIG_PATH.parent.name == "repos.d"
 
 
 class TestLoadConfig:

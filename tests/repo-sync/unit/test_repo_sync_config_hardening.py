@@ -15,14 +15,18 @@ import pytest
 from repo_sync import load_config, setup_logging, write_state
 
 
-class TestResolveRepoPathSentinel:
-    def test_sentinel_with_env_resolves_config_paths(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("GQT_REPO_ROOT", str(tmp_path))
-        config_file = tmp_path / "repo_sync_config.json"
+class TestRegistrationPathResolution:
+    """SEE-1430b: sentinel resolution retired — repo_path values in
+    repos.d/*.json are written as real paths. These tests assert the new
+    contract: real values resolve as-is, and the loader derives relative
+    log/state paths against the repo root."""
+
+    def test_real_repo_path_resolves_derived_paths(self, tmp_path):
+        config_file = tmp_path / "kol.json"
         config_file.write_text(
             json.dumps(
                 {
-                    "repo_path": "__GQT_REPO_ROOT__",
+                    "repo_path": str(tmp_path),
                     "remote": "origin",
                     "branch": "master",
                     "log_dir": "logs",
@@ -35,15 +39,12 @@ class TestResolveRepoPathSentinel:
         assert cfg["log_dir"] == str(tmp_path / "logs")
         assert cfg["state_file"] == str(tmp_path / "state" / "state.json")
 
-    def test_sentinel_with_nested_repo_path_matches_derived_paths(
-        self, tmp_path, monkeypatch
-    ):
-        monkeypatch.setenv("GQT_REPO_ROOT", str(tmp_path / "root"))
-        config_file = tmp_path / "repo_sync_config.json"
+    def test_real_nested_repo_path_matches_derived_paths(self, tmp_path):
+        config_file = tmp_path / "kol.json"
         config_file.write_text(
             json.dumps(
                 {
-                    "repo_path": "__GQT_REPO_ROOT__/nested",
+                    "repo_path": str(tmp_path / "root" / "nested"),
                     "remote": "origin",
                     "gitlink_forward_enabled": False,
                 }
@@ -52,28 +53,31 @@ class TestResolveRepoPathSentinel:
         cfg = load_config(config_file)
         assert cfg["repo_path"] == str(tmp_path / "root" / "nested")
 
-    def test_sentinel_without_env_raises(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("GQT_REPO_ROOT", raising=False)
-        config_file = tmp_path / "repo_sync_config.json"
+    def test_bogus_repo_path_passes_through_unmodified(self, tmp_path):
+        """Registration contract: loader only does ~ expansion — real values
+        are written by the registrar; a bogus path passes through verbatim so
+        the daemon (which validates existence at start) fails loudly, and no
+        sentinel-style magic rewriting happens at load time."""
+        bogus = str(tmp_path / "nonexistent-root")
+        config_file = tmp_path / "kol.json"
         config_file.write_text(
             json.dumps(
                 {
-                    "repo_path": "__GQT_REPO_ROOT__",
+                    "repo_path": bogus,
                     "remote": "origin",
                 }
             )
         )
-        with pytest.raises(RuntimeError, match="GQT_REPO_ROOT"):
-            load_config(config_file)
+        cfg = load_config(config_file)
+        assert cfg["repo_path"] == bogus
 
-    def test_absolute_paths_stay_absolute(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("GQT_REPO_ROOT", str(tmp_path))
+    def test_absolute_paths_stay_absolute(self, tmp_path):
         abs_log = tmp_path / "elsewhere-logs"
-        config_file = tmp_path / "repo_sync_config.json"
+        config_file = tmp_path / "kol.json"
         config_file.write_text(
             json.dumps(
                 {
-                    "repo_path": "__GQT_REPO_ROOT__",
+                    "repo_path": str(tmp_path),
                     "remote": "origin",
                     "log_dir": str(abs_log),
                     "state_file": str(tmp_path / "state" / "state.json"),
@@ -84,13 +88,12 @@ class TestResolveRepoPathSentinel:
         assert cfg["log_dir"] == str(abs_log)
         assert cfg["state_file"] == str(tmp_path / "state" / "state.json")
 
-    def test_missing_optional_keys_stay_absent(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("GQT_REPO_ROOT", str(tmp_path))
-        config_file = tmp_path / "repo_sync_config.json"
+    def test_missing_optional_keys_stay_absent(self, tmp_path):
+        config_file = tmp_path / "kol.json"
         config_file.write_text(
             json.dumps(
                 {
-                    "repo_path": "__GQT_REPO_ROOT__",
+                    "repo_path": str(tmp_path),
                     "remote": "origin",
                 }
             )
@@ -99,9 +102,8 @@ class TestResolveRepoPathSentinel:
         assert "log_dir" not in cfg
         assert "state_file" not in cfg
 
-    def test_non_sentinel_repo_path_expands_user(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("GQT_REPO_ROOT", raising=False)
-        config_file = tmp_path / "repo_sync_config.json"
+    def test_non_sentinel_repo_path_expands_user(self, tmp_path):
+        config_file = tmp_path / "kol.json"
         config_file.write_text(json.dumps({"repo_path": "~", "remote": "origin"}))
         cfg = load_config(config_file)
         assert cfg["repo_path"] == os.path.expanduser("~")
