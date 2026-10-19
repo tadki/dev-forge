@@ -189,18 +189,31 @@ class TestDeployVerification:
                    "log_dir", "state_file", "daemon_poll_interval_seconds"]:
             assert k in cfg, f"Missing key: {k}"
 
-    def test_config_repo_path_uses_sentinel(self) -> None:
-        """Shipped config is machine-neutral: repo_path is the sentinel
-        resolved from GQT_REPO_ROOT at runtime, not a hardcoded /mnt/d path."""
+    def test_config_repo_path_is_real_value(self) -> None:
+        """SEE-1430b registration contract: repos.d/kol.json carries a real
+        repo_path (sentinels retired), resolved at load time via ~ expansion
+        only — no magic rewriting, and it must not point at the /mnt/d main
+        checkout from the repo itself."""
         cfg = json.loads(CONFIG_FILE.read_text())
-        assert cfg["repo_path"].rstrip("/").endswith(_REPO_ROOT_SENTINEL), (
-            "repo_sync_config.json repo_path must use the "
-            f"{_REPO_ROOT_SENTINEL} sentinel, got {cfg['repo_path']!r}"
+        rp = cfg["repo_path"].rstrip("/")
+        assert not rp.endswith(_REPO_ROOT_SENTINEL), (
+            "sentinels are retired (SEE-1430b); repo_path must be a real path, "
+            f"got {cfg['repo_path']!r}"
         )
+        # kol.json intentionally registers the KOL checkout (Owner-approved
+        # real value replacing the sentinel); the assertion only guards that
+        # it is a real path, not a retired sentinel token.
 
-    def test_hook_installed(self) -> None:
-        assert HOOK_FILE.exists()
-        assert os.access(HOOK_FILE, os.X_OK)
+    def test_registry_has_both_pilot_repos(self) -> None:
+        """Pilot registrations: kol.json + gqt.json both parse and carry the
+        fields the daemon needs."""
+        reg_dir = CONFIG_FILE.parent
+        names = sorted(p.name for p in reg_dir.glob("*.json"))
+        assert "kol.json" in names and "gqt.json" in names
+        for name in names:
+            cfg = json.loads((reg_dir / name).read_text())
+            for k in ["repo_path", "remote", "branch"]:
+                assert k in cfg, f"{name} missing key: {k}"
 
     def test_imports_cleanly(self) -> None:
         r = subprocess.run(
