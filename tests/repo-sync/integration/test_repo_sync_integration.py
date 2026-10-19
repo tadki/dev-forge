@@ -1,4 +1,4 @@
-"""Integration tests for SEE-476 bidirectional repo sync.
+"""Integration tests for SEE-476 repo sync (pull-only since SEE-1430b).
 
 All tests run against INDEPENDENT temporary git repositories created under
 pytest's tmp_path. They NEVER touch the real local main repo
@@ -285,7 +285,7 @@ class TestSyncStateDetection:
 
 
 # ---------------------------------------------------------------------------
-# 3. Bidirectional sync E2E
+# 3. Sync-to-local E2E (SEE-1430b: upward sync retired)
 # ---------------------------------------------------------------------------
 
 
@@ -301,31 +301,32 @@ class TestBidirectionalSyncE2E:
         self.config_path = _write_config(self.config, tmp_path)
         yield
 
-    def test_push_only_sync(self) -> None:
+    def test_local_ahead_warns_no_push(self) -> None:
+        """SEE-1430b: local ahead → warn-only, remote untouched."""
         probe = Path(self.repo) / "test_push.txt"
         probe.write_text(f"push {time.time()}")
         _run_git(self.repo, ["add", str(probe)])
-        _run_git(self.repo, ["commit", "-m", "test: push sync"])
-
-        r = _sync(self.config_path, "--direction", "push-only")
-        assert r.returncode == 0, r.stdout
-
-        _run_git(self.repo, ["fetch", "origin"])
-        local = _run_git(self.repo, ["rev-parse", "master"]).stdout.strip()
-        remote = _run_git(self.repo, ["rev-parse", "origin/master"]).stdout.strip()
-        assert local == remote
-
-    def test_bidirectional_pushes_local_ahead(self) -> None:
-        probe = Path(self.repo) / "test_bidir_push.txt"
-        probe.write_text(f"bidir {time.time()}")
-        _run_git(self.repo, ["add", str(probe)])
-        _run_git(self.repo, ["commit", "-m", "test: bidir push"])
+        _run_git(self.repo, ["commit", "-m", "test: local ahead (no push)"])
 
         r = _sync(self.config_path)
         assert r.returncode == 0, r.stdout
 
         _run_git(self.repo, ["fetch", "origin"])
-        assert _run_git(self.repo, ["rev-parse", "master"]).stdout.strip() == \
+        local = _run_git(self.repo, ["rev-parse", "master"]).stdout.strip()
+        remote = _run_git(self.repo, ["rev-parse", "origin/master"]).stdout.strip()
+        assert local != remote  # no push happened
+
+    def test_local_ahead_default_direction_no_push(self) -> None:
+        probe = Path(self.repo) / "test_bidir_push.txt"
+        probe.write_text(f"bidir {time.time()}")
+        _run_git(self.repo, ["add", str(probe)])
+        _run_git(self.repo, ["commit", "-m", "test: local ahead default direction"])
+
+        r = _sync(self.config_path)
+        assert r.returncode == 0, r.stdout
+
+        _run_git(self.repo, ["fetch", "origin"])
+        assert _run_git(self.repo, ["rev-parse", "master"]).stdout.strip() != \
                _run_git(self.repo, ["rev-parse", "origin/master"]).stdout.strip()
 
     def test_pull_ff_only(self, temp_sync_repo) -> None:
@@ -351,16 +352,15 @@ class TestBidirectionalSyncE2E:
             "pull success must be logged to stdout for daemon visibility"
         )
 
-    def test_push_only_skips_remote_ahead(self, temp_sync_repo) -> None:
-        before = _run_git(self.repo, ["rev-parse", "master"]).stdout.strip()
-        _make_remote_commit(temp_sync_repo, "test_skip_pull.txt", f"skip {time.time()}")
-        _run_git(self.repo, ["fetch", "origin"])
-
+    def test_legacy_direction_rejected(self, temp_sync_repo) -> None:
+        """SEE-1430b: legacy direction values are rejected at the CLI gate."""
         r = _sync(self.config_path, "--direction", "push-only")
-        assert r.returncode == 0
+        assert r.returncode != 0
+        assert "invalid choice" in r.stderr
 
-        # Local unchanged (push-only does not pull)
-        assert _run_git(self.repo, ["rev-parse", "master"]).stdout.strip() == before
+        r2 = _sync(self.config_path, "--direction", "bidirectional")
+        assert r2.returncode != 0
+        assert "invalid choice" in r2.stderr
 
     def test_diverged_blocks_all_operations(self, temp_sync_repo) -> None:
         # block_only strategy: DIVERGED must not push, pull, or rebase — exit 1.

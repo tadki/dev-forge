@@ -28,7 +28,6 @@ from repo_sync import (
     detect_sync_state,
     do_pull_ff_only,
     do_pull_merge,
-    do_push,
     do_rebase,
     do_rebase_abort,
     do_stash_if_dirty,
@@ -340,20 +339,8 @@ class TestDoPullFfOnly:
         assert "dirty" in msg.lower()
 
 
-class TestDoPush:
-    def test_push_local_ahead(self, temp_git_repo):
-        local = temp_git_repo["local"]
-        Path(os.path.join(local, "push.txt")).write_text("push")
-        _run_git(local, ["add", "push.txt"])
-        _run_git(local, ["commit", "-m", "push test"])
-
-        ok, msg = do_push(local, "origin", "master")
-        assert ok, f"push failed: {msg}"
-        assert "success" in msg
-
-
 # ---------------------------------------------------------------------------
-# Defect 6: REMOTE_AHEAD direction check must exclude PUSH_ONLY
+# SEE-1430b: REMOTE_AHEAD direction guard is now PULL_ONLY-explicit
 # ---------------------------------------------------------------------------
 
 class TestRemoteAheadDirection:
@@ -362,20 +349,16 @@ class TestRemoteAheadDirection:
         Defect 6: When direction is PUSH_ONLY and state is REMOTE_AHEAD,
         the sync must NOT attempt a pull. It should skip with a message.
 
-        The buggy code had: if direction == BIDIRECTIONAL or direction == PUSH_ONLY:
-        which incorrectly allowed pull in PUSH_ONLY mode.
+        The pre-SEE-1430b buggy code had: if direction == BIDIRECTIONAL or
+        direction == PUSH_ONLY: which incorrectly allowed pull in PUSH_ONLY mode.
         """
         import inspect
-        # SEE-1406: the REMOTE_AHEAD branch lives in _handle_remote_ahead.
+        # The REMOTE_AHEAD branch lives in _handle_remote_ahead.
         src = inspect.getsource(_handle_remote_ahead)
 
-        # The REMOTE_AHEAD branch should only allow BIDIRECTIONAL
-        assert "Direction.BIDIRECTIONAL" in src, (
-            "REMOTE_AHEAD branch should check BIDIRECTIONAL"
-        )
-        # And NOT allow PUSH_ONLY in the same condition
-        assert "Direction.PUSH_ONLY" not in src, (
-            "PUSH_ONLY should not appear in REMOTE_AHEAD condition"
+        # The guard must be an explicit PULL_ONLY check
+        assert "Direction.PULL_ONLY" in src, (
+            "REMOTE_AHEAD branch should check PULL_ONLY"
         )
 
 
@@ -407,10 +390,9 @@ class TestRunSyncRemoteAhead:
         }
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.PUSH_ONLY, dry_run=False)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY, dry_run=False)
         assert result["state"] == "REMOTE_AHEAD"
-        assert result["action"] == "none"  # Did not pull
-        assert "push-only" in result["message"].lower()
+        assert result["action"] == "pull"  # sync-to-local pulls
 
     def test_remote_ahead_bidirectional_pulls(self, temp_git_repo, tmp_path):
         """When remote is ahead and direction is BIDIRECTIONAL, do pull."""
@@ -439,7 +421,7 @@ class TestRunSyncRemoteAhead:
         }
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL, dry_run=False)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY, dry_run=False)
         assert result["state"] == "REMOTE_AHEAD"
         assert result["action"] == "pull"
         assert result["success"] is True
@@ -476,8 +458,8 @@ class TestDaemonConfigPath:
 # ---------------------------------------------------------------------------
 
 class TestEndToEnd:
-    def test_local_ahead_push_only(self, temp_git_repo, tmp_path):
-        """Local commit + push_only = push succeeds."""
+    def test_local_ahead_warns_without_push(self, temp_git_repo, tmp_path):
+        """SEE-1430b: local ahead → warn-only, never pushes (sync-to-local)."""
         local = temp_git_repo["local"]
         Path(os.path.join(local, "push.txt")).write_text("push")
         _run_git(local, ["add", "push.txt"])
@@ -494,9 +476,10 @@ class TestEndToEnd:
         }
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.PUSH_ONLY, dry_run=False)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY, dry_run=False)
         assert result["state"] == "LOCAL_AHEAD"
-        assert result["action"] == "push"
+        assert result["action"] == "none"
+        assert "manual handling" in result["message"]
         assert result["success"] is True
 
     def test_diverged_auto_resolves_with_rebase(self, temp_git_repo, tmp_path):
@@ -531,7 +514,7 @@ class TestEndToEnd:
         }
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL, dry_run=False)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY, dry_run=False)
         assert result["state"] == "DIVERGED"
         assert result["success"] is True
         assert result["action"] == "resolve_diverged"
@@ -550,7 +533,7 @@ class TestEndToEnd:
         }
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL, dry_run=False)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY, dry_run=False)
         assert result["state"] == "SYNCED"
         assert result["action"] == "none"
         assert result["success"] is True
@@ -583,9 +566,9 @@ class TestEndToEnd:
         }
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL, dry_run=True)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY, dry_run=True)
         assert result["state"] == "LOCAL_AHEAD"
-        assert result["action"] == "push"
+        assert result["action"] == "none"
         assert result["dry_run"] is True
 
         # Verify remote was NOT actually pushed to
@@ -680,15 +663,15 @@ class TestResolveDivergedRealGit:
         assert result["success"] is True
         assert "rebase" in result["message"]
         assert "rebase(ok)" in result["resolution_steps"]
-        assert "push(ok)" in result["resolution_steps"]
+        assert "push(ok)" not in result["resolution_steps"]  # SEE-1430b: no push after resolution
 
-        # Verify synced after resolution
+        # SEE-1430b: resolution no longer pushes — local stays ahead of remote
         _run_git(local, ["fetch", "origin"])
         state = detect_sync_state(local, "origin", "master")
-        assert state == SyncState.SYNCED
+        assert state == SyncState.LOCAL_AHEAD
 
     def test_merge_first_resolves(self, temp_git_repo):
-        """Non-conflicting diverged state: merge_first should merge + push."""
+        """Non-conflicting diverged state: merge_first resolves locally (no push)."""
         local = temp_git_repo["local"]
         self._make_diverged(temp_git_repo)
 
@@ -702,7 +685,7 @@ class TestResolveDivergedRealGit:
         assert result["success"] is True
         assert "merge" in result["message"]
         assert "merge(ok)" in result["resolution_steps"]
-        assert "push(ok)" in result["resolution_steps"]
+        assert "push(ok)" not in result["resolution_steps"]  # SEE-1430b: no push after resolution
 
     def test_block_only_blocks(self, temp_git_repo):
         """block_only strategy should not attempt any resolution."""
@@ -777,7 +760,7 @@ class TestResolveDivergedMocked:
         with patch("repo_sync.do_rebase", return_value=(False, "rebase conflict")), \
              patch("repo_sync.do_rebase_abort", return_value=(True, "aborted")), \
              patch("repo_sync.do_pull_merge", return_value=(True, "merge ok")), \
-             patch("repo_sync.do_push", return_value=(True, "push ok")):
+             patch("repo_sync.do_submodule_update", return_value=(True, "submodules ok")):
             result = resolve_diverged(
                 local, "origin", "master",
                 stash_on_dirty=True,
@@ -789,7 +772,7 @@ class TestResolveDivergedMocked:
         assert "rebase(fail)" in result["resolution_steps"]
         assert "rebase_abort(ok)" in result["resolution_steps"]
         assert "merge(ok)" in result["resolution_steps"]
-        assert "push(ok)" in result["resolution_steps"]
+        assert "push(ok)" not in result["resolution_steps"]  # SEE-1430b: no push after resolution
 
     def test_rebase_and_merge_both_fail(self, temp_git_repo):
         """rebase_first: both rebase and merge fail → block."""
@@ -826,23 +809,24 @@ class TestResolveDivergedMocked:
         assert "manual intervention" in result["message"]
         assert "merge(fail)" in result["resolution_steps"]
 
-    def test_rebase_succeeds_push_fails(self, temp_git_repo):
-        """rebase succeeds but push fails → report failure."""
+    def test_rebase_succeeds_no_push_step(self, temp_git_repo):
+        """SEE-1430b: rebase succeeds → success without any push step."""
         local = temp_git_repo["local"]
 
         logger = MagicMock()
         with patch("repo_sync.do_rebase", return_value=(True, "rebase ok")), \
-             patch("repo_sync.do_push", return_value=(False, "push rejected")):
+             patch("repo_sync.do_submodule_update", return_value=(True, "submodules ok")):
             result = resolve_diverged(
                 local, "origin", "master",
                 stash_on_dirty=True,
                 strategy=ConflictResolution.REBASE_FIRST,
                 logger=logger,
             )
-        assert result["success"] is False
-        assert "push failed" in result["message"]
+        assert result["success"] is True
+        assert "push failed" not in result["message"]
         assert "rebase(ok)" in result["resolution_steps"]
-        assert "push(fail)" in result["resolution_steps"]
+        assert "push(ok)" not in result["resolution_steps"]
+        assert "push(fail)" not in result["resolution_steps"]
 
 
 # ---------------------------------------------------------------------------
@@ -888,7 +872,7 @@ class TestRunSyncDivergedResolution:
         config = self._make_diverged_config(temp_git_repo, tmp_path, "rebase_first")
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY)
         assert result["state"] == "DIVERGED"
         assert result["success"] is True
         assert result["action"] == "resolve_diverged"
@@ -899,7 +883,7 @@ class TestRunSyncDivergedResolution:
         config = self._make_diverged_config(temp_git_repo, tmp_path, "merge_first")
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY)
         assert result["state"] == "DIVERGED"
         assert result["success"] is True
         assert result["action"] == "resolve_diverged"
@@ -909,7 +893,7 @@ class TestRunSyncDivergedResolution:
         config = self._make_diverged_config(temp_git_repo, tmp_path, "block_only")
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY)
         assert result["state"] == "DIVERGED"
         assert result["success"] is False
         assert result["action"] == "resolve_diverged"
@@ -919,7 +903,7 @@ class TestRunSyncDivergedResolution:
         config = self._make_diverged_config(temp_git_repo, tmp_path)
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL, dry_run=True)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY, dry_run=True)
         assert result["state"] == "DIVERGED"
         assert result["success"] is False
         assert result["dry_run"] is True
@@ -930,7 +914,7 @@ class TestRunSyncDivergedResolution:
         del config["conflict_resolution_strategy"]
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY)
         assert result["success"] is True
         assert "rebase" in result["message"]
 
@@ -1177,7 +1161,7 @@ class TestRunSyncBranchGuard:
         config = self._config(repo, tmp_path, branch="develop")
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY)
         assert result["success"] is False
         assert result["action"] == "branch_guard"
         assert "config branch is 'develop'" in result["message"]
@@ -1190,6 +1174,6 @@ class TestRunSyncBranchGuard:
         config = self._config(repo, tmp_path)
         logger = MagicMock()
 
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY)
         assert result["success"] is True
         assert get_current_branch(repo) == "master"

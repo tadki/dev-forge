@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Repo sync logic for bidirectional zero-latency auto-sync.
+"""Repo sync logic for local sync (pull-only; SEE-1430b 语义改向).
+Former bidirectional auto-sync: all upward (push/forward) semantics retired.
 
 Four-state model:
   SYNCED       : local == remote
@@ -8,7 +9,7 @@ Four-state model:
   DIVERGED     : both ahead of merge-base (block + alert)
 
 Usage:
-  python3 repo_sync.py [--config path] [--direction {bidirectional,push-only}] [--dry-run] [--quiet]
+  python3 repo_sync.py [--config path] [--direction pull-only] [--dry-run] [--quiet]
 """
 
 from __future__ import annotations
@@ -42,8 +43,9 @@ class SyncState(str, Enum):
 
 
 class Direction(str, Enum):
-    BIDIRECTIONAL = "bidirectional"
-    PUSH_ONLY = "push-only"
+    # SEE-1430b 语义改向（Owner 2026-10-19 指令）：向上同步整体退役，仅保留
+    # sync-to-local（pull-only）。bidirectional/push-only 传入即报错。
+    PULL_ONLY = "pull-only"
 
 
 class ConflictResolution(str, Enum):
@@ -691,6 +693,24 @@ def ensure_on_master_branch(
     return True, f"switched from {current} to master", had_stash
 
 
+def _count_unpushed_commits(
+    repo_path: str, remote: str, branch: str, timeout: int | None = None
+) -> int:
+    """LOCAL_AHEAD 告警幅度：origin/<branch>..HEAD 未推送提交数（探测失败记 -1）。"""
+    r = git_run(
+        repo_path,
+        ["rev-list", "--count", f"{remote}/{branch}..{branch}"],
+        check=False,
+        timeout=timeout,
+    )
+    if r.returncode != 0:
+        return -1
+    try:
+        return int(r.stdout.strip() or "0")
+    except ValueError:
+        return -1
+
+
 def _handle_remote_ahead(
     config: dict[str, Any],
     logger: logging.Logger,
@@ -698,11 +718,12 @@ def _handle_remote_ahead(
     dry_run: bool,
     subprocess_timeout: int | None,
 ) -> dict[str, Any]:
-    """REMOTE_AHEAD path: pull ff-only (BIDIRECTIONAL only).
+    """REMOTE_AHEAD path: pull ff-only — the core of sync-to-local.
 
     SEE-1406 前移移植（自 gqt 2315 行硬化版）：run_sync 的 REMOTE_AHEAD 内联块
-    原样抽取为独立函数（与 gqt 版签名一致），供 SEE-1406 结构断言测试检查；
-    语义与抽取前逐行一致（PUSH_ONLY 在此分支被拒）。
+    原样抽取为独立函数，供结构断言测试检查。SEE-1430b 后本函数即新语义核心
+    （向下 sync）；guard 判式改写为显式 PULL_ONLY 放行（Direction 已单值化，
+    行为等价：非 pull-only 一律不 pull）。
     """
     repo_path = config["repo_path"]
     remote = config["remote"]
@@ -715,7 +736,7 @@ def _handle_remote_ahead(
         "message": "",
         "dry_run": dry_run,
     }
-    if direction != Direction.BIDIRECTIONAL:
+    if direction != Direction.PULL_ONLY:
         result["action"] = "none"
         result["message"] = "remote ahead, but direction restricts to push-only"
         logger.info("remote ahead, skipped per direction")
@@ -1037,20 +1058,8 @@ def _git_path(repo_path: str, rel: str, timeout: int | None) -> Path | None:
     return p if p.is_absolute() else Path(repo_path) / p
 
 
-def do_push(
-    repo_path: str, remote: str, branch: str, timeout: int | None = None
-) -> tuple[bool, str]:
-    # GAP-1 (SEE-1268): a parent commit whose gitlinks point at SHAs absent
-    # from the submodule remotes clones dead for everyone else. Verify before
-    # pushing; refusal is loud, naming the submodule + SHA (禁静默失败).
-    guard_ok, guard_msg = ensure_gitlinks_reachable(repo_path, timeout=timeout)
-    if not guard_ok:
-        return False, f"push blocked: dangling gitlink — {guard_msg}"
-
-    r = git_run(repo_path, ["push", remote, branch], check=False, timeout=timeout)
-    if r.returncode != 0:
-        return False, f"push failed: {r.stderr.strip()}"
-    return True, "push success"
+# do_push（向上推送）已随向上同步语义退役（SEE-1430b）；实现保留在 KOL master
+# 与 gqt 历史树内可查，需要回退时自历史恢复。
 
 
 def _looks_like_not_our_ref(output: str) -> bool:
@@ -1339,18 +1348,15 @@ def _resolve_rebase_first(
 
     if ok:
         logger.info("rebase succeeded for DIVERGED resolution")
-        push_ok, push_msg = do_push(repo_path, remote, branch, timeout=timeout)
-        result["resolution_steps"].append(f"push({'ok' if push_ok else 'fail'})")
-        if push_ok:
-            sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
-            result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
-            result["success"] = sub_ok
-            if not sub_ok:
-                result["message"] = f"resolved DIVERGED via rebase: {push_msg}; submodule content not materialized: {sub_msg}"
-            else:
-                result["message"] = f"resolved DIVERGED via rebase: {push_msg}; submodule content materialized"
+        # SEE-1430b 语义改向：化解后不再 push（向上同步退役）。
+        # 保留子库物化——materialize 是向下 sync 的一部分。
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
+        result["success"] = sub_ok
+        if not sub_ok:
+            result["message"] = f"resolved DIVERGED via rebase: {msg}; submodule content not materialized: {sub_msg}"
         else:
-            result["message"] = f"rebase succeeded but push failed: {push_msg}"
+            result["message"] = f"resolved DIVERGED via rebase: {msg}; submodule content materialized"
         return result
 
     logger.warning("rebase failed, attempting abort then merge fallback: %s", msg)
@@ -1362,18 +1368,14 @@ def _resolve_rebase_first(
 
     if merge_ok:
         logger.info("merge fallback succeeded for DIVERGED resolution")
-        push_ok, push_msg = do_push(repo_path, remote, branch, timeout=timeout)
-        result["resolution_steps"].append(f"push({'ok' if push_ok else 'fail'})")
-        if push_ok:
-            sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
-            result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
-            result["success"] = sub_ok
-            if not sub_ok:
-                result["message"] = f"resolved DIVERGED via merge fallback: {push_msg}; submodule content not materialized: {sub_msg}"
-            else:
-                result["message"] = f"resolved DIVERGED via merge fallback: {push_msg}; submodule content materialized"
+        # SEE-1430b 语义改向：化解后不再 push；保留子库物化。
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
+        result["success"] = sub_ok
+        if not sub_ok:
+            result["message"] = f"resolved DIVERGED via merge fallback: {merge_msg}; submodule content not materialized: {sub_msg}"
         else:
-            result["message"] = f"merge succeeded but push failed: {push_msg}"
+            result["message"] = f"resolved DIVERGED via merge fallback: {merge_msg}; submodule content materialized"
         return result
 
     result["message"] = (
@@ -1395,18 +1397,14 @@ def _resolve_merge_first(
 
     if merge_ok:
         logger.info("merge succeeded for DIVERGED resolution")
-        push_ok, push_msg = do_push(repo_path, remote, branch, timeout=timeout)
-        result["resolution_steps"].append(f"push({'ok' if push_ok else 'fail'})")
-        if push_ok:
-            sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
-            result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
-            result["success"] = sub_ok
-            if not sub_ok:
-                result["message"] = f"resolved DIVERGED via merge: {push_msg}; submodule content not materialized: {sub_msg}"
-            else:
-                result["message"] = f"resolved DIVERGED via merge: {push_msg}; submodule content materialized"
+        # SEE-1430b 语义改向：化解后不再 push；保留子库物化。
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
+        result["success"] = sub_ok
+        if not sub_ok:
+            result["message"] = f"resolved DIVERGED via merge: {merge_msg}; submodule content not materialized: {sub_msg}"
         else:
-            result["message"] = f"merge succeeded but push failed: {push_msg}"
+            result["message"] = f"resolved DIVERGED via merge: {merge_msg}; submodule content materialized"
         return result
 
     result["message"] = "DIVERGED: merge failed, manual intervention required"
@@ -1585,186 +1583,8 @@ def _query_child_remote_head(repo_path: str, url: str, branch: str, timeout: int
     return r.stdout.split("\t", 1)[0].strip()
 
 
-def do_forward_gitlinks(
-    config: dict[str, Any],
-    logger: logging.Logger,
-    direction: Direction = Direction.BIDIRECTIONAL,
-    dry_run: bool = False,
-    ci_query: Any = None,
-) -> dict[str, Any]:
-    """SEE-1285: auto-forward lagging submodule gitlinks (three-gate, fail-close).
-
-    Per `.gitmodules` submodule: compare parent index gitlink vs child remote
-    branch head; lagging → run the three gates (CI green / GAP-1 reachable /
-    interval integrity) → all pass = bump gitlink in ONE commit and push master
-    (normal push path: GAP-1 runs again inside do_push; branch protection and
-    push-guard semantics are those of a manual push — never bypassed). Any gate
-    failing = fail-close: no commit, decision recorded in state.json
-    (`forward` section) + daemon log only — never issue comments.
-
-    Per-sub per-cycle throttle lives in the dedup: an already-forwarded remote
-    head no longer lags, so re-forwarding cannot happen until the child moves.
-
-    ci_query injects the Gate 1 producer (tests); default is the GitHub API
-    query `default_ci_query`. `unknown` verdicts back off by failing the cycle
-    (error_category=transient), which the daemon treats as non-counting.
-    """
-    repo_path = os.path.expanduser(config["repo_path"])
-    remote = config["remote"]
-    branch = config["branch"]
-    subprocess_timeout = config.get("subprocess_timeout_seconds")
-    query = ci_query if ci_query is not None else default_ci_query
-
-    result: dict[str, Any] = {
-        "action": "gitlink_forward",
-        "state": None,
-        "success": True,
-        "message": "no lagging submodule",
-        "dry_run": dry_run,
-        "forward": {},
-    }
-
-    submodules = _parse_gitmodules_submodules(repo_path)
-    if not submodules:
-        return result
-
-    links = dict(_iter_gitlinks(repo_path, subprocess_timeout))
-    any_action = False
-    all_ok = True
-    messages: list[str] = []
-
-    for sub in submodules:
-        path_rel = sub.get("path", "")
-        url = sub.get("url", "")
-        sub_branch = sub.get("branch") or "master"
-        if not path_rel or not url:
-            continue
-        gitlink_sha = links.get(path_rel)
-        if not gitlink_sha:
-            continue
-
-        entry: dict[str, Any] = {"status": "synced"}
-        head = _query_child_remote_head(repo_path, url, sub_branch, subprocess_timeout)
-        if head is None:
-            # Network/branch failure — skip silently (same boundary as (a) lag warn).
-            entry["status"] = "skipped"
-            result["forward"][path_rel] = entry
-            continue
-        if head == gitlink_sha:
-            result["forward"][path_rel] = entry
-            continue
-
-        # Lagging. Gate 1.
-        try:
-            conclusion = query(url, sub_branch, head)
-        except Exception as e:  # noqa: BLE001 — producer bugs must not crash the cycle
-            logger.warning("gate1 ci query crashed for %s: %s", path_rel, e)
-            conclusion = "unknown"
-        allowed, gate, msg = evaluate_forward_gates(
-            repo_path, path_rel, url, sub_branch, head,
-            ci_conclusion=conclusion, timeout=subprocess_timeout,
-        )
-        entry["gate"] = gate or "none"
-        entry["target"] = head
-        entry["target_sha"] = head
-        entry["detail"] = msg
-        # hint 消费（gitlink-sync-hint.sh）用该字段落「CI 红 / 结论未知」两态；
-        # 非 gate1 场景不污染条目（hint 只在 gate==gate1 分支读取）。
-        if gate == "gate1":
-            entry["gate1_conclusion"] = conclusion
-        if not allowed:
-            entry["status"] = "blocked"
-            all_ok = False
-            messages.append(f"{path_rel}: blocked at {gate} — {msg}")
-            logger.warning(
-                "gitlink forward blocked for '%s' at %s: %s", path_rel, gate, msg
-            )
-            result["forward"][path_rel] = entry
-            continue
-
-        # All gates passed — bump gitlink to head in ONE commit, push master.
-        if dry_run:
-            entry["status"] = "would-forward"
-            messages.append(f"{path_rel}: dry-run would forward {gitlink_sha[:12]}→{head[:12]}")
-            result["forward"][path_rel] = entry
-            any_action = True
-            continue
-
-        # Materialize the new head into the child worktree so the index bump is
-        # consistent with what a human `git add <submodule>` would record.
-        child_wt = str(Path(repo_path) / path_rel)
-        if (Path(child_wt) / ".git").exists():
-            _g_ok = git_run(child_wt, ["fetch", url, head], check=False,
-                            timeout=subprocess_timeout)
-            if _g_ok.returncode == 0:
-                git_run(child_wt, ["checkout", "--detach", head], check=False,
-                        timeout=subprocess_timeout)
-        r = git_run(repo_path, ["add", path_rel], check=False, timeout=subprocess_timeout)
-        if r.returncode != 0:
-            entry["status"] = "error"
-            all_ok = False
-            messages.append(f"{path_rel}: add failed: {r.stderr.strip()}")
-            logger.error("gitlink forward add failed for '%s': %s", path_rel, r.stderr.strip())
-            result["forward"][path_rel] = entry
-            continue
-        commit_msg = (
-            f"chore(gitlink): auto-forward {path_rel} to {head[:12]} "
-            f"(SEE-1285, CI green)"
-        )
-        r = git_run(repo_path, ["commit", "-m", commit_msg], check=False,
-                    timeout=subprocess_timeout)
-        if r.returncode != 0:
-            entry["status"] = "error"
-            all_ok = False
-            messages.append(f"{path_rel}: commit failed: {r.stderr.strip()}")
-            logger.error("gitlink forward commit failed for '%s': %s", path_rel, r.stderr.strip())
-            result["forward"][path_rel] = entry
-            continue
-        push_ok, push_msg = do_push(repo_path, remote, branch, timeout=subprocess_timeout)
-        if not push_ok:
-            entry["status"] = "error"
-            all_ok = False
-            messages.append(f"{path_rel}: push failed: {push_msg}")
-            logger.error("gitlink forward push failed for '%s': %s", path_rel, push_msg)
-            result["forward"][path_rel] = entry
-            continue
-        # Materialize child content at the new pointer (SEE-1268 discipline).
-        do_submodule_update(repo_path, timeout=subprocess_timeout)
-        entry["status"] = "forwarded"
-        entry["from"] = gitlink_sha
-        entry["from_sha"] = gitlink_sha
-        messages.append(f"{path_rel}: forwarded {gitlink_sha[:12]}→{head[:12]} (CI green)")
-        logger.info("gitlink forward success for '%s': %s→%s", path_rel,
-                    gitlink_sha[:12], head[:12])
-        result["forward"][path_rel] = entry
-        any_action = True
-
-    result["success"] = all_ok
-    if any_action:
-        result["message"] = "; ".join(messages)
-    elif not all_ok:
-        result["message"] = "; ".join(messages)
-    # Fail-close decisions land in state.json (hint + Autopilot 巡检消费) —
-    # never issue comments (v2 计划已取消该通道)。
-    write_state(config, result)
-    if not all_ok:
-        # M-1（Final Review）：只有 gate1 'unknown'（CI 结论不可判定）是瞬态——
-        # 退避重试；CI 确实红（gate1_conclusion == 'fail'）及其余 gate 均为持久态，
-        # 计入 daemon 熔断计数。
-        blocked = [
-            e for e in result["forward"].values() if e.get("status") == "blocked"
-        ]
-        result["error_category"] = "transient" if (
-            all(e.get("gate") == "gate1" for e in blocked)
-            and any(e.get("gate1_conclusion") == "unknown" for e in blocked)
-            and not any(e.get("gate1_conclusion") == "fail" for e in blocked)
-        ) else "persistent"
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Alert via multica
-# ---------------------------------------------------------------------------
+# do_forward_gitlinks（SEE-1285 三道 gate 向上 forward）已随向上同步语义退役
+# （SEE-1430b）；完整实现保留在 KOL master 与 gqt 历史树内可查。
 
 
 def send_alert(config: dict[str, Any], message: str) -> tuple[bool, str]:
@@ -1891,7 +1711,7 @@ def _warn_submodule_lags(
 def run_sync(
     config: dict[str, Any],
     logger: logging.Logger,
-    direction: Direction = Direction.BIDIRECTIONAL,
+    direction: Direction = Direction.PULL_ONLY,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     repo_path = os.path.expanduser(config["repo_path"])
@@ -1976,45 +1796,13 @@ def run_sync(
                     lag_heads = _warn_submodule_lags(repo_path, config, logger, subprocess_timeout)
                     if lag_heads is not None:
                         result["lag_warned_heads"] = lag_heads
-                    # SEE-1285: 落后子库在这里走三道 gate 自动 forward（全开才动，
-                    # 任何 gate 未过 fail-close，决断只落 state.json + 日志）。
-                    # 严格 opt-in：未在 config 显式开启本功能的环境零行为变化。
-                    if config.get("gitlink_forward_enabled", False):
-                        fwd = do_forward_gitlinks(
-                            config, logger, direction=direction, dry_run=dry_run
+                    # SEE-1430b 语义改向：向上 forward（SEE-1285 三道 gate）整体退役，
+                    # gitlink_forward_enabled 配置键作废——注册文件若仍携带，告警一次。
+                    if config.get("gitlink_forward_enabled") is not None:
+                        logger.warning(
+                            "gitlink_forward_enabled is retired by sync-to-local "
+                            "semantics (SEE-1430b); ignoring it (warn-once per cycle)"
                         )
-                        result["forward"] = fwd.get("forward", {})
-                        result["action"] = fwd["action"]
-                        if not fwd["success"]:
-                            result["success"] = False
-                            result["message"] = fwd["message"]
-                            result["error_category"] = fwd.get(
-                                "error_category", "persistent"
-                            )
-                            # gate1 'unknown'（CI 结论未知）为瞬态——退避重试，
-                            # 不计入 daemon 熔断；CI 红（conclusion=fail）为持久态
-                            # 照常计数（M-1 语义收口，与 error_category 映射一致）。
-                            blocked = [
-                                e for e in result["forward"].values()
-                                if e.get("status") == "blocked"
-                            ]
-                            if (
-                                all(e.get("gate") == "gate1" for e in blocked)
-                                and any(
-                                    e.get("gate1_conclusion") == "unknown"
-                                    for e in blocked
-                                )
-                                and not any(
-                                    e.get("gate1_conclusion") == "fail"
-                                    for e in blocked
-                                )
-                            ):
-                                logger.info(
-                                    "forward blocked only at gate1 (CI unknown) — transient, "
-                                    "will retry next cycle without circuit-breaker credit",
-                                )
-                        elif fwd["message"] != "no lagging submodule":
-                            logger.info("gitlink forward: %s", fwd["message"])
                 else:
                     result["success"] = False
                     result["message"] = f"already synced but submodule materialization failed: {sub_msg}"
@@ -2028,41 +1816,19 @@ def run_sync(
             return result
 
         if state == SyncState.LOCAL_AHEAD:
-            if direction == Direction.BIDIRECTIONAL or direction == Direction.PUSH_ONLY:
-                if dry_run:
-                    result["action"] = "push"
-                    result["message"] = "dry-run: would push"
-                    logger.info("dry-run: would push")
-                else:
-                    ok, msg = do_push(repo_path, remote, branch, timeout=subprocess_timeout)
-                    result["action"] = "push"
-                    result["success"] = ok
-                    result["message"] = msg
-                    if ok:
-                        logger.info("push success: %s", msg)
-                        # Pointer push done — materialize the child content the
-                        # new pointers point at (SEE-1268).
-                        sub_ok, sub_msg = do_submodule_update(
-                            repo_path, timeout=subprocess_timeout
-                        )
-                        if not sub_ok:
-                            ok = False
-                            result["success"] = False
-                            result["message"] = f"{msg}; {sub_msg}"
-                            result["error_category"] = classify_error(sub_msg)
-                            logger.error(
-                                "submodule update after push failed: %s (category=%s)",
-                                sub_msg,
-                                result["error_category"],
-                            )
-                    else:
-                        result["error_category"] = classify_error(msg)
-                        logger.error("push failed: %s (category=%s)", msg, result["error_category"])
-            else:
-                result["message"] = (
-                    "local ahead, but direction restricts to pull-only (not applicable)"
-                )
-                logger.info("local ahead, skipped per direction")
+            # SEE-1430b 语义改向：向上同步（push）退役。local ahead 不自动推送，
+            # 仅记录落后幅度并告警，等人工处理。
+            ahead = _count_unpushed_commits(
+                repo_path, remote, branch, timeout=subprocess_timeout
+            )
+            result["action"] = "none"
+            result["message"] = (
+                f"local ahead {ahead} commit(s); push is retired by sync-to-local "
+                "semantics (SEE-1430b) — manual handling required"
+            )
+            logger.warning(
+                "LOCAL_AHEAD: %s", result["message"]
+            )
             write_state(config, result)
             return result
 
@@ -2150,9 +1916,10 @@ def main() -> int:
     parser.add_argument("--config", default=None, help="Path to config JSON")
     parser.add_argument(
         "--direction",
-        choices=[Direction.BIDIRECTIONAL.value, Direction.PUSH_ONLY.value],
-        default=Direction.BIDIRECTIONAL.value,
-        help="Sync direction",
+        choices=[Direction.PULL_ONLY.value],
+        default=Direction.PULL_ONLY.value,
+        help="Sync direction (sync-to-local only; bidirectional/push-only retired "
+             "by SEE-1430b — passing the legacy values errors out here)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Detect state only, no write ops"

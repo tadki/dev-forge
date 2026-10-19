@@ -143,7 +143,7 @@ class TestDirtyTreeAutoSwitch:
 
         config = _config(repo, tmp_path)
         logger = _QuietLogger()
-        result = run_sync(config, logger, direction=Direction.BIDIRECTIONAL)
+        result = run_sync(config, logger, direction=Direction.PULL_ONLY)
 
         assert result["success"] is True, f"sync failed: {result}"
         assert get_current_branch(repo) == "master"
