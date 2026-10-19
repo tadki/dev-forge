@@ -1,5 +1,5 @@
 {
-    "_comment": "SEE-1430b 仓库级注册层：每仓一份注册文件，loader 扫 repos.d/*.json 合并。repo_path 直写实值（__KOL_REPO_ROOT__ 哨兵废除）。新增仓库 = 落一份新 JSON，无需改脚本。",
+    "_comment": "SEE-1430b 仓库级注册层（gitlink_forward_enabled 键已随向上同步退役）：每仓一份注册文件，loader 扫 repos.d/*.json 合并。repo_path 直写实值（__KOL_REPO_ROOT__ 哨兵废除）。新增仓库 = 落一份新 JSON，无需改脚本。",
     "name": "kol",
     "repo_path": "/mnt/d/GodotProjects/king-of-likes",
     "remote": "origin",
@@ -16,7 +16,6 @@
     "fetch_retry_count": 3,
     "fetch_retry_delay_seconds": 2.0,
     "stash_on_dirty": true,
-    "gitlink_forward_enabled": true,
     "conflict_resolution_strategy": "rebase_first",
     "ff_only": true,
     "dry_run": false

@@ -1,5 +1,5 @@
 {
-    "_comment": "SEE-1430b 仓库级注册层：gqt（godot-qa-toolkit）注册。repo_path 直写实值（__GQT_REPO_ROOT__ 哨兵废除）。原 gqt 仓内 .dev/repo-sync/ 三件套随本迁移退役。",
+    "_comment": "SEE-1430b 仓库级注册层（gitlink_forward_enabled 键已随向上同步退役）：gqt（godot-qa-toolkit）注册。repo_path 直写实值（__GQT_REPO_ROOT__ 哨兵废除）。原 gqt 仓内 .dev/repo-sync/ 三件套随本迁移退役。",
     "name": "gqt",
     "repo_path": "/home/jerry/tools/godot-qa-toolkit",
     "remote": "origin",
@@ -16,7 +16,6 @@
     "fetch_retry_count": 3,
     "fetch_retry_delay_seconds": 2.0,
     "stash_on_dirty": true,
-    "gitlink_forward_enabled": false,
     "conflict_resolution_strategy": "rebase_first",
     "ff_only": true,
     "dry_run": false
