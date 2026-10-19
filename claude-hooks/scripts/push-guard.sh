@@ -435,9 +435,18 @@ fi
 # neither ref gets no ancestry check (nothing to verify against) rather than a
 # false "未包含最新的 master" block.
 if [ "$CURRENT_UPSTREAM" != "origin/${WORKING_BRANCH}" ]; then
-  DEFAULT_REMOTE_REF="origin/master"
-  if ! git -C "$GIT_ROOT" rev-parse --verify --quiet "$DEFAULT_REMOTE_REF" >/dev/null 2>&1; then
-    DEFAULT_REMOTE_REF=$(git -C "$GIT_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "")
+  # SEE-1430b: default-branch ref resolution order fixed — prefer origin/HEAD
+  # (authoritative), then origin/main (dev-forge default), then origin/master
+  # (KOL legacy). Old order tried origin/master first; repos whose default is
+  # main (dev-forge) have no origin/master remote ref, so the ancestry check
+  # always failed ("当前分支未包含最新的 origin/master") on every push.
+  DEFAULT_REMOTE_REF=$(git -C "$GIT_ROOT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo "")
+  if [ -z "$DEFAULT_REMOTE_REF" ]; then
+    if git -C "$GIT_ROOT" rev-parse --verify --quiet "origin/main" >/dev/null 2>&1; then
+      DEFAULT_REMOTE_REF="origin/main"
+    else
+      DEFAULT_REMOTE_REF="origin/master"
+    fi
   fi
   if [ -n "$DEFAULT_REMOTE_REF" ] \
      && ! git -C "$GIT_ROOT" merge-base --is-ancestor "$DEFAULT_REMOTE_REF" HEAD 2>/dev/null; then
