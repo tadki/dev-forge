@@ -232,13 +232,23 @@ resolve_git_root() {
   if [ -n "${PROJECT_ROOT:-}" ] && git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     GIT_ROOT="$PROJECT_ROOT"; return 0
   fi
+  # 3b. SEE-1430b wrong-repo fix: prefer the task's target checkout when it is
+  #     a repo — deterministic, ahead of any directory guessing.
+  if [ -n "${TARGET_REPO_ROOT:-}" ] && git -C "$TARGET_REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    GIT_ROOT="$TARGET_REPO_ROOT"; return 0
+  fi
+  # 4. Last resort: one-level scan of PWD subdirectories. Deterministic order
+  #    (sorted) — and if nothing matches, fail-open (return 1) instead of
+  #    picking an arbitrary repo (previous behaviour grabbed the first entry
+  #    in shell glob order, which mis-attributed pushes to the wrong repo).
   local subdir
-  for subdir in "$PWD"/*/; do
+  while IFS= read -r subdir; do
+    [ -n "$subdir" ] || continue
     [ -d "$subdir" ] || continue
     if git -C "$subdir" rev-parse --git-dir >/dev/null 2>&1; then
       GIT_ROOT="${subdir%/}"; return 0
     fi
-  done
+  done < <(find "$PWD" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort)
   return 1
 }
 
