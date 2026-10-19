@@ -1,0 +1,129 @@
+{
+  "description": "SEE-1430b 声明式 push-guard 规则组（Owner 定案：目标仓库+分支+agent 三要素判定，纯 rules-v2 deny，替代脚本 master 门禁与 force-push 拦截）。三库（KOL/GQT/dev-forge）main|master 禁止直接 push，流程 = checkout → push 非主分支 → PR 合入；--delete 排除；本地分支语义（SC4/SC5）仍由 push-guard.sh 残余薄脚本承担。",
+  "rules": [
+    {
+      "name": "push-guard-master-gate",
+      "version_note": "SEE-1430b 声明式 push-guard（Owner 定案：目标仓库+分支+agent 三要素判定，替代脚本 host 检出方案）。规则组 = 三库（KOL/GQT/dev-forge）main|master 分支禁止任何人直接 push，必须 checkout → push 到非主分支 → PR 合入。覆盖：显式 refspec（HEAD:refs/heads/master、master、main）、force 变体、heredoc/嵌套 bash 内嵌 push。排除 --delete（删除远端分支不走本门，与旧脚本语义一致）。本地分支语义（SC4/SC5 shared-branch 校验）由 push-guard.sh 残余薄脚本继续承担，本规则组仅接管 master/main 门禁。",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "tool",
+            "in": [
+              "Bash"
+            ]
+          },
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "git(\\s+-[A-Za-z-]+)*\\s+push(\\s|$)",
+            "exclude": "(^|\\s)--delete(\\s|$)|(^|\\s)-d(\\s|$)"
+          },
+          {
+            "op": "any",
+            "args": [
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": ":refs/heads/master"
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": ":refs/heads/main"
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": " master"
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": " main"
+              }
+            ]
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "[push-guard] 错误：禁止直接 push 到 main/master 分支（KOL / godot-qa-toolkit / dev-forge 三库适用）。\n[push-guard] 必须按以下流程操作：\n[push-guard] 1. 先 checkout（在共享分支或新建 feature 分支上开发）；\n[push-guard] 2. 把改动 push 到一个不同于 main/master 的 remote 分支（例如 git push origin <your-branch>）；\n[push-guard] 3. 再提交 PR，把这条分支合入 main/master。\n[push-guard] 详见仓库贡献约定。"
+        }
+      ]
+    },
+    {
+      "name": "push-guard-force-push-gate",
+      "version_note": "force-push 拦截（覆盖三库全部分支——shared 分支同样不可 force）。--force-with-lease / --force / 短选项簇含 f 均命中；--delete 排除。",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "tool",
+            "in": [
+              "Bash"
+            ]
+          },
+          {
+            "op": "command",
+            "scope": "current",
+            "pattern": "git(\\s+-[A-Za-z-]+)*\\s+push(\\s|$)",
+            "exclude": "(^|\\s)--delete(\\s|$)|(^|\\s)-d(\\s|$)"
+          },
+          {
+            "op": "any",
+            "args": [
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": "--force-with-lease"
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": "--force"
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": " -f "
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": " -fn"
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": " -uf"
+              },
+              {
+                "op": "command",
+                "scope": "current",
+                "keyword": " -fo"
+              }
+            ]
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "deny",
+          "message": "[push-guard] 错误：禁止 force-push（--force / --force-with-lease / -f）。\n[push-guard] 多 agent 共享分支场景下 force-push 会覆盖他人 commit。\n[push-guard] 请改用：git fetch origin && git rebase origin/<working_branch>，然后普通推送。"
+        }
+      ]
+    }
+  ]
+}
