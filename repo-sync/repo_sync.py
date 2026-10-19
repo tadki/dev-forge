@@ -1278,8 +1278,8 @@ def resolve_diverged(
     """Attempt automatic conflict resolution for DIVERGED state.
 
     Strategies:
-      rebase_first: rebase → push; on conflict → abort → merge → push; on merge conflict → block
-      merge_first:  merge → push; on conflict → block
+      rebase_first: rebase → submodule materialization; on conflict → abort → merge (no push — push retired, SEE-1430b)
+      merge_first:  merge; on conflict → block
       block_only:   immediate block + alert
     """
     result: dict[str, Any] = {
