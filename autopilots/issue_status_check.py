@@ -26,6 +26,7 @@ from push_comment_sender import (
     send_push_comments, PUSH_CONTENT_MARKERS, send_kill_switch_alert,
 )
 from multica_helpers import AGENT_MAP, PidFileLock, WorkspaceMutex, multica_cli
+from kill_switch import kill_switch_default
 
 
 # --- Argument parsing ---
@@ -51,8 +52,8 @@ def parse_args():
         help="Self agent ID (default: %(default)s)"
     )
     parser.add_argument(
-        "--kill-switch", default="false",
-        help="Kill switch: true/false (default: %(default)s)"
+        "--kill-switch", default=kill_switch_default(),
+        help="Kill switch: true/false (default: %(default)s; paused 文件或 KILL_SWITCH env 命中即 true)"
     )
     parser.add_argument(
         "--pid-file",

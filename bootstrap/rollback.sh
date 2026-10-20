@@ -3,7 +3,6 @@
 # Usage: rollback.sh [--settings S] [--backup B]   (defaults: latest .bak-bootstrap-*)
 set -euo pipefail
 
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS="${SETTINGS:-$HOME/.claude/settings.json}"
 BACKUP="${BACKUP:-}"
 

@@ -90,11 +90,9 @@ _upgrade_local_cli() {
     echo "[upgrade] Upgrading local multica CLI: $current → ${latest#v}"
 
     # Stop daemon first so binary can be replaced
-    local daemon_was_running=false
     if multica daemon status 2>/dev/null | grep -q "running"; then
         echo "[upgrade] Stopping local daemon to replace binary..."
         _kol_service_stop
-        daemon_was_running=true
         sleep 2
     fi
 
@@ -165,7 +163,6 @@ fi
 # Remote execution (macOS Docker Desktop via SSH)
 # ---------------------------------------------------------------------------
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_DIR="${1:-.}"
 COMPOSE_FILE="docker-compose.selfhost.yml"
 OVERRIDE_FILE="docker-compose.override.yml"

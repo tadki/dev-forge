@@ -16,7 +16,7 @@
     --repo-root DIR  仓库根目录（缺省取脚本所在位置的 ../..）
     --daily-report-dir PATH  占位符 {{daily_report_dir}} 的值（缺省 ~/.multica/toolchain-reports/）
     --ledger-path PATH       占位符 {{ledger_path}} 的值（缺省 review-prompts/toolchain/ledger/YYYY-MM.md，按 --date 月份）
-    --state-file PATH        期次计数器持久化文件（缺省 <daily-report-dir>/review-state.json）
+    --state-file PATH        期次计数器持久化文件（缺省 review-prompts/toolchain/ledger/review-state.json，随仓落 main）
 
 退出码：
     0  拼装成功，prompt 已输出
@@ -147,7 +147,13 @@ def resolve_paths(args: argparse.Namespace, date_str: str) -> tuple[Path, Path, 
     template_path = repo_root / TEMPLATE_PATH_REL
     daily_report_dir = Path(args.daily_report_dir or "~/.multica/toolchain-reports/").expanduser()
     ledger_path = Path(args.ledger_path) if args.ledger_path else Path(f"review-prompts/toolchain/ledger/{date_str[:7]}.md")
-    state_file = Path(args.state_file).expanduser() if args.state_file else daily_report_dir / "review-state.json"
+    # SEE-1440 / fingerprint 8e0c896702d2：计数器落仓（随台账 PR 落 main），
+    # 不再写仓外 ~/.multica/toolchain-reports/——仓外状态与产物零绑定、无评审留痕。
+    state_file = (
+        Path(args.state_file).expanduser()
+        if args.state_file
+        else repo_root / "review-prompts/toolchain/ledger/review-state.json"
+    )
     return template_path, daily_report_dir, ledger_path, state_file
 
 

@@ -287,11 +287,25 @@ python autopilots/architecture_sweep.py \
 
 ---
 
+## Kill Switch（统一入口，SEE-1440）
+
+规范入口 = paused 文件 `~/.multica/toolchain-reports/DISABLED`（评审拼装器与全部脚本型
+autopilot 共用，见 `autopilots/kill_switch.py`）：
+
+- 放置该文件即暂停本期评审与 autopilot 的写操作（评审拼装器 exit 3 安静跳过）。
+- `KILL_SWITCH=true` 环境变量保留为会话级临时覆盖，语义与 paused 文件一致。
+- 显式 `--kill-switch true|false` 参数优先于上述默认值。
+- `toolchain/toolchain_daily_check.py` F5 维度核对单源状态：历史别名
+  `review-prompts/toolchain/ledger/DISABLED` 仍生效，但会告警提示收敛到规范入口。
+
+---
+
 ## 共享依赖
 
 所有脚本共享以下模块：
 
 - `autopilots/multica_helpers.py`: 提供 `AGENT_MAP`、`AGENT_NAME_MAP`、`multica_cli`、`multica_stdin_cmd`、文件锁、退避重试等。
+- `autopilots/kill_switch.py`: Kill Switch 单源（paused 文件 + `KILL_SWITCH` env）。
 - `autopilots/watchdog_report.py` / `autopilots/watchdog_state.py`: 仅 Agent Watchdog 使用。
 
 ## 通用原则

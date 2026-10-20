@@ -23,6 +23,7 @@ from multica_helpers import (
     PidFileLock, WorkspaceMutex,
     log_error as _log_error_orig, multica_cli, multica_stdin_cmd,
 )
+from kill_switch import kill_switch_default
 
 # SEE-1109: wrap log_error so any Phase 2 write failure bumps a counter the
 # top-level exit checks. Without this a failed summary-issue create wrote a
@@ -104,7 +105,7 @@ def parse_args():
     )
     parser.add_argument(
         "--kill-switch",
-        default=os.environ.get("KILL_SWITCH", "false"),
+        default=kill_switch_default(),
         help="Kill switch: true/false. When true, skip the worktree-deletion "
              "phase and only emit the need_decision list (default: %(default)s)",
     )
