@@ -180,6 +180,8 @@ Wrapper 的职责：
 1. 接收 CC 传入的参数，记录日志到 firelog（仓库级 `.claude/hook-fire.log` 或全局回退）
 2. 用 `exec` 委托给 `dispatcher.sh`（不驻留额外进程）
 
+firelog 轮转（SEE-1440 §SPEC-025）：三入口写入前经 `maybe_rotate_hook_fire_log`（`scripts/lib/hook-fire-path.lib.sh`）做尺寸上限轮转——超限（缺省 10MiB，`HOOK_FIRE_LOG_MAX_BYTES` 可调）旧档整档转存 `hook-fire.log.1`（单备份，占用有界 2×上限）后新档续写，fail-open 不阻断 hook 链。
+
 ---
 
 ## 4. dispatcher.sh 路由层

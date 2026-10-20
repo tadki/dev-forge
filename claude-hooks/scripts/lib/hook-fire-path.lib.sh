@@ -31,6 +31,26 @@ resolve_hook_fire_log_path() {
   printf '%s' "$HOME/.claude/hook-fire.log"
 }
 
+# SEE-1440 §SPEC-025：firelog 尺寸上限轮转（写入层，fail-open）。
+# 超限 → 旧文件整档转存 <file>.1（覆盖上一份备份，占用有界 2×上限）→ 新空文件续写；
+# 轮转失败（权限/竞态，含并发 append 竞态丢行的最坏情形）静默放行——firelog 是
+# best-effort 观测日志，绝不阻断 hook 链（与上方写入侧约定同源）。
+# 缺省上限 10MiB（台账暂缓区「>10MB 归档」既有口径）；HOOK_FIRE_LOG_MAX_BYTES
+# 可注入供测试/调参，0 或非数字视为不设限。
+HOOK_FIRE_LOG_MAX_BYTES="${HOOK_FIRE_LOG_MAX_BYTES:-10485760}"
+maybe_rotate_hook_fire_log() {
+  local _f="${1:-}"
+  [ -n "$_f" ] && [ -f "$_f" ] || return 0
+  case "$HOOK_FIRE_LOG_MAX_BYTES" in ''|*[!0-9]*|0) return 0 ;; esac
+  local _size
+  _size=$(wc -c <"$_f" 2>/dev/null) || return 0
+  case "$_size" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$_size" -le "$HOOK_FIRE_LOG_MAX_BYTES" ] && return 0
+  mv -f "$_f" "$_f.1" 2>/dev/null || return 0
+  : > "$_f" 2>/dev/null
+  return 0
+}
+
 # lib 定位引用（各入口按自身目录拓扑 source，2 行内，不算第二份实现）
 source_hook_fire_path_lib() {
   local _self_dir _lib
