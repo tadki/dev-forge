@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Reuse shared lock/CLI patterns from multica_helpers (same directory).
+# SEE-1440: Kill Switch 默认值统一由 kill_switch 单源给出（paused 文件 + env）。
+from kill_switch import kill_switch_default
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from multica_helpers import (
     PidFileLock,
@@ -248,7 +250,7 @@ def parse_args():
     )
     parser.add_argument(
         "--kill-switch",
-        default=os.environ.get("KILL_SWITCH", "false"),
+        default=kill_switch_default(),
         help="Kill switch: true/false. When true, suppress baseline/heartbeat "
              "writes (pure read-only output) (default: %(default)s)",
     )

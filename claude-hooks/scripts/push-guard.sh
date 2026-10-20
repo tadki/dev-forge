@@ -241,10 +241,15 @@ resolve_git_root() {
   #    (sorted) — and if nothing matches, fail-open (return 1) instead of
   #    picking an arbitrary repo (previous behaviour grabbed the first entry
   #    in shell glob order, which mis-attributed pushes to the wrong repo).
+  #    SEE-1440 / fingerprint b5a1003be842: only a candidate that carries the
+  #    hook-host ownership marker (.claude/hooks) may be attributed — a stray
+  #    sibling repo (e.g. /tmp fixture) must fall through to the no-repo path
+  #    instead of being validated as the push target.
   local subdir
   while IFS= read -r subdir; do
     [ -n "$subdir" ] || continue
     [ -d "$subdir" ] || continue
+    [ -d "${subdir%/}/.claude/hooks" ] || continue
     if git -C "$subdir" rev-parse --git-dir >/dev/null 2>&1; then
       GIT_ROOT="${subdir%/}"; return 0
     fi

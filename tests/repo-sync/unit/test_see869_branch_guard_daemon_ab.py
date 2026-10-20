@@ -104,7 +104,7 @@ class _QuietLogger:
 
 
 def _disable_branch_guard(*args, **kwargs):
-    """Stub for ensure_on_master_branch — pretends repo is fine on master."""
+    """Stub for ensure_on_registered_branch — pretends the repo is aligned."""
     return True, "guard disabled (A baseline)", False
 
 
@@ -122,7 +122,7 @@ class TestDaemonBranchGuardAB:
         logger = _QuietLogger()
 
         # Cycle 1: synced -> no-op
-        with patch.object(repo_sync, "ensure_on_master_branch", _disable_branch_guard):
+        with patch.object(repo_sync, "ensure_on_registered_branch", _disable_branch_guard):
             result = run_sync(config, logger)
         assert result["success"] is True
 
@@ -138,7 +138,7 @@ class TestDaemonBranchGuardAB:
         # detect_sync_state uses the current branch's HEAD against origin/master,
         # which compares correctly regardless of checked-out branch — but the
         # guard never ran, so the repo remains on feature/drifted.)
-        with patch.object(repo_sync, "ensure_on_master_branch", _disable_branch_guard):
+        with patch.object(repo_sync, "ensure_on_registered_branch", _disable_branch_guard):
             result = run_sync(config, logger)
 
         # The local repo should still be on feature/drifted (guard never ran)

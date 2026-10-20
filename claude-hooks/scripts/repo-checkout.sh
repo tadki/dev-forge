@@ -735,7 +735,7 @@ resolve_bare_repo() {
         done
         # Tier 3: legacy default (historical layout; kept as last-resort fallback).
         if [ -z "$bare_root" ]; then
-            bare_root="/home/jerry/multica_workspaces/.repos/${ws_id}"
+            bare_root="${HOME}/multica_workspaces/.repos/${ws_id}"
         fi
     fi
     slug="${repo_url#*://}"

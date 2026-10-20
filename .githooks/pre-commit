@@ -1,7 +1,23 @@
 #!/bin/bash
-# dev-forge pre-commit: bash -n over staged .sh files
+# dev-forge pre-commit: bash -n over staged .sh files + trailing-whitespace gate.
+# 尾随空白闸（SEE-1440 / §SPEC-016）：LICENSE 类第三方许可证文本豁免——法律
+# 文本不应被改写（2026-10 台账实测 2 个字体许可证为误报源）。豁免后全库 0 命中，
+# 故翻硬为阻断（fail exit 1）。
 fail=0
 for f in $(git diff --cached --name-only --diff-filter=ACM | grep '\.sh$'); do
   bash -n "$f" || { echo "bash -n FAIL: $f"; fail=1; }
+done
+
+LICENSE_PATH_RE='(^|/)(LICEN[CS]E|COPYING|NOTICE|AUTHORS|OFL)([._-][^/]*)?$'
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+  [ -f "$f" ] || continue
+  echo "$f" | grep -Eiq "$LICENSE_PATH_RE" && continue
+  grep -Iq . "$f" 2>/dev/null || continue   # binary / empty: no text lines to check
+  hits=$(grep -nE ' +$' "$f" 2>/dev/null)
+  if [ -n "$hits" ]; then
+    echo "trailing whitespace FAIL: $f"
+    echo "$hits"
+    fail=1
+  fi
 done
 exit $fail

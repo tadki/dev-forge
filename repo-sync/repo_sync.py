@@ -529,13 +529,13 @@ def has_submodule_changes(repo_path: str, timeout: int | None = None) -> bool:
     return False
 
 
-def is_master_worktree_occupied(
-    repo_path: str, timeout: int | None = None
+def is_branch_worktree_occupied(
+    repo_path: str, branch: str, timeout: int | None = None
 ) -> tuple[bool, str | None]:
-    """Check if master is checked out in another worktree.
+    """Check if the registered branch is checked out in another worktree.
 
     Returns (occupied, other_worktree_path). Only triggers if a worktree OTHER
-    than repo_path has refs/heads/master as its checked-out branch.
+    than repo_path has refs/heads/<branch> as its checked-out branch.
     """
     r = git_run(
         repo_path, ["worktree", "list", "--porcelain"], check=False, timeout=timeout
@@ -555,14 +555,14 @@ def is_master_worktree_occupied(
             i += 1
             continue
         wt_path_str = line[len("worktree ") :].strip()
-        branch: str | None = None
+        wt_branch: str | None = None
         i += 1
         while i < len(lines) and lines[i].strip():
             sub = lines[i]
             if sub.startswith("branch "):
-                branch = sub[len("branch ") :].strip()
+                wt_branch = sub[len("branch ") :].strip()
             i += 1
-        if branch == "refs/heads/master":
+        if wt_branch == "refs/heads/%s" % branch:
             try:
                 wt_path = Path(wt_path_str).resolve()
             except OSError:
@@ -572,13 +572,13 @@ def is_master_worktree_occupied(
     return False, None
 
 
-def switch_to_master(
-    repo_path: str, timeout: int | None = None
+def switch_to_branch(
+    repo_path: str, branch: str, timeout: int | None = None
 ) -> tuple[bool, str]:
-    """Switch to master; create from origin/master if local master absent."""
-    r = git_run(repo_path, ["switch", "master"], check=False, timeout=timeout)
+    """Switch to the registered branch; create it from origin/<branch> if absent."""
+    r = git_run(repo_path, ["switch", branch], check=False, timeout=timeout)
     if r.returncode == 0:
-        return True, "switched to master"
+        return True, "switched to %s" % branch
     err = r.stderr.strip() if r.stderr else ""
     lowered = err.lower()
     if (
@@ -588,20 +588,20 @@ def switch_to_master(
     ):
         r2 = git_run(
             repo_path,
-            ["switch", "-c", "master", "origin/master"],
+            ["switch", "-c", branch, "origin/%s" % branch],
             check=False,
             timeout=timeout,
         )
         if r2.returncode == 0:
-            return True, "created master from origin/master"
+            return True, "created %s from origin/%s" % (branch, branch)
         return (
             False,
-            r2.stderr.strip() if r2.stderr else "failed to create master from origin/master",
+            r2.stderr.strip() if r2.stderr else "failed to create %s from origin/%s" % (branch, branch),
         )
     return False, err
 
 
-def ensure_on_master_branch(
+def ensure_on_registered_branch(
     repo_path: str,
     branch: str,
     stash_on_dirty: bool,
@@ -609,16 +609,19 @@ def ensure_on_master_branch(
     logger: logging.Logger,
     timeout: int | None = None,
 ) -> tuple[bool, str, bool]:
-    """Ensure repo is on the configured branch (master) before sync.
+    """Ensure repo is on the registered branch before sync.
 
     Implements Archi's boundary-case matrix (SEE-869 Phase 2b):
-      1. Config branch must be 'master' (else persistent failure)
-      2. Already on master → no-op
+      1. Config branch must be a protected default ('master' or 'main')
+      2. Already on the registered branch → no-op
       3. In-progress merge/rebase/cherry-pick/revert → persistent failure
       4. Submodule intermediate state → persistent failure
-      5. Master checked out in another worktree → transient skip
+      5. Registered branch checked out in another worktree → transient skip
       6. Dirty tree → stash once (or fail if stash_on_dirty disabled)
-      7. Switch to master (handles detached HEAD and other branches)
+      7. Switch to the registered branch (handles detached HEAD/other branches)
+
+    SEE-1440: branch is a parameter everywhere — a repo registered on main
+    must never be switched to a non-existent origin/master.
 
     Returns (ok, message, had_stash). had_stash=True means the caller must
     `do_stash_pop()` after the sync body completes.
@@ -638,19 +641,19 @@ def ensure_on_master_branch(
     current = get_current_branch(repo_path, timeout=timeout)
     if not current:
         return False, "could not detect current branch", False
-    if current == "master":
-        return True, "already on master", False
+    if current == branch:
+        return True, "already on %s" % branch, False
 
-    blocked, reason = _master_guard_blockers(repo_path, timeout=timeout)
+    blocked, reason = _branch_guard_blockers(repo_path, timeout=timeout)
     if blocked:
         return False, reason, False
 
     # 5. Worktree occupation (#7) — transient skip
-    occupied, wt_path = is_master_worktree_occupied(repo_path, timeout=timeout)
+    occupied, wt_path = is_branch_worktree_occupied(repo_path, branch, timeout=timeout)
     if occupied:
         return (
             False,
-            f"master is checked out in another worktree ({wt_path}); skipping",
+            f"{branch} is checked out in another worktree ({wt_path}); skipping",
             False,
         )
 
@@ -664,34 +667,45 @@ def ensure_on_master_branch(
         action = "stash dirty tree and switch" if is_dirty else "switch"
         return (
             True,
-            f"dry-run: would {action} from {current} to master",
+            f"dry-run: would {action} from {current} to {branch}",
             False,
         )
 
-    had_stash = False
-    if is_dirty:
-        stash_ok, stash_msg, had_stash = do_stash_if_dirty(
-            repo_path, stash_on_dirty, timeout=timeout
-        )
-        if not stash_ok:
-            return False, f"stash failed: {stash_msg}", False
-        if had_stash and has_submodule_changes(repo_path, timeout=timeout):
-            do_stash_pop(repo_path, timeout=timeout)
-            return (
-                False,
-                "submodule in intermediate state; manual cleanup required",
-                False,
-            )
+    stash_ok, stash_msg, had_stash = _stash_dirty_before_switch(
+        repo_path, stash_on_dirty, is_dirty, timeout=timeout
+    )
+    if not stash_ok:
+        return False, stash_msg, False
 
-    # 7. Switch to master (handles detached HEAD #2 and switch failure #9)
-    switch_ok, switch_msg = switch_to_master(repo_path, timeout=timeout)
+    # 7. Switch to the registered branch (detached HEAD #2 / switch failure #9)
+    switch_ok, switch_msg = switch_to_branch(repo_path, branch, timeout=timeout)
     if not switch_ok:
         if had_stash:
             do_stash_pop(repo_path, timeout=timeout)
-        return False, f"switch to master failed: {switch_msg}", False
+        return False, f"switch to {branch} failed: {switch_msg}", False
 
-    logger.info("branch guard: switched from %s to master", current)
-    return True, f"switched from {current} to master", had_stash
+    logger.info("branch guard: switched from %s to %s", current, branch)
+    return True, f"switched from {current} to {branch}", had_stash
+
+
+def _stash_dirty_before_switch(
+    repo_path: str,
+    stash_on_dirty: bool,
+    is_dirty: bool,
+    timeout: int | None = None,
+) -> tuple[bool, str, bool]:
+    """Guard 前置 stash：#1 单次 stash + 子模块中间态回滚。返回 (ok, message, had_stash)。"""
+    if not is_dirty:
+        return True, "", False
+    stash_ok, stash_msg, had_stash = do_stash_if_dirty(
+        repo_path, stash_on_dirty, timeout=timeout
+    )
+    if not stash_ok:
+        return False, f"stash failed: {stash_msg}", False
+    if had_stash and has_submodule_changes(repo_path, timeout=timeout):
+        do_stash_pop(repo_path, timeout=timeout)
+        return False, "submodule in intermediate state; manual cleanup required", False
+    return True, "", had_stash
 
 
 def _count_unpushed_commits(
@@ -763,7 +777,7 @@ def _handle_remote_ahead(
     return result
 
 
-def _master_guard_blockers(
+def _branch_guard_blockers(
     repo_path: str, timeout: int | None = None
 ) -> tuple[bool, str]:
     """Blocking preconditions for the branch guard (boundary matrix #3/#4).
@@ -1737,7 +1751,7 @@ def run_sync(
     # Branch guard (SEE-869): ensure main repo is on master before sync.
     # If a stash was taken here, it is restored once after the sync body
     # completes (single stash + single pop per cycle — never nested).
-    guard_ok, guard_msg, had_stash = ensure_on_master_branch(
+    guard_ok, guard_msg, had_stash = ensure_on_registered_branch(
         repo_path,
         branch,
         stash_on_dirty,
@@ -1891,7 +1905,7 @@ def run_sync(
         write_state(config, result)
         return result
     finally:
-        # Restore the stash taken by ensure_on_master_branch — one pop max
+        # Restore the stash taken by ensure_on_registered_branch — one pop max
         # per sync cycle. Failure here overrides the previously written
         # result so the state file reflects the latest failure.
         if had_stash and not dry_run:

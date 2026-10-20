@@ -28,7 +28,7 @@ echo "--- 2. engine dry-run"
 OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo doctor-probe"}}' | \
   HOOK_STATE_DIR="$(mktemp -d)" PROJECT_ROOT="$REPO_ROOT" node "$REPO_ROOT/claude-hooks/unified/engine.js" 2>&1)
 EC=$?
-[ "$EC" -eq 0 ] && ok "engine exit 0 (dry-run)" || bad "engine exit $EC"
+[ "$EC" -eq 0 ] && ok "engine exit 0 (dry-run)" || bad "engine exit $EC: $OUT"
 
 # ③ rules schema validation
 echo "--- 3. rules schema"

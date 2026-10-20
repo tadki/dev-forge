@@ -32,20 +32,20 @@ from repo_sync import (
     do_rebase_abort,
     do_stash_if_dirty,
     do_stash_pop,
-    ensure_on_master_branch,
+    ensure_on_registered_branch,
     get_current_branch,
     get_sha,
     git_fetch,
     git_run,
     has_git_operation_in_progress,
     has_submodule_changes,
-    is_master_worktree_occupied,
+    is_branch_worktree_occupied,
     load_config,
     release_lock,
     resolve_diverged,
     _handle_remote_ahead,
     run_sync,
-    switch_to_master,
+    switch_to_branch,
 )
 from repo_sync_daemon import load_config as daemon_load_config
 
@@ -978,25 +978,25 @@ class TestHasSubmoduleChanges:
         assert has_submodule_changes(repo) is False
 
 
-class TestIsMasterWorktreeOccupied:
+class TestIsBranchWorktreeOccupied:
     def test_single_repo_not_occupied(self, temp_git_repo):
         repo = temp_git_repo["local"]
-        occupied, path = is_master_worktree_occupied(repo)
+        occupied, path = is_branch_worktree_occupied(repo, "master")
         assert occupied is False
         assert path is None
 
 
-class TestSwitchToMaster:
+class TestSwitchToBranch:
     def test_switch_when_already_on_master(self, temp_git_repo):
         repo = temp_git_repo["local"]
-        ok, msg = switch_to_master(repo)
+        ok, msg = switch_to_branch(repo, "master")
         assert ok, f"switch failed: {msg}"
         assert get_current_branch(repo) == "master"
 
     def test_switch_from_other_branch(self, temp_git_repo):
         repo = temp_git_repo["local"]
         _create_branch(repo, "feature-y")
-        ok, msg = switch_to_master(repo)
+        ok, msg = switch_to_branch(repo, "master")
         assert ok, f"switch failed: {msg}"
         assert get_current_branch(repo) == "master"
 
@@ -1007,16 +1007,30 @@ class TestSwitchToMaster:
             capture_output=True, text=True, check=True,
         ).stdout.strip()
         _run_git(repo, ["checkout", "--detach", sha])
-        ok, msg = switch_to_master(repo)
+        ok, msg = switch_to_branch(repo, "master")
         assert ok, f"switch failed: {msg}"
         assert get_current_branch(repo) == "master"
 
 
-class TestEnsureOnMasterBranch:
+class TestEnsureOnRegisteredBranch:
+    def test_registered_main_branch_switches_from_feature(self, temp_git_repo):
+        """§SPEC-021: a repo registered on main must switch to main, not master."""
+        repo = temp_git_repo["local"]
+        _run_git(repo, ["branch", "main"])
+        _run_git(repo, ["push", "origin", "main"])
+        _create_branch(repo, "feature-main")
+
+        ok, msg, had_stash = ensure_on_registered_branch(
+            repo, "main", stash_on_dirty=True, dry_run=False, logger=MagicMock(),
+        )
+        assert ok is True, f"guard failed: {msg}"
+        assert had_stash is False
+        assert get_current_branch(repo) == "main"
+
     def test_config_branch_not_master_returns_persistent(self, temp_git_repo):
         repo = temp_git_repo["local"]
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "develop", stash_on_dirty=True, dry_run=False, logger=logger,
         )
         assert ok is False
@@ -1027,7 +1041,7 @@ class TestEnsureOnMasterBranch:
     def test_already_on_master_is_noop(self, temp_git_repo):
         repo = temp_git_repo["local"]
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "master", stash_on_dirty=True, dry_run=False, logger=logger,
         )
         assert ok is True
@@ -1040,7 +1054,7 @@ class TestEnsureOnMasterBranch:
         Path(os.path.join(repo, "uncommitted.txt")).write_text("local change")
 
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "master", stash_on_dirty=True, dry_run=False, logger=logger,
         )
         assert ok is True, f"guard failed: {msg}"
@@ -1057,7 +1071,7 @@ class TestEnsureOnMasterBranch:
         Path(os.path.join(repo, "uncommitted.txt")).write_text("local change")
 
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "master", stash_on_dirty=False, dry_run=False, logger=logger,
         )
         assert ok is False
@@ -1082,7 +1096,7 @@ class TestEnsureOnMasterBranch:
         _run_git(repo, ["merge", "--no-ff", "--no-commit", "master"])
 
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "master", stash_on_dirty=True, dry_run=False, logger=logger,
         )
         assert ok is False
@@ -1100,7 +1114,7 @@ class TestEnsureOnMasterBranch:
         _run_git(repo, ["checkout", "--detach", sha])
 
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "master", stash_on_dirty=True, dry_run=False, logger=logger,
         )
         assert ok is True, f"guard failed: {msg}"
@@ -1113,7 +1127,7 @@ class TestEnsureOnMasterBranch:
         Path(os.path.join(repo, "uncommitted.txt")).write_text("dirty")
 
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "master", stash_on_dirty=True, dry_run=True, logger=logger,
         )
         assert ok is True
@@ -1131,7 +1145,7 @@ class TestEnsureOnMasterBranch:
         _run_git(repo, ["worktree", "add", other_wt, "master"])
 
         logger = MagicMock()
-        ok, msg, had_stash = ensure_on_master_branch(
+        ok, msg, had_stash = ensure_on_registered_branch(
             repo, "master", stash_on_dirty=True, dry_run=False, logger=logger,
         )
         # cleanup worktree before assertions so failure doesn't leak

@@ -60,9 +60,10 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [dispatcher.sh] alias=$ALIAS PWD=$PWD HOM
 # 本仓检出）；PROJECT_ROOT 仅作为 firelog 落点/业务上下文，缺失不再短路透传。
 
 # Map alias to final business script.
-# Convention-based routing (SEE-1185 F4): alias maps to .claude/hooks/<alias>.sh;
-# only aliases that break the convention are listed explicitly.
-# Adding a new hook = drop script at .claude/hooks/<alias>.sh + register in settings.json.
+# 唯一扩展路径（SEE-1440 / fingerprint b9a88688b437）：新增 hook = 在
+# claude-hooks/unified/rules.d/*.json 增加 run_script 挂载规则（见
+# docs/hooks-implementation-guide.md）。dispatcher 只路由 unified-hook，
+# 不再按文件名约定发现业务脚本——按旧约定放脚本会静默透传。
 case "$ALIAS" in
   unified-hook)
     # SEE-1330 P1 cutover 修正：全局部署位优先 —— v2 配置必须单一真源。

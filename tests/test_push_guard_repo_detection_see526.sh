@@ -261,6 +261,10 @@ echo -e "${CYAN}--- Group 6: integration — fallback on invalid path ---${NC}"
 # Non-existent path should fall through Phase 3 to 'no git repo found' (exit 2)
 # Must run from a non-git directory so PWD fallback also fails
 G6_TMPDIR=$(mktemp -d)
+# SEE-1440: plant an interfering sibling repo (git repo WITHOUT .claude/hooks).
+# The level-4 PWD scan must NOT attribute the push to it — ownership marker is
+# the gate, so the fallback still ends in the no-repo path (exit 2).
+git init -q "$G6_TMPDIR/noise-sibling"
 
 test_full_g6() {
   local label="$1"
@@ -274,7 +278,10 @@ test_full_g6() {
   STDOUT_FILE=$(mktemp /tmp/push-guard-test-stdout.XXXXXX)
   STDERR_FILE=$(mktemp /tmp/push-guard-test-stderr.XXXXXX)
 
-  (cd "$G6_TMPDIR" && echo "$input" | bash "$HOOK_SCRIPT" > "$STDOUT_FILE" 2> "$STDERR_FILE")
+  # Isolate inherited agent env (TARGET_REPO_ROOT/PROJECT_ROOT point at real
+  # checkouts on dev machines) so the fallback path is what actually runs.
+  (cd "$G6_TMPDIR" && unset TARGET_REPO_ROOT PROJECT_ROOT GIT_ROOT && \
+    echo "$input" | bash "$HOOK_SCRIPT" > "$STDOUT_FILE" 2> "$STDERR_FILE")
   local actual_exit=$?
 
   rm -f "$STDOUT_FILE" "$STDERR_FILE"

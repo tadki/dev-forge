@@ -23,6 +23,7 @@ import urllib.error
 # Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from multica_helpers import PidFileLock, WorkspaceMutex, multica_stdin_cmd
+from kill_switch import kill_switch_default
 
 # --- Constants ---
 
@@ -59,8 +60,8 @@ def parse_args():
         help="Self agent ID (default: %(default)s)"
     )
     parser.add_argument(
-        "--kill-switch", default="false",
-        help="Kill switch: true/false (default: %(default)s)"
+        "--kill-switch", default=kill_switch_default(),
+        help="Kill switch: true/false (default: %(default)s; paused 文件或 KILL_SWITCH env 命中即 true)"
     )
     parser.add_argument(
         "--pid-file",
