@@ -133,6 +133,7 @@ GREEN = "GREEN"
 REDLINE = "REDLINE"
 OK = "ok"
 WARN = "warn"
+INFO = "info"
 FAIL = "fail"
 MISSING = "missing"
 
@@ -220,6 +221,29 @@ def tcp_open(host, port, timeout=0.5):
         return False
 
 
+def pid_alive(pid):
+    """PID 存活判定：优先 /proc（Linux），无 /proc 时退化为 signal 0。"""
+    if os.path.isdir("/proc"):
+        return os.path.exists("/proc/%d" % pid)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def git_out(repo_path, args):
+    """只读 git 查询；单仓异常返回空串，不中断日检。"""
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo_path] + args,
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def scan_launcher_failures(today_utc):
     """当日窗口扫描 launcher 日志失败码。
 
@@ -298,6 +322,10 @@ class DailyCheck:
     def fail(self, dim, code, message):
         self.note(dim, FAIL, code, message)
         self.redlines.append({"dim": dim, "code": code, "message": message})
+
+    def info(self, dim, code, message):
+        """观测项：计入 findings 但不拉升维度状态（恒真告警降级用）。"""
+        self.note(dim, INFO, code, message)
 
     def missing_input(self, path, dim, purpose):
         self.input_missing.append(path)
@@ -783,36 +811,104 @@ class DailyCheck:
         else:
             self.missing_input(unit_path, dim, "systemd unit 缺失")
 
-        # F3: repo_sync_daemon 存活 — 读 repo_sync_config.json 的 pid 文件声明
-        cfg_path = os.path.join(KOL_CHECKOUT_ROOT, ".dev", "repo-sync", "repo_sync_config.json")
-        cfg = read_json(cfg_path)
-        pid_ok = False
-        if isinstance(cfg, dict):
-            pid_file = cfg.get("pid_file") or cfg.get("pidfile")
-            if pid_file:
-                pid_file = pid_file.replace("__KOL_REPO_ROOT__", "/mnt/d/GodotProjects/king-of-likes")
-                pid_path = os.path.expanduser(pid_file.replace("$HOME", HOME))
-                pid_text = safe_read(pid_path)
-                if pid_text:
-                    try:
-                        pid = int(pid_text.strip())
-                        if os.path.exists("/proc/%d" % pid):
-                            pid_ok = True
-                        else:
-                            issues.append("F3 repo_sync_daemon PID %d 不存在 (进程可能已退出)" % pid)
-                    except ValueError:
-                        issues.append("F3 repo_sync pid 文件内容非法: %r" % pid_text.strip())
-            if not pid_file:
-                issues.append("F3 repo_sync_config.json 未声明 pid_file")
-        else:
-            issues.append("F3 repo_sync_config.json 缺失")
-        if pid_ok:
-            self.ok(dim, "f3", "repo_sync_daemon 存活 (pid=%s)" % pid_text.strip())
-        elif not issues:
-            issues.append("F3 repo_sync_daemon pid 文件缺失, 无法确认存活")
+        # F3/F4 (SEE-1440 / fingerprint 2a3c667e2c9a)：注册制 repos.d 单源巡检 —
+        #   每个注册的 repo_sync_daemon 必须存活（pid_file 指向的进程存在）；
+        #   服务检出 branch 必须等于注册 branch，且 HEAD == origin/<branch>。
+        # 旧 F3 读 KOL .dev/repo-sync/repo_sync_config.json，迁移后该路径已不存在。
+        self._check_registrations(dim, issues)
+
+        # F5 (SEE-1440 / fingerprint ba5ed5893ad9)：Kill Switch 单源一致性。
+        self._check_kill_switch_single_source(dim, issues)
 
         status = "warn" if issues else "ok"
         self.section(dim, status, issues)
+
+    def _check_registrations(self, dim, issues):
+        """F3 daemon 存活 + F4 服务检出==注册分支（只读）。"""
+        repos_d = os.path.join(self.root, "repo-sync", "repos.d")
+        regs = []
+        if os.path.isdir(repos_d):
+            for name in sorted(os.listdir(repos_d)):
+                if not name.endswith(".json"):
+                    continue
+                cfg = read_json(os.path.join(repos_d, name))
+                if isinstance(cfg, dict) and cfg.get("repo_path") and cfg.get("branch"):
+                    regs.append((name, cfg))
+        if not regs:
+            self.missing_input(repos_d, dim, "repo-sync 注册目录缺失/空")
+        for name, cfg in regs:
+            label = cfg.get("name") or os.path.splitext(name)[0]
+            self._check_registration_daemon(dim, issues, label, cfg)
+            self._check_registration_checkout(dim, issues, label, cfg)
+
+    def _check_registration_daemon(self, dim, issues, label, cfg):
+        pid_file = cfg.get("pid_file")
+        if not pid_file:
+            issues.append("F3 %s 注册未声明 pid_file" % label)
+            self.warn(dim, "daemon_pid_file", "%s 注册未声明 pid_file" % label)
+            return
+        pid_path = os.path.expanduser(str(pid_file).replace("$HOME", HOME))
+        pid_text = safe_read(pid_path)
+        if not pid_text:
+            issues.append("F3 %s daemon pid 文件缺失: %s" % (label, pid_path))
+            self.warn(dim, "daemon_pid_missing",
+                      "%s daemon 未运行（pid 文件缺失: %s）" % (label, pid_path))
+            return
+        try:
+            pid = int(pid_text.strip())
+        except ValueError:
+            issues.append("F3 %s pid 文件内容非法: %r" % (label, pid_text.strip()))
+            self.warn(dim, "daemon_pid_invalid",
+                      "%s pid 文件内容非法: %r" % (label, pid_text.strip()))
+            return
+        if pid_alive(pid):
+            self.ok(dim, "f3", "%s daemon 存活 (pid=%d)" % (label, pid))
+        else:
+            issues.append("F3 %s daemon PID %d 不存在" % (label, pid))
+            self.warn(dim, "daemon_dead",
+                      "%s daemon PID %d 不存在（进程已退出/未启动）" % (label, pid))
+
+    def _check_registration_checkout(self, dim, issues, label, cfg):
+        repo_path = cfg["repo_path"]
+        branch = cfg["branch"]
+        cur = git_out(repo_path, ["branch", "--show-current"])
+        head = git_out(repo_path, ["rev-parse", "HEAD"])
+        remote_ref = "origin/%s" % branch
+        remote = git_out(repo_path, ["rev-parse", remote_ref])
+        if not cur or not head:
+            issues.append("F4 %s 服务检出不可读: %s" % (label, repo_path))
+            self.warn(dim, "checkout_unreadable", "%s 服务检出不可读: %s" % (label, repo_path))
+        elif cur != branch:
+            issues.append("F4 %s 服务检出在 %s, 注册分支 %s" % (label, cur, branch))
+            self.warn(dim, "checkout_branch_drift",
+                      "%s 服务检出 branch=%s != 注册 branch=%s" % (label, cur, branch))
+        elif not remote:
+            issues.append("F4 %s 缺少 %s 引用" % (label, remote_ref))
+            self.warn(dim, "checkout_remote_ref_missing",
+                      "%s 缺少 %s 引用（无法核对 HEAD）" % (label, remote_ref))
+        elif head != remote:
+            issues.append("F4 %s HEAD(%s) != %s(%s)"
+                          % (label, head[:8], remote_ref, remote[:8]))
+            self.warn(dim, "checkout_head_drift",
+                      "%s HEAD(%s) != %s(%s)，服务检出未跟随远端"
+                      % (label, head[:8], remote_ref, remote[:8]))
+        else:
+            self.ok(dim, "f4", "%s 服务检出与 %s 一致 (%s)" % (label, remote_ref, head[:8]))
+
+    def _check_kill_switch_single_source(self, dim, issues):
+        """F5：规范 paused 文件为单一入口；历史别名仅告警提示收敛。"""
+        canonical_paused = os.path.join(REPORT_ROOT, "DISABLED")
+        legacy_paused = os.path.join(self.root, "review-prompts", "toolchain", "ledger", "DISABLED")
+        active = [p for p in (canonical_paused, legacy_paused) if os.path.exists(p)]
+        if not active:
+            self.ok(dim, "f5", "Kill Switch 未激活（单源 %s 不存在）" % canonical_paused)
+            return
+        self.info(dim, "kill_switch_active",
+                  "Kill Switch 激活: %s（autopilots 与评审拼装器共用单源）" % ", ".join(active))
+        if os.path.exists(legacy_paused) and not os.path.exists(canonical_paused):
+            issues.append("F5 Kill Switch 使用历史路径 %s" % legacy_paused)
+            self.warn(dim, "kill_switch_legacy_path",
+                      "paused 文件位于历史别名，建议统一到 %s" % canonical_paused)
 
     # -- G 错误度量口径 (cross-cutting) -------------------------------------------
 
@@ -919,9 +1015,11 @@ class DailyCheck:
                             weekly[code] += n
         weekly_bad = [code for code, n in weekly.items() if n >= WEEKLY_CUMULATIVE_MIN]
         if weekly_bad:
-            self.warn(dim, "threshold_weekly",
-                      "周累计越界: %s (>=%d)" % (", ".join(weekly_bad), WEEKLY_CUMULATIVE_MIN))
-            issues.append("G4 周累计越界: %s" % weekly_bad)
+            # SEE-1440 / ae4dac961ce9 裁决：周累计随整点 trigger 钉扎放大，错峰属
+            # 平台侧编排（仓内 autopilots/configs 无 cron 定义）——降 info 保留观测。
+            self.info(dim, "threshold_weekly",
+                      "周累计越界: %s (>=%d)；接受理由：错峰整改在平台侧调度，仓库侧不可控"
+                      % (", ".join(weekly_bad), WEEKLY_CUMULATIVE_MIN))
 
         # G5: 2σ 越界 — 用 history.daily 的过去值序列判断今日异常
         # (history 与 today 现均为当日窗口口径; 旧口径历史因数值巨大天然不触发误报,
@@ -992,10 +1090,12 @@ class DailyCheck:
         if trigger_scan_note:
             self.warn(dim, "trigger_scan", trigger_scan_note)
         elif integer_pinned:
-            self.warn(dim, "integer_pinned_triggers",
-                      "整点钉扎 trigger %d 个: %s"
+            # SEE-1440 / ae4dac961ce9 裁决：trigger 由 multica 平台侧管理（仓内无
+            # cron 定义、无法错峰），降 info 并注明接受理由，避免恒真 warn 稀释信号。
+            self.info(dim, "integer_pinned_triggers",
+                      "整点钉扎 trigger %d 个: %s；接受理由：autopilot schedule 属平台侧编排，"
+                      "仓内不可控，错峰动作归平台运维"
                       % (len(integer_pinned), ", ".join(integer_pinned[:10])))
-            issues.append("G6 整点钉扎 %d 个" % len(integer_pinned))
         else:
             self.ok(dim, "g6", "无整点钉扎 trigger")
 
