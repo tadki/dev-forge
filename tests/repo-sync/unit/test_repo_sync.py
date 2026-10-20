@@ -1048,6 +1048,22 @@ class TestEnsureOnRegisteredBranch:
         assert "already on master" in msg
         assert had_stash is False
 
+    def test_already_on_registered_main_is_noop(self, temp_git_repo):
+        """§SPEC-022: idempotency must key on the REGISTERED branch, not a
+        hardcoded 'master'. A main-registered repo already on main must
+        short-circuit; reverting the check to 'current == master' would fall
+        through to the worktree-occupation path and fail the guard."""
+        repo = temp_git_repo["local"]
+        _run_git(repo, ["branch", "main"])
+        _run_git(repo, ["checkout", "main"])
+        ok, msg, had_stash = ensure_on_registered_branch(
+            repo, "main", stash_on_dirty=True, dry_run=False, logger=MagicMock(),
+        )
+        assert ok is True, f"guard failed: {msg}"
+        assert "already on main" in msg
+        assert had_stash is False
+        assert get_current_branch(repo) == "main"
+
     def test_dirty_tree_stashes_and_switches(self, temp_git_repo):
         repo = temp_git_repo["local"]
         _create_branch(repo, "dirty-branch")

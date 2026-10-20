@@ -264,7 +264,19 @@ G6_TMPDIR=$(mktemp -d)
 # SEE-1440: plant an interfering sibling repo (git repo WITHOUT .claude/hooks).
 # The level-4 PWD scan must NOT attribute the push to it — ownership marker is
 # the gate, so the fallback still ends in the no-repo path (exit 2).
-git init -q "$G6_TMPDIR/noise-sibling"
+# §SPEC-022 硬化（Harti）：sibling 必须是**合法可推仓**（含 master 提交且与
+# origin/master 同步），且 bare origin 必须放在 G6_TMPDIR **之外**——变异（无
+# 归属校验）下 L4 扫描会按字典序采纳子目录：空仓或 bare 仓被采纳仍经 Check-3
+# currency 失败得到同码 exit 2 掩盖误归属；合法 worktree 仓被采纳时 push 放行
+# （exit 0），与期望 exit 2 硬冲突，归属校验回归可判定。
+git init -q -b master "$G6_TMPDIR/noise-sibling"
+git -C "$G6_TMPDIR/noise-sibling" -c user.email=t@t -c user.name=t \
+  commit -q --allow-empty -m init
+G6_ORIGIN=$(mktemp -d "${G6_TMPDIR}.origin.XXXXXX")
+git init -q --bare "$G6_ORIGIN/origin.git"
+git -C "$G6_TMPDIR/noise-sibling" remote add origin "$G6_ORIGIN/origin.git"
+git -C "$G6_TMPDIR/noise-sibling" -c user.email=t@t -c user.name=t \
+  push -q -u origin master
 
 test_full_g6() {
   local label="$1"
@@ -301,7 +313,7 @@ test_full_g6 "G6-2 nonexistent cd path falls back (non-git PWD) → exit 2" \
   "cd /nonexistent/path/push/guard/test && git push origin master" \
   2
 
-rm -rf "$G6_TMPDIR"
+rm -rf "$G6_TMPDIR" "$G6_ORIGIN"
 
 # --- Summary ---
 echo ""
