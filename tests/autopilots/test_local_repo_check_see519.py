@@ -214,6 +214,12 @@ HEAD bbb"""
 class TestFindBareRepoPath:
     """Test find_bare_repo_path() logic via importing from local_repo_check.py."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_workspace_env(self, monkeypatch):
+        # find_bare_repo_path 优先取 $MULTICA_WORKSPACE_ID 命名解析 bare repo；
+        # 本机 env 在位时 tmp_path 用例会命中真实工作区，`== ""` 断言假红。
+        monkeypatch.delenv("MULTICA_WORKSPACE_ID", raising=False)
+
     def test_from_git_file_gitdir(self, tmp_path):
         """Bare repo detected from .git file containing 'gitdir: ...' path."""
         from local_repo_check import find_bare_repo_path

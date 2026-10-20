@@ -48,30 +48,32 @@ def _make_mock_subprocess():
     """Mock subprocess that tracks queried statuses."""
     queried_statuses = []
 
-    def mock_run(cmd, shell=True, capture_output=True, text=True,
-                 encoding=None, errors=None, timeout=None):
+    # multica_cli（SEE-956 H8 重构后）以 subprocess.run(cmd, shell=False,
+    # input=...) 调用并检查 returncode；mock 透传任意签名并返回 returncode=0
+    # 的 CompletedProcess 形状，否则 TypeError 触发退避重试、fetch 全失败。
+    def mock_run(cmd, *args, **kwargs):
         cmd_str = " ".join(cmd) if isinstance(cmd, list) else (cmd or "")
 
         if "multica agent list" in cmd_str:
-            return MagicMock(stdout=json.dumps(ALL_AGENTS), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(ALL_AGENTS), stderr="")
         elif "multica workspace members" in cmd_str:
-            return MagicMock(stdout=json.dumps(ALL_MEMBERS), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(ALL_MEMBERS), stderr="")
         elif "multica issue list" in cmd_str:
             import re
             match = re.search(r"--status (\w+)", cmd_str)
             status = match.group(1) if match else ""
             queried_statuses.append(status)
             if status == "backlog":
-                return MagicMock(stdout=json.dumps([BACKLOG_ISSUE]), stderr="")
-            return MagicMock(stdout=json.dumps([]), stderr="")
+                return MagicMock(returncode=0, stdout=json.dumps([BACKLOG_ISSUE]), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps([]), stderr="")
         elif "multica issue comment list" in cmd_str:
-            return MagicMock(stdout=json.dumps([]), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps([]), stderr="")
         elif "multica issue runs" in cmd_str:
-            return MagicMock(stdout=json.dumps([]), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps([]), stderr="")
         elif "multica issue get" in cmd_str:
-            return MagicMock(stdout=json.dumps(BACKLOG_ISSUE), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(BACKLOG_ISSUE), stderr="")
         else:
-            return MagicMock(stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
 
     mock_run._queried_statuses = queried_statuses
     return mock_run
@@ -83,8 +85,7 @@ def _run_with_statuses(statuses_list):
     buf = StringIO()
 
     with patch("issue_status_check.subprocess.run", mock_fn), \
-         patch("issue_status_check.acquire_lock", return_value=True), \
-         patch("issue_status_check.cleanup_pid"), \
+         patch("issue_status_check.PidFileLock"), \
          contextlib.redirect_stdout(buf):
 
         import issue_status_check
@@ -130,6 +131,8 @@ class TestABBacklogExclusion:
             + result.get("active", [])
             + result.get("no_assignee", [])
             + result.get("grace_period", [])
+            # SEE-956 H1: fixture 无 description，得分低于阈值进 placeholder 桶
+            + result.get("placeholder", [])
         )
         identifiers = {e.get("identifier") for e in all_entries}
         assert "SEE-BACKLOG-AB" in identifiers, (
