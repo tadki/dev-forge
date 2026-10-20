@@ -462,7 +462,7 @@ def classify_error(message: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Branch guard helpers (SEE-869: ensure main repo is on master before sync)
+# Branch guard helpers (SEE-869: ensure the main repo sits on its registered branch before sync)
 # ---------------------------------------------------------------------------
 
 
@@ -1748,7 +1748,7 @@ def run_sync(
         "dry_run": dry_run,
     }
 
-    # Branch guard (SEE-869): ensure main repo is on master before sync.
+    # Branch guard (SEE-869): ensure the main repo sits on its registered branch before sync.
     # If a stash was taken here, it is restored once after the sync body
     # completes (single stash + single pop per cycle — never nested).
     guard_ok, guard_msg, had_stash = ensure_on_registered_branch(

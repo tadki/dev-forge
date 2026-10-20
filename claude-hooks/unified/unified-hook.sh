@@ -57,6 +57,7 @@ for _cand in "$_lib_dir/../scripts/lib/hook-fire-path.lib.sh"; do
   [ -f "$_cand" ] && . "$_cand" && break
 done
 LOG_FILE=$(resolve_hook_fire_log_path 2>/dev/null) || LOG_FILE="$HOME/.claude/hook-fire.log"
+maybe_rotate_hook_fire_log "$LOG_FILE" 2>/dev/null || true
 
 ENGINE="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/engine.js"
 # fail-open 注入测试通道：替换引擎路径

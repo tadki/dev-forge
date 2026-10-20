@@ -53,6 +53,7 @@ done
 FIRELOG_NO_PWD_SCAN=1
 PROJECT_ROOT_CANON="$PROJECT_ROOT"
 LOG_FILE=$(resolve_hook_fire_log_path 2>/dev/null) || LOG_FILE="$HOME/.claude/hook-fire.log"
+maybe_rotate_hook_fire_log "$LOG_FILE" 2>/dev/null || true
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [dispatcher.sh] alias=$ALIAS PWD=$PWD HOME=$HOME PROJECT_ROOT=${PROJECT_ROOT:-<none>}" >> "$LOG_FILE" 2>/dev/null || true
 

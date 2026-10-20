@@ -13,6 +13,7 @@ for _cand in "$_lib_dir/scripts/lib/hook-fire-path.lib.sh"; do
   [ -f "$_cand" ] && . "$_cand" && break
 done
 LOG_FILE=$(resolve_hook_fire_log_path 2>/dev/null) || LOG_FILE="$HOME/.claude/hook-fire.log"
+maybe_rotate_hook_fire_log "$LOG_FILE" 2>/dev/null || true
 
 echo "[$TIMESTAMP] [$HOOK_TYPE] alias=$ALIAS tool=$TOOL_NAME" >> "$LOG_FILE" 2>/dev/null || true
 
