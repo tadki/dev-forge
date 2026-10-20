@@ -3,7 +3,12 @@
 # Fetches GitHub releases, compares against current version, outputs analysis.
 #
 # Delegates to version_check.py for cross-platform compatibility.
+# Shared env→flag boilerplate is sourced from lib/common_env.sh (SEE-1440).
 set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common_env.sh
+source "$SCRIPT_DIR/lib/common_env.sh"
 
 DRY_RUN="${DRY_RUN:-true}"
 VERBOSE="${VERBOSE:-false}"
@@ -13,39 +18,12 @@ LOCK_TIMEOUT="${LOCK_TIMEOUT:-300}"
 ISSUE_ID="${ISSUE_ID:-}"
 OUTPUT_JSON="${OUTPUT_JSON:-false}"
 
-# Kill switch: if set, downgrade to pure output mode (no write operations)
-KILL_SWITCH="${KILL_SWITCH:-false}"
+autopilots_kill_switch
+autopilots_detect_python || exit 1
 
-# Determine script directory for calling the Python script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Dynamic Python detection
-if command -v python3 &>/dev/null; then
-    PYTHON_CMD=python3
-elif command -v python &>/dev/null; then
-    PYTHON_CMD=python
-else
-    echo '{"error": "Python not found"}' >&2
-    exit 1
-fi
-
-# Build flag arguments
-DRY_RUN_ARG=""
-if [ "$DRY_RUN" = "true" ]; then
-  DRY_RUN_ARG="--dry-run"
-elif [ "$DRY_RUN" = "false" ]; then
-  DRY_RUN_ARG="--no-dry-run"
-fi
-
-VERBOSE_ARG=""
-if [ "$VERBOSE" = "true" ]; then
-  VERBOSE_ARG="--verbose"
-fi
-
-OUTPUT_JSON_ARG=""
-if [ "$OUTPUT_JSON" = "true" ]; then
-  OUTPUT_JSON_ARG="--output-json"
-fi
+DRY_RUN_ARG="$(autopilots_dry_run_pair "$DRY_RUN")"
+VERBOSE_ARG="$(autopilots_flag_if_true --verbose "$VERBOSE")"
+OUTPUT_JSON_ARG="$(autopilots_flag_if_true --output-json "$OUTPUT_JSON")"
 
 "$PYTHON_CMD" "$SCRIPT_DIR/version_check.py" \
     $DRY_RUN_ARG \
