@@ -18,6 +18,11 @@
 
 set -uo pipefail
 
+# §SPEC-023 (SEE-1440 QA HIGH-1): fixture git commit needs a self-sufficient
+# identity (runners/machines without global git config would exit 128).
+export GIT_AUTHOR_NAME="dev-forge-ci" GIT_AUTHOR_EMAIL="ci@dev-forge.invalid"
+export GIT_COMMITTER_NAME="dev-forge-ci" GIT_COMMITTER_EMAIL="ci@dev-forge.invalid"
+
 REPO_ROOT="/home/jerry/multica_workspaces/1a011680-a476-4553-929d-478690824e46/90321f9c/workdir/KingOfLikes-Godot"
 AGENT_ID="b2384294-919a-4a91-9f35-2c45848577aa"
 TASK_ID="9670acec-6bf7-4858-9439-6e3ca2581b00"
