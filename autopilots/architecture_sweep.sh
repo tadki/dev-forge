@@ -5,7 +5,12 @@
 # Delegates to architecture_sweep.py for cross-platform compatibility.
 # SEE-956 L1: `set -e` added so the wrapper fails fast if the Python script
 # exits non-zero, instead of silently returning success.
+# Shared env→flag boilerplate is sourced from lib/common_env.sh (SEE-1440).
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common_env.sh
+source "$SCRIPT_DIR/lib/common_env.sh"
 
 # D7: parse both flag-style and positional args so `--dry-run` (or any flag)
 # never gets mistaken for a workspace-root positional, matching the python
@@ -17,6 +22,7 @@ FAST_ARG=""
 DRY_RUN_ARG=""
 L1_ARG=""
 SKIP_NEXT=""
+EXECUTION_ISSUE_ID=""
 for ARG in "$@"; do
   if [ -n "$SKIP_NEXT" ]; then
     SKIP_NEXT=""
@@ -72,11 +78,9 @@ if [ -z "$WORKSPACE_ROOT" ]; then
 fi
 
 DRY_RUN="${DRY_RUN:-false}"
-EXECUTION_ISSUE_ID="${EXECUTION_ISSUE_ID:-}"
 
-# Kill switch: if set, downgrade to pure output mode (SEE-1224 #4; mirrors
-# version_check.sh KILL_SWITCH passthrough).
-KILL_SWITCH="${KILL_SWITCH:-false}"
+autopilots_kill_switch
+autopilots_detect_python || exit 1
 
 # --dry-run / --l1 via env vars (legacy) still work.
 if [ -z "$DRY_RUN_ARG" ] && [ "$DRY_RUN" = "true" ]; then
@@ -87,29 +91,10 @@ if [ -z "$L1_ARG" ] && [ "${ARCH_SWEEP_L1:-false}" = "true" ]; then
 fi
 
 # Determine current worktree hash to skip (env var wins, else derive from PWD).
-if [ -z "$CURRENT_HASH" ] && [ -n "${MULTICA_WORKTREE_HASH:-}" ]; then
-  CURRENT_HASH="$MULTICA_WORKTREE_HASH"
-fi
-if [ -z "$CURRENT_HASH" ] && [ -n "$WORKSPACE_ROOT" ]; then
-  case "$PWD" in
-    "$WORKSPACE_ROOT"/*)
-      rel="${PWD#$WORKSPACE_ROOT/}"
-      CURRENT_HASH="${rel%%/*}"
-      ;;
-  esac
-fi
-
-# Determine script directory for calling the Python script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Dynamic Python detection
-if command -v python3 &>/dev/null; then
-    PYTHON_CMD=python3
-elif command -v python &>/dev/null; then
-    PYTHON_CMD=python
-else
-    echo '{"error": "Python not found"}' >&2
-    exit 1
+# The helper falls back to PWD only when MULTICA_WORKTREE_HASH is unset, which
+# matches the original two-step fallback here.
+if [ -z "$CURRENT_HASH" ]; then
+  CURRENT_HASH="$(autopilots_current_hash "$WORKSPACE_ROOT")"
 fi
 
 # D8: omit --workspace-root / --current-hash when unknown so the python script
