@@ -8,6 +8,20 @@ autopilots_dir = os.path.abspath(autopilots_dir)
 if autopilots_dir not in sys.path:
     sys.path.insert(0, autopilots_dir)
 
+# §SPEC-023 (SEE-1440 QA HIGH-1): fixture-built git repos commit via bare
+# `git commit`, which dies with exit 128 on CI runners that carry no global
+# git identity. Env-var identity outranks git config, applies to every git
+# subprocess that inherits os.environ (commit/merge/stash/rebase alike), and
+# is independent of GIT_CONFIG_GLOBAL — setdefault keeps any explicitly
+# provided identity intact.
+for _key, _value in (
+    ("GIT_AUTHOR_NAME", "dev-forge-ci"),
+    ("GIT_AUTHOR_EMAIL", "ci@dev-forge.invalid"),
+    ("GIT_COMMITTER_NAME", "dev-forge-ci"),
+    ("GIT_COMMITTER_EMAIL", "ci@dev-forge.invalid"),
+):
+    os.environ.setdefault(_key, _value)
+
 
 def pytest_configure(config):
     # SEE-1195: tests that need a live Multica daemon / real server access.

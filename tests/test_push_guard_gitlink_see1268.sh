@@ -12,6 +12,12 @@
 
 set -uo pipefail
 
+# §SPEC-023 (SEE-1440 QA HIGH-1): bare `git commit` in the fixture needs an
+# identity; CI runners carry no global one (exit 128). Env-var identity is
+# independent of GIT_CONFIG_GLOBAL and keeps the fixture self-sufficient.
+export GIT_AUTHOR_NAME="dev-forge-ci" GIT_AUTHOR_EMAIL="ci@dev-forge.invalid"
+export GIT_COMMITTER_NAME="dev-forge-ci" GIT_COMMITTER_EMAIL="ci@dev-forge.invalid"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR/.."
 PASS=0
