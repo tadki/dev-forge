@@ -69,13 +69,12 @@ def is_within_grace_period(created_at_str, grace_minutes):
     """
     if not created_at_str or grace_minutes <= 0:
         return False
-    try:
-        from datetime import datetime, timezone, timedelta
-        dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=grace_minutes)
-        return dt > cutoff
-    except (ValueError, TypeError):
+    from datetime import datetime, timezone, timedelta
+    dt = _parse_utc(created_at_str)
+    if dt is None:
         return False
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=grace_minutes)
+    return dt > cutoff
 
 
 def has_assignee_recent_activity(comments, assignee_id, threshold_minutes):
