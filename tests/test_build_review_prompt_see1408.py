@@ -12,6 +12,7 @@ exercises parsing/assembly mechanics.
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import subprocess
@@ -243,3 +244,23 @@ class TestByteForcedNthOutput:
         )
         assert r.returncode == 0
         assert (tmp_path / "p3-again.md").read_bytes() == digests[2]
+
+
+class TestDefaultStateFilePath:
+    def test_default_state_file_lands_in_repo(self, tmp_path):
+        """§SPEC-022 hardening (SEE-1440 / 8e0c896702d2): the DEFAULT counter
+        path must resolve inside the repo ledger dir — never the legacy
+        out-of-repo ~/.multica/toolchain-reports/. Every other test in this
+        file passes --state-file explicitly, leaving the default branch
+        unguarded (mutant revert-to-home survived the full suite)."""
+        args = argparse.Namespace(
+            repo_root=str(tmp_path),
+            state_file=None,
+            ledger_path=str(tmp_path / "ledger.md"),
+            daily_report_dir=str(tmp_path / "reports"),
+        )
+        _template, _daily, _ledger, state = builder.resolve_paths(args, "2026-10-21")
+        assert state == (
+            tmp_path / "review-prompts" / "toolchain" / "ledger" / "review-state.json"
+        )
+        assert ".multica" not in str(state)

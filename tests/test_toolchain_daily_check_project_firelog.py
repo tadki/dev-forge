@@ -6,6 +6,7 @@ fixture = 临时 repo（.claude/hook-fire.log 项目级落点）+ monkeypatch se
 
 import argparse
 import os
+import subprocess
 import sys
 
 import pytest
@@ -81,3 +82,43 @@ def test_dim_c_keeps_global_firelog_check(project_repo, global_firelog, monkeypa
     c.dim_c()
     f = next(x for x in c.findings if x["code"] == "c3")
     assert f["level"] == tdc.OK
+
+
+# --- §SPEC-022 硬化（Harti）：F4 服务检出==注册分支 防复发维度守卫 -----------
+
+def _init_repo(path, branch):
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+    )
+    return path
+
+
+def test_f4_registration_checkout_drift_and_alignment(tmp_path):
+    """§SPEC-010 F4（2a3c667e2c9a）：检出 branch != 注册 branch 必须产出
+    checkout_branch_drift warn 且抬升维度 issues；对齐时不得误报。
+    Wave A 的受控注入证据为手工实跑，本用例将其固化为机器判定。"""
+    drifted = _init_repo(tmp_path / "svc-drifted", "temp-feature")
+    c = tdc.DailyCheck(argparse.Namespace(
+        report_dir=str(tmp_path), no_net=True, json_mode=False))
+    c.root = str(tmp_path)
+    issues = []
+    c._check_registration_checkout("F", issues, "injectdrift",
+                                   {"repo_path": str(drifted), "branch": "main"})
+    codes = [x["code"] for x in c.findings]
+    assert "checkout_branch_drift" in codes, c.findings
+    assert any("injectdrift" in i for i in issues), issues
+
+    aligned = _init_repo(tmp_path / "svc-aligned", "main")
+    subprocess.run(["git", "-C", str(aligned), "branch", "temp-feature"], check=True)
+    c2 = tdc.DailyCheck(argparse.Namespace(
+        report_dir=str(tmp_path), no_net=True, json_mode=False))
+    c2.root = str(tmp_path)
+    issues2 = []
+    c2._check_registration_checkout("F", issues2, "aligned",
+                                    {"repo_path": str(aligned), "branch": "main"})
+    drift_warns = [x for x in c2.findings
+                   if x["level"] == tdc.WARN and "drift" in x["code"]]
+    assert not drift_warns, c2.findings
