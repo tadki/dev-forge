@@ -77,7 +77,14 @@ def _build_workspace(tmpdir):
         if unpushed:
             _write_commit(repo_dir, "unpushed.txt", "Unpushed commit")
         if dirty:
-            with open(os.path.join(repo_dir, "dirty.txt"), "w", encoding="utf-8") as f:
+            # SEE-956 H4：实现已排除 untracked（`??`），dirty 判定只看 tracked
+            # 变更；用例改用 tracked 修改构造（先提交基线再修改）。
+            dirty_file = os.path.join(repo_dir, "dirty.txt")
+            with open(dirty_file, "w", encoding="utf-8") as f:
+                f.write("committed baseline\n")
+            _git("add", "dirty.txt", cwd=repo_dir)
+            _git("commit", "-m", "add dirty.txt", cwd=repo_dir)
+            with open(dirty_file, "w", encoding="utf-8") as f:
                 f.write("local changes\n")
         return repo_dir
 

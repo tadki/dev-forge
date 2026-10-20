@@ -51,24 +51,26 @@ ISSUE_CREATED_1HR = (NOW - timedelta(hours=1)).isoformat()
 
 def _make_mock_subprocess(mock_data: dict):
     """Create a mock subprocess.run that returns predefined multica CLI responses."""
-    def mock_run(cmd, shell=True, capture_output=True, text=True,
-                 encoding=None, errors=None, timeout=None):
+    # multica_cli（SEE-956 H8 重构后）以 subprocess.run(cmd, shell=False,
+    # input=...) 调用并检查 returncode；mock 透传任意签名并返回 returncode=0
+    # 的 CompletedProcess 形状，否则 TypeError 触发退避重试、fetch 全失败。
+    def mock_run(cmd, *args, **kwargs):
         cmd_str = " ".join(cmd) if isinstance(cmd, list) else (cmd or "")
         if "multica agent list" in cmd_str:
-            return MagicMock(stdout=json.dumps(mock_data.get("agents", ALL_AGENTS)), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(mock_data.get("agents", ALL_AGENTS)), stderr="")
         elif "multica workspace members" in cmd_str:
-            return MagicMock(stdout=json.dumps(mock_data.get("members", ALL_MEMBERS)), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(mock_data.get("members", ALL_MEMBERS)), stderr="")
         elif "multica issue list" in cmd_str:
             status = _extract_status(cmd_str)
-            return MagicMock(stdout=json.dumps(mock_data.get("issues_by_status", {}).get(status, [])), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(mock_data.get("issues_by_status", {}).get(status, [])), stderr="")
         elif "multica issue comment list" in cmd_str:
-            return MagicMock(stdout=json.dumps(mock_data.get("comments", [])), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(mock_data.get("comments", [])), stderr="")
         elif "multica issue runs" in cmd_str:
-            return MagicMock(stdout=json.dumps(mock_data.get("runs", [])), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(mock_data.get("runs", [])), stderr="")
         elif "multica issue get" in cmd_str:
-            return MagicMock(stdout=json.dumps(mock_data.get("issue_detail", {})), stderr="")
+            return MagicMock(returncode=0, stdout=json.dumps(mock_data.get("issue_detail", {})), stderr="")
         else:
-            return MagicMock(stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
     return mock_run
 
 
@@ -86,8 +88,7 @@ def _run_main(mock_data: dict) -> dict:
     buf = StringIO()
 
     with patch("issue_status_check.subprocess.run", mock_run_fn), \
-         patch("issue_status_check.acquire_lock", return_value=True), \
-         patch("issue_status_check.cleanup_pid"), \
+         patch("issue_status_check.PidFileLock"), \
          contextlib.redirect_stdout(buf):
 
         import issue_status_check

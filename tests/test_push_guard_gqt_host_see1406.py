@@ -21,8 +21,10 @@ from pathlib import Path
 
 import pytest
 
-HOOK_DIR = Path(__file__).resolve().parents[3]
-HOOK_SCRIPT = HOOK_DIR / ".claude" / "hooks" / "scripts" / "push-guard.sh"
+# dev-forge 布局：hook 脚本位于仓库根 claude-hooks/scripts/（锚定仓库根，
+# 不假设仓库父级布局）
+HOOK_DIR = Path(__file__).resolve().parents[1]
+HOOK_SCRIPT = HOOK_DIR / "claude-hooks" / "scripts" / "push-guard.sh"
 
 ATLAS_ID = "fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
 BACHI_ID = "a5c250e8-7257-466e-b45a-03f995c7206c"
@@ -37,6 +39,18 @@ def tmp_git_repo(tmp_path):
     subprocess.run(
         ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
          "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+    )
+    # push-guard Check-3 要求 origin 默认分支引用（origin/HEAD|origin/master）
+    # 可解析且 HEAD 包含之；无 remote 的裸仓会在 currency 预检被拦，掩盖
+    # host/companion 判定本身。补 bare origin 并推送使前置成立。
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(origin)],
+                   check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+         "push", "-q", "-u", "origin", "master"],
         check=True,
     )
     return repo
@@ -187,7 +201,7 @@ def test_default_probe_path_matches_gqt_wiring():
     """缺省探针路径与 GQT 检出的 launch 硬编码必须同源（~/tools/godot-qa-toolkit）。"""
     src = HOOK_SCRIPT.read_text(encoding="utf-8")
     assert "tools/godot-qa-toolkit" in src, "push-guard default probe path missing"
-    # GQT 启动接线同一路径（本文件所在 KOL 检出的 sibling checkout 载体）
+    # GQT 启动接线同一路径（dev-forge 仓不含该检出时守卫跳过）
     launch = HOOK_DIR / "godot-qa-toolkit" / ".dev" / "launch" / "godot-qa-toolkit-start.sh"
     if launch.is_file():
         assert "tools/godot-qa-toolkit" in launch.read_text(encoding="utf-8")
