@@ -274,22 +274,7 @@ CATEGORY_LABELS = {
 CATEGORY_ORDER = ("feature", "fix", "performance", "refactor", "chore", "docs", "test", "ci", "other")
 
 
-def generate_markdown_report(current_version, newer_versions, processing_log):
-    """Generate a markdown report string."""
-    lines = []
-    lines.append("## Multica 版本更新分析报告")
-    lines.append("")
-    lines.append(f"- **当前运行版本**: `{current_version}`")
-    lines.append(f"- **检测时间**: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}")
-    lines.append(f"- **检测到的更新版本数**: {len(newer_versions)}")
-    lines.append("")
-
-    if not newer_versions:
-        lines.append("当前已是最新版本，无需升级。")
-        return "\n".join(lines)
-
-    total_entries = sum(v["entry_count"] for v in newer_versions)
-
+def _append_version_summary(lines: list, newer_versions: list) -> None:
     # --- Part 1: Version summary by change type ---
     lines.append("---")
     lines.append("## 分版本更新摘要")
@@ -317,6 +302,8 @@ def generate_markdown_report(current_version, newer_versions, processing_log):
             lines.append("_无结构化更新记录。_")
             lines.append("")
 
+
+def _append_full_changelog(lines: list, newer_versions: list) -> None:
     # --- Part 2: Full changelog ---
     lines.append("---")
     lines.append("## 完整更新历史")
@@ -337,6 +324,24 @@ def generate_markdown_report(current_version, newer_versions, processing_log):
         else:
             lines.append("_无结构化更新记录。_")
         lines.append("")
+
+
+def generate_markdown_report(current_version, newer_versions, processing_log):
+    """Generate a markdown report string."""
+    lines = []
+    lines.append("## Multica 版本更新分析报告")
+    lines.append("")
+    lines.append(f"- **当前运行版本**: `{current_version}`")
+    lines.append(f"- **检测时间**: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}")
+    lines.append(f"- **检测到的更新版本数**: {len(newer_versions)}")
+    lines.append("")
+
+    if not newer_versions:
+        lines.append("当前已是最新版本，无需升级。")
+        return "\n".join(lines)
+
+    _append_version_summary(lines, newer_versions)
+    _append_full_changelog(lines, newer_versions)
 
     lines.append("---")
     lines.append("")

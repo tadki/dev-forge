@@ -116,6 +116,46 @@ def next_nth(state_file: Path, forced: int | None) -> int:
     return state["nth"]
 
 
+def _resolve_date_str(args) -> str | None:
+    """解析 --date；非法格式打印错误并返回 None。"""
+    if args.date is None:
+        today = dt.datetime.now(dt.timezone.utc).date()
+        return today.isoformat()
+    try:
+        return dt.date.fromisoformat(args.date).isoformat()
+    except ValueError:
+        print(f"ERROR: --date 必须是 YYYY-MM-DD，得到 {args.date!r}", file=sys.stderr)
+        return None
+
+
+def _extract_theme_body(sections: dict, theme_section_num) -> str:
+    # 主题素材节正文：去掉标题行与节尾分隔线，注入 §1.1 的 {{theme_body}} 占位符
+    theme_body = sections.get(theme_section_num, "")
+    theme_lines = theme_body.splitlines()
+    # 跳过 "## N. ..." 标题行及其后的空行，去掉尾部 "---" 分隔线
+    body_lines = []
+    skipped_title = False
+    for line in theme_lines:
+        if not skipped_title:
+            if line.startswith("## "):
+                skipped_title = True
+            continue
+        body_lines.append(line)
+    return "\n".join(body_lines).strip().rstrip("-").strip()
+
+
+def _assemble_sections(sections: dict, mapping: dict) -> str | None:
+    parts: list[str] = []
+    for slot in ASSEMBLE_SECTIONS_ORDER:
+        body = sections.get(slot)
+        if body is None:
+            print(f"ERROR: 模板缺少 §{slot}", file=sys.stderr)
+            return None
+        # 模板每节末尾自带分隔线，这里不重复追加；去掉节尾分隔线后拼接时统一补一条
+        parts.append(substitute(body.rstrip().rstrip("-").rstrip() + "\n\n---\n\n", mapping))
+    return "".join(parts)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="架构半周检评审 prompt 拼装器")
     parser.add_argument("--nth", type=int, default=None, help="期次序号（>=1，缺省自动自增）")
@@ -132,15 +172,9 @@ def main() -> int:
         print(f"ERROR: --nth 必须 >= 1，得到 {args.nth}", file=sys.stderr)
         return 2
 
-    if args.date is None:
-        today = dt.datetime.now(dt.timezone.utc).date()
-        date_str = today.isoformat()
-    else:
-        try:
-            date_str = dt.date.fromisoformat(args.date).isoformat()
-        except ValueError:
-            print(f"ERROR: --date 必须是 YYYY-MM-DD，得到 {args.date!r}", file=sys.stderr)
-            return 2
+    date_str = _resolve_date_str(args)
+    if date_str is None:
+        return 2
 
     script_path = Path(__file__).resolve()
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(script_path)
@@ -164,20 +198,7 @@ def main() -> int:
     theme_section_num, theme_zh, theme_key = THEMES[theme_idx]
 
     sections = parse_sections(template_path.read_text(encoding="utf-8"))
-
-    # 主题素材节正文：去掉标题行与节尾分隔线，注入 §1.1 的 {{theme_body}} 占位符
-    theme_body = sections.get(theme_section_num, "")
-    theme_lines = theme_body.splitlines()
-    # 跳过 "## N. ..." 标题行及其后的空行，去掉尾部 "---" 分隔线
-    body_lines = []
-    skipped_title = False
-    for line in theme_lines:
-        if not skipped_title:
-            if line.startswith("## "):
-                skipped_title = True
-            continue
-        body_lines.append(line)
-    theme_body_text = "\n".join(body_lines).strip().rstrip("-").strip()
+    theme_body_text = _extract_theme_body(sections, theme_section_num)
 
     mapping = {
         "date": date_str,
@@ -191,22 +212,15 @@ def main() -> int:
         "ledger_path": str(ledger_path),
     }
 
-    parts: list[str] = []
-    parts.append(
+    prompt = (
         f"# 架构半周检评审任务 · 第 {nth} 期 · {date_str}\n\n"
         f"本期主题：**{theme_zh}**。照下文执行评审，§3 产出含报告骨架与把汇报评论发到本执行 issue 的命令。\n\n"
         f"---\n\n"
     )
-
-    for slot in ASSEMBLE_SECTIONS_ORDER:
-        body = sections.get(slot)
-        if body is None:
-            print(f"ERROR: 模板缺少 §{slot}", file=sys.stderr)
-            return 2
-        # 模板每节末尾自带分隔线，这里不重复追加；去掉节尾分隔线后拼接时统一补一条
-        parts.append(substitute(body.rstrip().rstrip("-").rstrip() + "\n\n---\n\n", mapping))
-
-    prompt = "".join(parts)
+    body = _assemble_sections(sections, mapping)
+    if body is None:
+        return 2
+    prompt += body
 
     if args.output:
         out_path = Path(args.output)

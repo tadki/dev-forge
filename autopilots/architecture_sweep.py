@@ -864,8 +864,7 @@ def check_function_length(repo_root: str, gd_files: list[str]) -> list[dict]:
     return findings
 
 
-def check_autoload_references(repo_root: str, gd_files: list[str]) -> list[dict]:
-    """Build autoload reference matrix: which autoloads reference which others."""
+def _parse_autoload_names(repo_root: str) -> list[str]:
     # Parse autoload names from project.godot.
     project_godot = os.path.join(repo_root, "project.godot")
     autoloads = []
@@ -882,24 +881,11 @@ def check_autoload_references(repo_root: str, gd_files: list[str]) -> list[dict]
                 if in_autoload and "=" in line:
                     name = line.split("=")[0].strip()
                     autoloads.append(name)
+    return autoloads
 
-    # Scan .gd files for references to autoload names.
-    matrix = {a: set() for a in autoloads}
-    for rel in gd_files:
-        fp = os.path.join(repo_root, rel)
-        try:
-            with open(fp, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-        except OSError:
-            continue
-        for a in autoloads:
-            if a in content:
-                # Which file is referencing this autoload?
-                # Map file -> autoloads it references.
-                pass  # handled below
 
-    # Simpler: for each file, list which autoloads it references.
-    findings = []
+def _build_autoload_ref_map(repo_root: str, gd_files: list[str], autoloads: list[str]) -> dict:
+    # For each file, list which autoloads it references.
     ref_map = {}
     for rel in gd_files:
         fp = os.path.join(repo_root, rel)
@@ -911,8 +897,16 @@ def check_autoload_references(repo_root: str, gd_files: list[str]) -> list[dict]
         refs = [a for a in autoloads if re.search(rf"\b{re.escape(a)}\b", content)]
         if refs:
             ref_map[rel] = refs
+    return ref_map
+
+
+def check_autoload_references(repo_root: str, gd_files: list[str]) -> list[dict]:
+    """Build autoload reference matrix: which autoloads reference which others."""
+    autoloads = _parse_autoload_names(repo_root)
+    ref_map = _build_autoload_ref_map(repo_root, gd_files, autoloads)
 
     # Report files that reference many autoloads (potential God Object).
+    findings = []
     for rel, refs in ref_map.items():
         if len(refs) >= 5:
             findings.append(
@@ -927,6 +921,88 @@ def check_autoload_references(repo_root: str, gd_files: list[str]) -> list[dict]
 
     # Store the full matrix as a metric (not a finding).
     return findings, ref_map
+
+
+_GAMESTATE_FUNC_START = re.compile(r"^(?:static\s+)?func\s+(\w+)")
+# Named `_sync_<field>_to_game_state` (D4: exempts only its own field) and
+# the no-arg `_sync_to_game_state` variant (one sanctioned site syncing
+# several mirror fields, conventionally marked `## direct-sync`).
+_GAMESTATE_SYNC_FUNC = re.compile(r"^_sync_(?:(\w+)_)?to_game_state$")
+_GAMESTATE_DIRECT_SYNC_MARKER = re.compile(r"^##\s*direct-sync\b")
+_GAMESTATE_HANDLER_FUNC = re.compile(r"^_on_unique_\w+$")
+_GAMESTATE_DISPATCH_FUNC = re.compile(r"^_apply_\w+_via_effect$")
+_GAMESTATE_REGISTER_CALL = re.compile(
+    r"UniqueEffectRegistry\.register\([^)]*,\s*(?:self\.)?(\w+)\s*\)"
+)
+
+
+def _gamestate_sanctioned(field: str, current_func: str, sync_field,
+                          registered_handlers: set) -> bool:
+    # Sanctioned sync writer: a named `_sync_<field>_to_game_state`
+    # exempts only ITS field (D4 — touching any other mirror field
+    # is still a violation); the no-arg `_sync_to_game_state`
+    # variant ("*") is the single sync site for several fields.
+    if sync_field == field or sync_field == "*":
+        return True
+    # UNIQUE effect handler write site: the registry-dispatched
+    # endpoint for its field (SEE-1226 exemption model).
+    if _GAMESTATE_HANDLER_FUNC.match(current_func):
+        return True
+    if current_func in registered_handlers:
+        return True
+    # apply_effect_with_value dispatch wrapper / its fallback
+    # branch: routes the delta to the UNIQUE handler, or credits
+    # directly when autoloads are absent (isolated tests).
+    if _GAMESTATE_DISPATCH_FUNC.match(current_func):
+        return True
+    return False
+
+
+def _gamestate_violations_in_file(repo_root: str, rel: str, field: str, pattern) -> list[dict]:
+    fp = os.path.join(repo_root, rel)
+    try:
+        with open(fp, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        log_error(f"Cannot read {rel}")
+        return []
+    findings = []
+    current_func = ""
+    sync_field = None
+    registered_handlers = set()
+    for i, line in enumerate(lines, 1):
+        m = _GAMESTATE_FUNC_START.match(line)
+        if m:
+            current_func = m.group(1)
+            sm = _GAMESTATE_SYNC_FUNC.match(current_func)
+            # A no-arg `_sync_to_game_state` syncs several mirror
+            # fields from one place — still a single sanctioned sync
+            # site (conventionally marked `## direct-sync`), so it
+            # exempts every mirror-field write inside it.
+            sync_field = (sm.group(1) or "*") if sm else None
+        elif _GAMESTATE_DIRECT_SYNC_MARKER.match(line):
+            # Docstring marker for the no-arg sync channel; the func
+            # line follows within the comment block, so the marker
+            # pre-arms the same exemption even if the detector's func
+            # tracking ever misses the declaration shape.
+            sync_field = "*"
+        hm = _GAMESTATE_REGISTER_CALL.search(line)
+        if hm:
+            registered_handlers.add(hm.group(1))
+        if not pattern.search(line):
+            continue
+        if _gamestate_sanctioned(field, current_func, sync_field, registered_handlers):
+            continue
+        findings.append(
+            {
+                "rule_id": "GAMESTATE_MIRROR_DIRECT",
+                "severity": SEVERITY_ERROR,
+                "file": rel,
+                "line": i,
+                "message": f"Direct assignment to GameState.{field} bypasses state_changed signal (in func '{current_func}')",
+            }
+        )
+    return findings
 
 
 def check_gamestate_mirror(repo_root: str, gd_files: list[str]) -> list[dict]:
@@ -949,78 +1025,11 @@ def check_gamestate_mirror(repo_root: str, gd_files: list[str]) -> list[dict]:
         in isolated-test mode credit the same singleton-internal path.
     """
     findings = []
-    func_start = re.compile(r"^(?:static\s+)?func\s+(\w+)")
-    # Named `_sync_<field>_to_game_state` (D4: exempts only its own field) and
-    # the no-arg `_sync_to_game_state` variant (one sanctioned site syncing
-    # several mirror fields, conventionally marked `## direct-sync`).
-    sync_func = re.compile(r"^_sync_(?:(\w+)_)?to_game_state$")
-    direct_sync_marker = re.compile(r"^##\s*direct-sync\b")
-    handler_func = re.compile(r"^_on_unique_\w+$")
-    dispatch_func = re.compile(r"^_apply_\w+_via_effect$")
-    register_call = re.compile(
-        r"UniqueEffectRegistry\.register\([^)]*,\s*(?:self\.)?(\w+)\s*\)"
-    )
     for field in GAMESTATE_MIRROR_FIELDS:
         # Match `GameState.field =`, `+=`, `-=`, `*=`, `/=` — but NOT `==`.
         pattern = re.compile(rf"GameState\.{field}\s*(\+|-|\*|/)?=[^=]")
         for rel in gd_files:
-            fp = os.path.join(repo_root, rel)
-            try:
-                with open(fp, "r", encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-            except OSError:
-                log_error(f"Cannot read {rel}")
-                continue
-            current_func = ""
-            sync_field = None
-            registered_handlers = set()
-            for i, line in enumerate(lines, 1):
-                m = func_start.match(line)
-                if m:
-                    current_func = m.group(1)
-                    sm = sync_func.match(current_func)
-                    # A no-arg `_sync_to_game_state` syncs several mirror
-                    # fields from one place — still a single sanctioned sync
-                    # site (conventionally marked `## direct-sync`), so it
-                    # exempts every mirror-field write inside it.
-                    sync_field = (sm.group(1) or "*") if sm else None
-                elif direct_sync_marker.match(line):
-                    # Docstring marker for the no-arg sync channel; the func
-                    # line follows within the comment block, so the marker
-                    # pre-arms the same exemption even if the detector's func
-                    # tracking ever misses the declaration shape.
-                    sync_field = "*"
-                hm = register_call.search(line)
-                if hm:
-                    registered_handlers.add(hm.group(1))
-                if not pattern.search(line):
-                    continue
-                # Sanctioned sync writer: a named `_sync_<field>_to_game_state`
-                # exempts only ITS field (D4 — touching any other mirror field
-                # is still a violation); the no-arg `_sync_to_game_state`
-                # variant ("*") is the single sync site for several fields.
-                if sync_field == field or sync_field == "*":
-                    continue
-                # UNIQUE effect handler write site: the registry-dispatched
-                # endpoint for its field (SEE-1226 exemption model).
-                if handler_func.match(current_func):
-                    continue
-                if current_func in registered_handlers:
-                    continue
-                # apply_effect_with_value dispatch wrapper / its fallback
-                # branch: routes the delta to the UNIQUE handler, or credits
-                # directly when autoloads are absent (isolated tests).
-                if dispatch_func.match(current_func):
-                    continue
-                findings.append(
-                    {
-                        "rule_id": "GAMESTATE_MIRROR_DIRECT",
-                        "severity": SEVERITY_ERROR,
-                        "file": rel,
-                        "line": i,
-                        "message": f"Direct assignment to GameState.{field} bypasses state_changed signal (in func '{current_func}')",
-                    }
-                )
+            findings.extend(_gamestate_violations_in_file(repo_root, rel, field, pattern))
     return findings
 
 
@@ -1315,43 +1324,21 @@ def _newest_junit_across_slots(workspace_root: str, junit_rel: str, expected: in
     return near_full_best if near_full_best[0] else newest_best
 
 
-def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict]:
-    """Compare .gutconfig.json expected test count vs junit actual count.
-
-    D2: the junit path is read from the `junit_xml_file` config key (falling
-    back to tests/reports/junit_report.xml), and `junit_xml_timestamp: true`
-    produces `junit_report_<ts>.xml` files — resolved via glob on the base
-    stem. A missing junit report OR a report with actual==0 (nothing executed)
-    is itself a silent-skip signal and triggers a finding.
-
-    S1 (SEE-1226): the sweep runs in a clean checkout slot whose
-    tests/reports/ is empty by construction, so when no local report exists
-    the check falls back to the newest junit across sibling workspace slots
-    (within JUNIT_MAX_AGE_DAYS). expected counts `func test_*` declarations,
-    same unit as junit <testcase> entries; a 5% tolerance absorbs junit-older-
-    than-HEAD skew without masking a genuinely partial run.
-    """
-    findings = []
-    metrics = {
-        "expected_tests": 0,
-        "actual_tests": 0,
-        "junit_source": "",
-        "junit_mtime": "",
-    }
+def _gut_load_config(repo_root: str) -> tuple:
+    """返回 (config_loaded, gutconfig)：文件缺失或解析失败为 (False, None)。"""
     gutconfig_path = os.path.join(repo_root, ".gutconfig.json")
     if not os.path.isfile(gutconfig_path):
-        return findings, metrics
-
+        return False, None
     try:
         with open(gutconfig_path, "r", encoding="utf-8") as f:
-            gutconfig = json.load(f)
+            return True, json.load(f)
     except (json.JSONDecodeError, IOError, OSError):
         log_error("Cannot parse .gutconfig.json")
-        return findings, metrics
+        return False, None
 
-    expected_by_dir = _count_expected_test_funcs_by_dir(repo_root, gutconfig)
-    expected = sum(expected_by_dir.values())
 
+def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
+                          expected: int) -> tuple:
     # Resolve the junit report location (local first).
     candidates = _junit_candidates(repo_root, gutconfig)
     junit_rel = gutconfig.get("junit_xml_file", "res://tests/reports/junit_report.xml")
@@ -1367,7 +1354,7 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict
         # S1: clean checkout fallback — best junit across sibling slots,
         # preferring the most recent plausibly-full run (mtime-newest within
         # the partial-run tolerance), falling back to newest overall.
-        cross_path, cross_count, cross_mtime = _newest_junit_across_slots(
+        cross_path, _cross_count, cross_mtime = _newest_junit_across_slots(
             workspace_root, junit_rel, expected
         )
         if cross_path:
@@ -1382,7 +1369,10 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict
                 log_error(
                     f"Cross-slot junit found but stale (> {JUNIT_MAX_AGE_DAYS} days)"
                 )
+    return junit_path, junit_source_slot
 
+
+def _read_junit_actuals(junit_path: str, expected_by_dir: dict) -> tuple:
     actual = 0
     junit_mtime = ""
     actual_by_dir: dict[str, int] = {}
@@ -1399,10 +1389,12 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict
             )
         except OSError:
             actual = 0
+    return actual, actual_by_dir, junit_mtime
 
-    metrics["junit_source"] = junit_source_slot
-    metrics["junit_mtime"] = junit_mtime
 
+def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
+                              expected_by_dir: dict, actual_by_dir: dict) -> list[dict]:
+    findings = []
     # D2: trigger when (a) expected>0 but no junit report exists, or
     # (b) expected>0 and actual==0 (report present but nothing executed), or
     # (c) expected>0 and actual below expected beyond the S1 tolerance
@@ -1463,6 +1455,49 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict
                         ),
                     }
                 )
+    return findings
+
+
+def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict]:
+    """Compare .gutconfig.json expected test count vs junit actual count.
+
+    D2: the junit path is read from the `junit_xml_file` config key (falling
+    back to tests/reports/junit_report.xml), and `junit_xml_timestamp: true`
+    produces `junit_report_<ts>.xml` files — resolved via glob on the base
+    stem. A missing junit report OR a report with actual==0 (nothing executed)
+    is itself a silent-skip signal and triggers a finding.
+
+    S1 (SEE-1226): the sweep runs in a clean checkout slot whose
+    tests/reports/ is empty by construction, so when no local report exists
+    the check falls back to the newest junit across sibling workspace slots
+    (within JUNIT_MAX_AGE_DAYS). expected counts `func test_*` declarations,
+    same unit as junit <testcase> entries; a 5% tolerance absorbs junit-older-
+    than-HEAD skew without masking a genuinely partial run.
+    """
+    findings = []
+    metrics = {
+        "expected_tests": 0,
+        "actual_tests": 0,
+        "junit_source": "",
+        "junit_mtime": "",
+    }
+    loaded, gutconfig = _gut_load_config(repo_root)
+    if not loaded:
+        return findings, metrics
+
+    expected_by_dir = _count_expected_test_funcs_by_dir(repo_root, gutconfig)
+    expected = sum(expected_by_dir.values())
+
+    junit_path, junit_source_slot = _resolve_junit_source(
+        repo_root, gutconfig, workspace_root, expected
+    )
+    actual, actual_by_dir, junit_mtime = _read_junit_actuals(junit_path, expected_by_dir)
+
+    metrics["junit_source"] = junit_source_slot
+    metrics["junit_mtime"] = junit_mtime
+    findings = _gut_silent_skip_findings(
+        expected, junit_path, actual, expected_by_dir, actual_by_dir
+    )
 
     metrics["expected_tests"] = expected
     metrics["actual_tests"] = actual
@@ -1547,34 +1582,7 @@ def print_report(report: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> int:
-    args = parse_args()
-    # SEE-1430c O1: wire the patrol target config (falls back to the built-in
-    # constants when the file is absent/unreadable — behaviour-compatible).
-    apply_config(args.config)
-
-    # Locks: PID (per-script) + workspace mutex (cross-autopilot).
-    _pid_lock = PidFileLock(os.path.join(tempfile.gettempdir(), "architecture_sweep.pid"))
-    if not _pid_lock.acquire():
-        sys.exit(1)
-    _ws_mutex = WorkspaceMutex(label="architecture_sweep")
-    _ws_mutex.acquire()
-
-    workspace_root = args.workspace_root
-    current_hash = args.current_hash
-    dry_run = args.dry_run
-    fast_mode = args.fast
-    force_l1 = args.l1
-    execution_issue_id = args.execution_issue_id or os.environ.get(
-        "EXECUTION_ISSUE_ID", ""
-    )
-    # SEE-1224 #4: --kill-switch is a read-only fuse. When set, downgrade to
-    # pure output by forcing dry_run so baseline/heartbeat/manifest writes
-    # (which mutate ~/.multica/arch-patrol/) are suppressed.
-    kill_switch = str(args.kill_switch).lower() == "true"
-    if kill_switch:
-        dry_run = True
-
+def _autodetect_current_hash(current_hash: str, workspace_root: str) -> str:
     # Auto-detect current_hash.
     if not current_hash:
         current_hash = os.environ.get("MULTICA_WORKTREE_HASH", "")
@@ -1585,82 +1593,81 @@ def main() -> int:
             if cwd.startswith(prefix):
                 rel = cwd[len(prefix) :]
                 current_hash = rel.split(os.sep)[0]
+    return current_hash
 
-    # Locate the KingOfLikes-Godot repo. D8: multi-level fallback instead of
-    # a single hardcoded layout — explicit slot path, CWD walk-up, then a scan
-    # of workspace_root for any <hash>/workdir/<repo> (or <hash>/<repo>).
-    def _repo_candidates() -> list[str]:
-        cands = []
-        if current_hash:
-            cands.append(os.path.join(workspace_root, current_hash, "workdir", "KingOfLikes-Godot"))
-            cands.append(os.path.join(workspace_root, current_hash, "KingOfLikes-Godot"))
-        cands.append(os.path.join(workspace_root, "workdir", "KingOfLikes-Godot"))
-        cands.append(os.path.join(workspace_root, "KingOfLikes-Godot"))
-        cwd = os.path.abspath(os.getcwd())
-        # Walk up from CWD: a directory containing KingOfLikes-Godot is a repo parent.
-        current = cwd
-        while current:
-            probe = os.path.join(current, "KingOfLikes-Godot")
-            if os.path.isdir(probe):
-                cands.append(probe)
-            parent = os.path.dirname(current)
-            if parent == current:
-                break
-            current = parent
-        return cands
 
-    repo_root = ""
-    for cand in _repo_candidates():
-        if os.path.isdir(cand):
-            repo_root = cand
+def _sweep_context(args):
+    """解析 (workspace_root, current_hash, dry_run, fast_mode, force_l1, kill_switch)。"""
+    workspace_root = args.workspace_root
+    current_hash = args.current_hash
+    dry_run = args.dry_run
+    fast_mode = args.fast
+    force_l1 = args.l1
+    # SEE-1224 #4: --kill-switch is a read-only fuse. When set, downgrade to
+    # pure output by forcing dry_run so baseline/heartbeat/manifest writes
+    # (which mutate ~/.multica/arch-patrol/) are suppressed.
+    kill_switch = str(args.kill_switch).lower() == "true"
+    if kill_switch:
+        dry_run = True
+    current_hash = _autodetect_current_hash(current_hash, workspace_root)
+    return workspace_root, current_hash, dry_run, fast_mode, force_l1, kill_switch
+
+
+def _repo_candidates(workspace_root: str, current_hash: str) -> list[str]:
+    # D8: multi-level fallback instead of a single hardcoded layout — explicit
+    # slot path, CWD walk-up, then a scan of workspace_root for any
+    # <hash>/workdir/<repo> (or <hash>/<repo>).
+    cands = []
+    if current_hash:
+        cands.append(os.path.join(workspace_root, current_hash, "workdir", "KingOfLikes-Godot"))
+        cands.append(os.path.join(workspace_root, current_hash, "KingOfLikes-Godot"))
+    cands.append(os.path.join(workspace_root, "workdir", "KingOfLikes-Godot"))
+    cands.append(os.path.join(workspace_root, "KingOfLikes-Godot"))
+    cwd = os.path.abspath(os.getcwd())
+    # Walk up from CWD: a directory containing KingOfLikes-Godot is a repo parent.
+    current = cwd
+    while current:
+        probe = os.path.join(current, "KingOfLikes-Godot")
+        if os.path.isdir(probe):
+            cands.append(probe)
+        parent = os.path.dirname(current)
+        if parent == current:
             break
-    if not repo_root:
-        # Last resort: scan workspace_root slots for the repo.
-        try:
-            for name in sorted(os.listdir(workspace_root)):
-                for sub in (
-                    os.path.join(workspace_root, name, "workdir", "KingOfLikes-Godot"),
-                    os.path.join(workspace_root, name, "KingOfLikes-Godot"),
-                ):
-                    if os.path.isdir(sub):
-                        repo_root = sub
-                        break
-                if repo_root:
-                    break
-        except OSError:
-            repo_root = ""
-    if not repo_root:
-        log_error(f"Repo root not found under workspace: {workspace_root}")
-        _ws_mutex.release()
-        _pid_lock.release()
-        sys.exit(1)
+        current = parent
+    return cands
 
-    # Ensure state directory exists.
-    ensure_dir(ARCH_PATROL_HOME)
 
-    # Determine if L1 should run (weekly: Monday or forced).
-    run_l1 = force_l1 or datetime.now(timezone.utc).weekday() == 0
+def _scan_workspace_slots(workspace_root: str) -> str:
+    # Last resort: scan workspace_root slots for the repo.
+    try:
+        for name in sorted(os.listdir(workspace_root)):
+            for sub in (
+                os.path.join(workspace_root, name, "workdir", "KingOfLikes-Godot"),
+                os.path.join(workspace_root, name, "KingOfLikes-Godot"),
+            ):
+                if os.path.isdir(sub):
+                    return sub
+    except OSError:
+        pass
+    return ""
 
-    # Collect all .gd files (production + tests for L1 metrics).
-    all_gd = find_gd_files(repo_root, include_tests=True)
-    prod_gd = [f for f in all_gd if not f.startswith("tests/")]
 
-    all_findings = []
-    metrics = {}
-    gdlint_warnings = {}
+def _locate_repo_root(workspace_root: str, current_hash: str) -> str:
+    for cand in _repo_candidates(workspace_root, current_hash):
+        if os.path.isdir(cand):
+            return cand
+    return _scan_workspace_slots(workspace_root)
 
-    # ------------------------------------------------------------------
+
+def _run_l0_checks(repo_root: str, prod_gd, fast_mode: bool, dry_run: bool,
+                   all_findings: list, metrics: dict) -> tuple:
+    """Redline + L0 checks；返回 (redline_skipped, gdlint_warnings)。"""
     # Redline check (always runs, even in --fast)
-    # ------------------------------------------------------------------
     redline_findings = check_redline(repo_root, dry_run)
     all_findings.extend(redline_findings)
     redline_skipped = any(
         f["rule_id"] == "REDLINE_SKIPPED_UNINITIALIZED" for f in redline_findings
     )
-
-    # ------------------------------------------------------------------
-    # L0 checks
-    # ------------------------------------------------------------------
 
     # 1. Deprecated bridges
     dep_findings = check_deprecated_bridges(repo_root, prod_gd)
@@ -1699,6 +1706,7 @@ def main() -> int:
     metrics["blacklist_calls"] = len(bl_findings)
 
     # 8. gdlint increment (skipped in --fast mode)
+    gdlint_warnings = {}
     if not fast_mode:
         gdlint_result = check_gdlint_increment(repo_root, prod_gd, dry_run)
         if isinstance(gdlint_result, tuple):
@@ -1708,9 +1716,12 @@ def main() -> int:
         all_findings.extend(gdlint_findings)
         metrics["gdlint_new_warnings"] = len(gdlint_findings)
 
-    # ------------------------------------------------------------------
+    return redline_skipped, gdlint_warnings
+
+
+def _run_l1_checks(repo_root: str, workspace_root: str, run_l1: bool, fast_mode: bool,
+                   all_findings: list, metrics: dict) -> None:
     # L1 checks (weekly or forced)
-    # ------------------------------------------------------------------
     if run_l1 and not fast_mode:
         # GUT silent skip (S1: cross-slot junit aggregation)
         gut_result = check_gut_silent_skip(repo_root, workspace_root)
@@ -1725,18 +1736,68 @@ def main() -> int:
         ratio_metrics = check_test_to_code_ratio(repo_root)
         metrics.update(ratio_metrics)
 
-    # ------------------------------------------------------------------
+
+def _dedup_findings(all_findings: list, known_keys: set) -> tuple:
     # Dedup and baseline-diff
-    # ------------------------------------------------------------------
-    known_keys = load_known_findings()
     current_keys = set()
     new_findings = []
-
     for f in all_findings:
         key = dedup_key(f["file"], f["line"], f["rule_id"], f["severity"])
         current_keys.add(key)
         if key not in known_keys:
             new_findings.append(f)
+    return current_keys, new_findings
+
+
+def _write_report_file(report: dict, dry_run: bool) -> None:
+    # Write report to file for external consumption.
+    if not dry_run:
+        ensure_dir(os.path.dirname(REPORT_FILE))
+        with open(REPORT_FILE, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+
+
+def main() -> int:
+    args = parse_args()
+    # SEE-1430c O1: wire the patrol target config (falls back to the built-in
+    # constants when the file is absent/unreadable — behaviour-compatible).
+    apply_config(args.config)
+
+    # Locks: PID (per-script) + workspace mutex (cross-autopilot).
+    _pid_lock = PidFileLock(os.path.join(tempfile.gettempdir(), "architecture_sweep.pid"))
+    if not _pid_lock.acquire():
+        sys.exit(1)
+    _ws_mutex = WorkspaceMutex(label="architecture_sweep")
+    _ws_mutex.acquire()
+
+    workspace_root, current_hash, dry_run, fast_mode, force_l1, kill_switch = _sweep_context(args)
+
+    repo_root = _locate_repo_root(workspace_root, current_hash)
+    if not repo_root:
+        log_error(f"Repo root not found under workspace: {workspace_root}")
+        _ws_mutex.release()
+        _pid_lock.release()
+        sys.exit(1)
+
+    # Ensure state directory exists.
+    ensure_dir(ARCH_PATROL_HOME)
+
+    # Determine if L1 should run (weekly: Monday or forced).
+    run_l1 = force_l1 or datetime.now(timezone.utc).weekday() == 0
+
+    # Collect all .gd files (production + tests for L1 metrics).
+    all_gd = find_gd_files(repo_root, include_tests=True)
+    prod_gd = [f for f in all_gd if not f.startswith("tests/")]
+
+    all_findings: list = []
+    metrics: dict = {}
+
+    redline_skipped, gdlint_warnings = _run_l0_checks(
+        repo_root, prod_gd, fast_mode, dry_run, all_findings, metrics)
+    _run_l1_checks(repo_root, workspace_root, run_l1, fast_mode, all_findings, metrics)
+
+    known_keys = load_known_findings()
+    current_keys, new_findings = _dedup_findings(all_findings, known_keys)
 
     # Add gdlint warnings to metrics for next run's diff.
     if gdlint_warnings:
@@ -1753,22 +1814,13 @@ def main() -> int:
     if kill_switch:
         metrics["kill_switch"] = True
 
-    # ------------------------------------------------------------------
     # Report
-    # ------------------------------------------------------------------
     report = build_report(all_findings, metrics, new_findings, known_keys)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     print_report(report)
+    _write_report_file(report, dry_run)
 
-    # Write report to file for external consumption.
-    if not dry_run:
-        ensure_dir(os.path.dirname(REPORT_FILE))
-        with open(REPORT_FILE, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False)
-
-    # ------------------------------------------------------------------
     # Exit code
-    # ------------------------------------------------------------------
     _ws_mutex.release()
     _pid_lock.release()
 
