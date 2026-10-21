@@ -25,9 +25,13 @@ from repo_sync import (
     detect_orphan_gitlinks,
     remove_orphan_gitlink,
     _is_gitlink_related_error,
+    _posix_reclaim_stale,
     do_stash_if_dirty,
 )
 from repo_sync_daemon import run_one_cycle
+
+if sys.platform != "win32":
+    import fcntl
 
 
 def _run_git(cwd, args, check=True):
@@ -322,3 +326,69 @@ class TestRunOneCycleTimeout:
         assert call_kwargs.kwargs.get("timeout") == 120 or (
             len(call_kwargs) > 1 and call_kwargs[1].get("timeout") == 120
         )
+
+
+class TestPosixReclaimStale:
+    """§SPEC-028 hardening (SEE-1440-b): direct tri-state contract tests for
+    the single-sourced stale-lock reclaim helper.
+
+    既有 acquire_lock 用例全走 flock-free 快路径（死 PID 但锁未被持有，
+    flock 首试即成功），从未触达 _posix_reclaim_stale 回收分支——其语义
+    变异（死 PID 分支改 return False）全绿存活。本套件直测三态契约：
+    True=死持有者已回收并清零 / False=活持有者或非数字内容 / None=判定
+    stale 但抢锁失败（需并发持有者）。"""
+
+    @pytest.fixture()
+    def lock_path(self, tmp_path):
+        return str(tmp_path / "reclaim.lock")
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock only")
+    def test_dead_pid_holder_is_reclaimed_and_truncated(self, lock_path):
+        with open(lock_path, "w") as f:
+            f.write("99999999")  # dead pid
+        fd = os.open(lock_path, os.O_RDWR)
+        try:
+            assert _posix_reclaim_stale(fd) is True
+            os.lseek(fd, 0, os.SEEK_SET)
+            assert os.read(fd, 32) == b""  # truncated after reclaim
+        finally:
+            os.close(fd)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock only")
+    def test_live_pid_returns_false_and_content_intact(self, lock_path):
+        with open(lock_path, "w") as f:
+            f.write(str(os.getpid()))  # self is alive
+        fd = os.open(lock_path, os.O_RDWR)
+        try:
+            assert _posix_reclaim_stale(fd) is False
+            os.lseek(fd, 0, os.SEEK_SET)
+            assert os.read(fd, 32).decode().strip() == str(os.getpid())
+        finally:
+            os.close(fd)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock only")
+    def test_non_numeric_content_returns_false(self, lock_path):
+        with open(lock_path, "w") as f:
+            f.write("not-a-pid")
+        fd = os.open(lock_path, os.O_RDWR)
+        try:
+            assert _posix_reclaim_stale(fd) is False
+        finally:
+            os.close(fd)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock only")
+    def test_contended_lock_returns_none(self, lock_path):
+        """flock 被并发持有者占用且文件记录死 PID → None（抢锁失败重试语义）。"""
+        with open(lock_path, "w") as f:
+            f.write("99999999")  # dead pid in content
+        holder = os.open(lock_path, os.O_RDWR)
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)  # simulate live holder
+        try:
+            fd = os.open(lock_path, os.O_RDWR)
+            try:
+                assert _posix_reclaim_stale(fd) is None
+            finally:
+                os.close(fd)
+        finally:
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            os.close(holder)
