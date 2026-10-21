@@ -230,7 +230,7 @@ def journal_append(journal_file, day, failures, ts):
 def journal_compact(journal_file, keep_days=MAX_HISTORY):
     """journal 保留最近 keep_days 个不同日的条目 (界定体积), 原子替换。
 
-    覆盖恢复窗口 >= 30 天淘汰窗口, 压缩不会丢可恢复日。
+    保留窗口与 30 天淘汰窗口等长 (keep_days 默认 MAX_HISTORY), 压缩不会丢可恢复日。
     """
     days = journal_read_days(journal_file)
     if len(days) <= keep_days:
@@ -255,13 +255,12 @@ def journal_compact(journal_file, keep_days=MAX_HISTORY):
 
 
 def evict_daily(daily, max_days=MAX_HISTORY):
-    """滑动窗口淘汰: 只删最旧 key 至 <= max_days (30 天淘汰语义唯一定义点)。"""
+    """滑动窗口淘汰 (原地): 只删最旧 key 至 <= max_days (30 天淘汰语义唯一定义点)。"""
     for old_day in sorted(daily.keys()):
         if len(daily) > max_days:
             daily.pop(old_day, None)
         else:
             break
-    return daily
 
 
 def load_history_with_recovery(history_file):
@@ -1171,11 +1170,12 @@ class DailyCheck:
 
     @staticmethod
     def _g3_suspicious_deltas(today, previous):
-        """日增越界码: 日增 >= DAILY_INCREMENT_MIN 且昨日基数 >=1。
+        """日增越界码: 日增 >= DAILY_INCREMENT_MIN, 昨日基数 >=1 且 <= 今日值。
 
-        today 与 previous 同为"当日窗口"口径 (SEE-1234 修复后), 但首次以新口径
-        运行时 history 里还是旧累计值, 会算出巨大 delta — 用昨日 > 今日的哨兵排除:
-        当日窗口计数单调性弱于累计值, 负 delta 反而说明 previous 是旧口径残留。
+        today 与 previous 同为"当日窗口"口径 (SEE-1234 修复后)。首次以新口径运行时
+        history 里仍是旧累计值, 会算出巨大 delta — 全局旧口径哨兵在调用方
+        (_check_g3_daily_delta) 先行拦截; 这里的「昨日 <= 今日」条件再滤掉单码尺度上
+        昨日偏高造成的负 delta 残留。
         """
         deltas = {}
         for code in today:
