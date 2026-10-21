@@ -406,16 +406,7 @@ class DailyCheck:
 
     # -- A 启动链配置静态 --------------------------------------------------------
 
-    def dim_a(self):
-        dim = "A"
-        issues = []
-        agents_table, ports_path = self.load_ports_table()
-        # 端口表缺失时降级 warn 继续执行: A4 只依赖 project.godot, 不能因单一输入
-        # 缺失而让 port_override 污染逃逸 (SEE-1183 D6)
-        if not agents_table:
-            self.missing_input(ports_path, dim, "端口表 agent-ports.json 缺失/空")
-            issues.append("端口表 agent-ports.json 缺失/空, A1 跨表校验跳过; A4 污染检测继续")
-
+    def _check_a1_mcp_servers(self, dim, agents_table, issues):
         # A1: .mcp.json 单静态 server (Option B) vs 端口表一致性
         mcp_path = os.path.join(KOL_CHECKOUT_ROOT, MCP_JSON_REL)
         mcp = read_json(mcp_path)
@@ -423,7 +414,6 @@ class DailyCheck:
         if not servers:
             self.missing_input(mcp_path, dim, ".mcp.json 缺失/空")
         elif agents_table:
-            expected_servers = set(agents_table) | {"godot-mcp"}
             for name, cfg in servers.items():
                 args = cfg.get("args", []) if isinstance(cfg, dict) else []
                 port_hints = [a for a in args if str(a).isdigit()]
@@ -441,6 +431,7 @@ class DailyCheck:
         if agents_table:
             self.ok(dim, "a1", "端口表加载 %d agents (legacy 静态表)" % len(agents_table))
 
+    def _load_launcher_text(self, dim, issues):
         # A2: launcher env 契约 (KOL_AGENT_NAME / GODOT_PORT / GODOT_HOST)
         launcher = os.path.join(KOL_CHECKOUT_ROOT, LAUNCH_DIR_REL, "godot-mcp-launcher.sh")
         launcher_text = safe_read(launcher)
@@ -455,14 +446,9 @@ class DailyCheck:
                 issues.append("A2 launcher 缺 env 契约 %s" % ",".join(missing_env))
         else:
             self.missing_input(launcher, dim, "launcher 缺失")
+        return launcher_text
 
-        # A3: launcher cwd 解析落到共享 master worktree
-        if launcher_text:
-            if "/mnt/d/GodotProjects/king-of-likes" not in launcher_text:
-                # 若无硬编码 WSL 路径, 检查是否有基于 SCRIPT_DIR 的动态解析
-                if "SCRIPT_DIR" not in launcher_text and "PWD" not in launcher_text:
-                    issues.append("A3 launcher 无 cwd 解析线索 (既无 WSL 路径也无 SCRIPT_DIR)")
-
+    def _check_a4_port_override(self, dim, issues):
         # A4: project.godot [godot_mcp] port_override 污染
         proj = os.path.join(KOL_CHECKOUT_ROOT, PROJECT_GODOT_REL)
         proj_text = safe_read(proj)
@@ -480,6 +466,7 @@ class DailyCheck:
         else:
             self.ok(dim, "a4", "project.godot 无 port_override 污染")
 
+    def _check_a5_sidecar_schema(self, dim):
         # A5: mcp-lease 侧车一致性 (schema_version / 字段完整)
         sidecars = self.load_sidecars()
         schema_bad = 0
@@ -500,6 +487,29 @@ class DailyCheck:
             self.ok(dim, "a5", "侧车 schema 一致 (%d 个, active=%d released=%d)"
                     % (len(sidecars), active, released))
 
+    def dim_a(self):
+        dim = "A"
+        issues = []
+        agents_table, ports_path = self.load_ports_table()
+        # 端口表缺失时降级 warn 继续执行: A4 只依赖 project.godot, 不能因单一输入
+        # 缺失而让 port_override 污染逃逸 (SEE-1183 D6)
+        if not agents_table:
+            self.missing_input(ports_path, dim, "端口表 agent-ports.json 缺失/空")
+            issues.append("端口表 agent-ports.json 缺失/空, A1 跨表校验跳过; A4 污染检测继续")
+
+        self._check_a1_mcp_servers(dim, agents_table, issues)
+        launcher_text = self._load_launcher_text(dim, issues)
+
+        # A3: launcher cwd 解析落到共享 master worktree
+        if launcher_text:
+            if "/mnt/d/GodotProjects/king-of-likes" not in launcher_text:
+                # 若无硬编码 WSL 路径, 检查是否有基于 SCRIPT_DIR 的动态解析
+                if "SCRIPT_DIR" not in launcher_text and "PWD" not in launcher_text:
+                    issues.append("A3 launcher 无 cwd 解析线索 (既无 WSL 路径也无 SCRIPT_DIR)")
+
+        self._check_a4_port_override(dim, issues)
+        self._check_a5_sidecar_schema(dim)
+
         # 与 dim_b 同口径: 维度 status 由全局 redlines 判定, 不靠字符串匹配 (SEE-1183 D3)
         dim_redlines = [r for r in self.redlines if r.get("dim") == dim]
         status = REDLINE if dim_redlines else ("warn" if issues else "ok")
@@ -507,22 +517,18 @@ class DailyCheck:
 
     # -- B 运行态 ----------------------------------------------------------------
 
-    def dim_b(self):
-        dim = "B"
-        issues = []
-        sidecars = self.load_sidecars()
-        leases = self.list_leases()
-
-        # B1: 侧车 state 为准 (lease state 主导) — active 侧车必须与持有目录/端口状态对应
+    @staticmethod
+    def _b1_sidecar_partitions(sidecars):
         active_sidecars = [s for s in sidecars if s.get("state") == "active"]
         released_or_warming = [s for s in sidecars
                                if s.get("state") in ("released", "WARMING", "WARMING-*") or
                                (s.get("state") or "").startswith("WARMING")]
-        port_set = set()
-        for s in active_sidecars:
-            p = s.get("port")
-            if isinstance(p, int):
-                port_set.add(p)
+        return active_sidecars, released_or_warming
+
+    def _check_b1_sidecar_ports(self, dim, sidecars, issues):
+        # B1: 侧车 state 为准 (lease state 主导) — active 侧车必须与持有目录/端口状态对应
+        active_sidecars, released_or_warming = self._b1_sidecar_partitions(sidecars)
+        port_set = {s.get("port") for s in active_sidecars if isinstance(s.get("port"), int)}
         # 双重持有是确定性状态矛盾 (state=released/WARMING 但端口仍被 active 侧车占用),
         # 无环境隔离误报可能 → 真红线走 self.fail 入全局 redlines (SEE-1183 D3)
         for s in released_or_warming:
@@ -543,6 +549,7 @@ class DailyCheck:
                     self.warn(dim, "active_sidecar_unreachable", msg)
                     issues.append(msg)
 
+    def _check_b2_lease_pids(self, dim, leases, issues):
         # B2: WSL/Windows PID 跨界检测 — lease 持有 PID 是否存活
         if leases:
             for lease in leases:
@@ -555,6 +562,7 @@ class DailyCheck:
         else:
             self.ok(dim, "b2", "无 lease 持有目录残留")
 
+    def _check_b3_failure_codes(self, dim):
         # B3: proxy 失败码计数 (当日窗口, 见 scan_launcher_failures / SEE-1234)
         failure_daily = scan_launcher_failures(datetime.now(timezone.utc))
         failure_counter = Counter()
@@ -566,7 +574,9 @@ class DailyCheck:
                     % (scanned_logs, dict(failure_counter)))
         else:
             self.ok(dim, "b3", "无 launcher 日志可扫 (或当日无失败码)")
+        return failure_daily
 
+    def _check_b4_double_prefix(self, dim):
         # B4: 双前缀 tool 名 typo 率 (在 daemon 日志 / hook 日志中)
         typo_counter = 0
         samples = []
@@ -585,6 +595,17 @@ class DailyCheck:
         else:
             self.ok(dim, "b4", "无双前缀 typo")
 
+    def dim_b(self):
+        dim = "B"
+        issues = []
+        sidecars = self.load_sidecars()
+        leases = self.list_leases()
+
+        self._check_b1_sidecar_ports(dim, sidecars, issues)
+        self._check_b2_lease_pids(dim, leases, issues)
+        failure_daily = self._check_b3_failure_codes(dim)
+        self._check_b4_double_prefix(dim)
+
         # 维度 status 与全局 redlines 判定一致: 只有 self.fail() 触发的真红线才标
         # REDLINE (SEE-1183 D3); 仅有 warn 时标 warn, 避免读者误读 B 维度触发红线
         dim_redlines = [r for r in self.redlines if r.get("dim") == dim]
@@ -594,9 +615,45 @@ class DailyCheck:
 
     # -- C hooks 体系 -----------------------------------------------------------
 
-    def dim_c(self):
-        dim = "C"
-        issues = []
+    @staticmethod
+    def _c_count_wrapper_registrations(settings):
+        hooks_cfg = settings.get("hooks", {}) if isinstance(settings, dict) else {}
+        registered = 0
+        for phase, entries in hooks_cfg.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                for hook in entry.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    if "hook-wrapper.sh" in cmd:
+                        registered += 1
+        return registered
+
+    @staticmethod
+    def _c_scan_firelog_lines(log_text):
+        """返回 (total_lines, error_lines, recent_tail)。"""
+        total_lines = log_text.count("\n")
+        error_lines = []
+        recent = []
+        for line in log_text.splitlines():
+            if "ERROR" in line or "error" in line or "failed" in line.lower():
+                error_lines.append(line)
+                if len(recent) < 5:
+                    recent.append(line)
+        return total_lines, error_lines, recent
+
+    @staticmethod
+    def _c_phase_distribution(log_text):
+        distribution = Counter()
+        if log_text:
+            for line in log_text.splitlines():
+                for phase in ("PreToolUse", "PostToolUse", "SessionStart", "Stop"):
+                    if ("[%s]" % phase) in line:
+                        distribution[phase] += 1
+                        break
+        return distribution
+
+    def _check_c1_chain_files(self, dim, issues):
         wrapper = os.path.join(self.root, HOOK_CHAIN["wrapper"])
         dispatcher = os.path.join(self.root, HOOK_CHAIN["dispatcher"])
         wrapper_ok = os.path.isfile(wrapper)
@@ -611,36 +668,21 @@ class DailyCheck:
             issues.append("C1 三层链文件缺失 wrapper=%s dispatcher=%s"
                           % (wrapper_ok, dispatcher_ok))
 
+    def _check_c2_settings_registration(self, dim, issues):
         # C2: settings.json hooks 注册完整性 (每个 alias 有 wrapper 引用)
         settings = read_json(CLAUDE_SETTINGS)
-        registered = 0
-        hooks_cfg = settings.get("hooks", {}) if isinstance(settings, dict) else {}
-        for phase, entries in hooks_cfg.items():
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                for hook in entry.get("hooks", []):
-                    cmd = hook.get("command", "")
-                    if "hook-wrapper.sh" in cmd:
-                        registered += 1
+        registered = self._c_count_wrapper_registrations(settings)
         if registered:
             self.ok(dim, "c2", "settings.json 注册 %d 个 wrapper 钩子" % registered)
         else:
             self.missing_input(CLAUDE_SETTINGS, dim, "settings.json 无 wrapper 钩子注册")
             issues.append("C2 settings.json 未注册任何 wrapper 钩子 (权限漂移?)")
 
+    def _check_c3_firelog_error_rate(self, dim, issues):
         # C3: hook-fire.log 错误率 + 最近失败尾巴
         log_text = safe_read(HOOK_FIRE_LOG, max_bytes=32_000_000)
-        total_lines = 0
-        error_lines = []
-        recent = []
         if log_text:
-            total_lines = log_text.count("\n")
-            for idx, line in enumerate(log_text.splitlines()):
-                if "ERROR" in line or "error" in line or "failed" in line.lower():
-                    error_lines.append(line)
-                    if len(recent) < 5:
-                        recent.append(line)
+            total_lines, error_lines, _recent = self._c_scan_firelog_lines(log_text)
             err_rate = len(error_lines) / total_lines if total_lines else 0.0
             self.ok(dim, "c3", "hook-fire.log %d 行, 错误 %d (%.2f%%)"
                     % (total_lines, len(error_lines), err_rate * 100))
@@ -649,7 +691,9 @@ class DailyCheck:
         else:
             self.missing_input(HOOK_FIRE_LOG, dim, "hook-fire.log 缺失")
             issues.append("C3 hook-fire.log 缺失")
+        return log_text
 
+    def _check_c3p_repo_firelog(self, dim, issues):
         # C3p（SEE-1388 §SPEC-011，fingerprint 468a2757121e）：项目级 hook-fire.log 检查。
         # 全局项只覆盖全局位，各 checkout 内的项目级落点曾是盲区；保留全局项，项目级
         # 并报（盲区可报告）。
@@ -664,19 +708,15 @@ class DailyCheck:
             self.missing_input(repo_firelog, dim, "项目级 hook-fire.log 缺失")
             issues.append("C3p 项目级 hook-fire.log 缺失")
 
+    def _check_c4_phase_distribution(self, dim, log_text):
         # C4: 拦截分布 — PreToolUse/PostToolUse/SessionStart/Stop 各自计数
-        distribution = Counter()
-        if log_text:
-            for line in log_text.splitlines():
-                for phase in ("PreToolUse", "PostToolUse", "SessionStart", "Stop"):
-                    if ("[%s]" % phase) in line:
-                        distribution[phase] += 1
-                        break
+        distribution = self._c_phase_distribution(log_text)
         if distribution:
             self.ok(dim, "c4", "拦截分布 %s" % dict(distribution))
         else:
             self.ok(dim, "c4", "无拦截记录")
 
+    def _check_c5_agent_mcp_timeout(self, dim):
         # C5: 每-agent mcp-config 完整性 (含 timeout 字段) — 检查 agent 级 .mcp.json
         agent_mcp_dir = os.path.join(HOME, ".claude")
         agent_mcp_paths = []
@@ -699,6 +739,16 @@ class DailyCheck:
         else:
             self.ok(dim, "c5", "无独立 agent 级 mcp-config (采用共享 .mcp.json 方案)")
 
+    def dim_c(self):
+        dim = "C"
+        issues = []
+        self._check_c1_chain_files(dim, issues)
+        self._check_c2_settings_registration(dim, issues)
+        log_text = self._check_c3_firelog_error_rate(dim, issues)
+        self._check_c3p_repo_firelog(dim, issues)
+        self._check_c4_phase_distribution(dim, log_text)
+        self._check_c5_agent_mcp_timeout(dim)
+
         status = "ok"
         if any(i.startswith("C1") for i in issues):
             status = "warn"
@@ -706,9 +756,7 @@ class DailyCheck:
 
     # -- E autopilots 健康 --------------------------------------------------------
 
-    def dim_e(self):
-        dim = "E"
-        issues = []
+    def _check_e1_watchdog_restarts(self, dim, issues):
         # E1: watchdog 状态文件 (重启节流记录)
         wd = read_json(WATCHDOG_STATE)
         if isinstance(wd, dict) and wd.get("restarts"):
@@ -723,6 +771,7 @@ class DailyCheck:
         else:
             self.ok(dim, "e1", "无 watchdog 状态文件 (尚未运行过)")
 
+    def _check_e2_pid_lock_residue(self, dim, issues):
         # E2: PID 锁残留 — watchdog_state.json.lock 或相关 .lock
         lock_files = []
         for cand in (WATCHDOG_STATE + ".lock", os.path.join(MULTICA_HOME, "watchdog.lock"),
@@ -736,6 +785,7 @@ class DailyCheck:
         else:
             self.ok(dim, "e2", "无 PID 锁残留")
 
+    def _check_e3_workspace_lock(self, dim, issues):
         # E3: workspace 锁残留 (调度并存判定 SEE-1183 1b)
         # 锁是 advisory flock: 只要仍有存活进程持有 (另一 autopilot 正在运行),
         # 就属正常调度并存, 不是残留。仅 flock 空闲且无存活 PID 时才算残留。
@@ -755,6 +805,7 @@ class DailyCheck:
         else:
             self.ok(dim, "e3", "无 workspace 锁残留")
 
+    def _check_e4_autopilot_scripts(self, dim):
         # E4: autopilot 目录内脚本完整性 (run/run_ok 辅助) — SEE-1430 后脚本真源在 dev-forge autopilots/
         autopilot_dir = os.path.join(DEV_FORGE_ROOT, "autopilots")
         scripts = []
@@ -765,14 +816,20 @@ class DailyCheck:
         else:
             self.missing_input(autopilot_dir, dim, "autopilots 目录缺失")
 
+    def dim_e(self):
+        dim = "E"
+        issues = []
+        self._check_e1_watchdog_restarts(dim, issues)
+        self._check_e2_pid_lock_residue(dim, issues)
+        self._check_e3_workspace_lock(dim, issues)
+        self._check_e4_autopilot_scripts(dim)
+
         status = "warn" if issues else "ok"
         self.section(dim, status, issues)
 
     # -- F launch 脚本健康 ----------------------------------------------------------
 
-    def dim_f(self):
-        dim = "F"
-        issues = []
+    def _check_f1_start_sh_hardcode(self, dim, issues):
         # F1: toolchain-start.sh 硬编码路径（SEE-1430 后位于 dev-forge launch/）
         start_sh = START_SH_REL if os.path.isabs(START_SH_REL) else os.path.join(self.root, START_SH_REL)
         text = safe_read(start_sh)
@@ -795,6 +852,7 @@ class DailyCheck:
         else:
             self.missing_input(start_sh, dim, "启动脚本缺失")
 
+    def _check_f2_systemd_unit(self, dim, issues):
         # F2: systemd unit 与 start 脚本一致性（SEE-1430 后 unit 在 dev-forge launch/systemd/）
         unit_path = os.path.join(SYSTEMD_DIR_REL, "toolchain-start-all.service")
         unit_text = safe_read(unit_path)
@@ -810,6 +868,12 @@ class DailyCheck:
             self.ok(dim, "f2", "systemd unit 存在, ExecStart=%s" % (exec_line[0].strip() if exec_line else "?"))
         else:
             self.missing_input(unit_path, dim, "systemd unit 缺失")
+
+    def dim_f(self):
+        dim = "F"
+        issues = []
+        self._check_f1_start_sh_hardcode(dim, issues)
+        self._check_f2_systemd_unit(dim, issues)
 
         # F3/F4 (SEE-1440 / fingerprint 2a3c667e2c9a)：注册制 repos.d 单源巡检 —
         #   每个注册的 repo_sync_daemon 必须存活（pid_file 指向的进程存在）；
@@ -912,11 +976,7 @@ class DailyCheck:
 
     # -- G 错误度量口径 (cross-cutting) -------------------------------------------
 
-    def dim_g(self, failure_daily):
-        dim = "G"
-        issues = []
-        registry = self.load_registry()
-        entries = registry.get("entries", {}) if isinstance(registry, dict) else {}
+    def _g_registry_inventory(self, entries):
         registered_ports = set()
         per_agent = defaultdict(Counter)
         for label, entry in entries.items():
@@ -925,15 +985,18 @@ class DailyCheck:
             if isinstance(p, int):
                 registered_ports.add(p)
             per_agent[agent]["registered"] += 1
+        return registered_ports, per_agent
 
+    def _g_active_leases(self):
         # 活跃 lease (双源并集的一源)
         sidecars = self.load_sidecars()
         active_ports = set()
         for s in sidecars:
             if s.get("state") == "active" and isinstance(s.get("port"), int):
                 active_ports.add(s["port"])
+        return active_ports
 
-        # G1: 日志完整性 — 应采 vs 实采: 注册端口 ∪ 活跃 lease 均应被 launcher 日志覆盖
+    def _g_launcher_log_labels(self):
         launcher_labels = set()
         launcher_logs_dir = MULTICA_HOME
         try:
@@ -944,13 +1007,14 @@ class DailyCheck:
                     launcher_labels.add(label)
         except OSError:
             pass
-        expected = set()
-        for p in registered_ports:
-            expected.add("port-%d" % p)
-        for p in active_ports:
-            expected.add("port-%d" % p)
-        for agent in per_agent:
-            expected.add(agent.lower())
+        return launcher_labels
+
+    def _check_g1_log_completeness(self, dim, registered_ports, active_ports, per_agent, issues):
+        # G1: 日志完整性 — 应采 vs 实采: 注册端口 ∪ 活跃 lease 均应被 launcher 日志覆盖
+        launcher_labels = self._g_launcher_log_labels()
+        expected = {"port-%d" % p for p in registered_ports}
+        expected.update("port-%d" % p for p in active_ports)
+        expected.update(agent.lower() for agent in per_agent)
         missing_logs = expected - launcher_labels
         if missing_logs:
             self.warn(dim, "log_completeness",
@@ -960,10 +1024,7 @@ class DailyCheck:
         else:
             self.ok(dim, "g1", "日志完整性 OK (应采 %d, 实采 %d)" % (len(expected), len(launcher_labels)))
 
-        # G2: 失败码归属 (复用 B3 的当日窗口扫描结果, 归到 port/agent)
-        failure_attr = failure_daily
-        self.ok(dim, "g2", "当日失败码归属 %d 个源" % len(failure_attr))
-
+    def _check_g3_daily_delta(self, dim, failure_attr, issues):
         # G3: 与昨日 delta — 读 history.json 昨日当日窗口计数
         history = read_json(HISTORY_FILE)
         previous = {}
@@ -999,7 +1060,22 @@ class DailyCheck:
                       % (", ".join("%s+%d" % (c, deltas[c]) for c in suspicious),
                          DAILY_INCREMENT_MIN))
             issues.append("G3 日增越界: %s" % suspicious)
+        return history, today
 
+    @staticmethod
+    def _g_daily_series(history):
+        series = defaultdict(list)
+        if isinstance(history, dict):
+            daily = history.get("daily", {})
+            if isinstance(daily, dict):
+                for day, codes in daily.items():
+                    dt = parse_iso(day)
+                    if dt and isinstance(codes, dict):
+                        for code, n in codes.items():
+                            series[code].append(n)
+        return series
+
+    def _check_g4_weekly(self, dim, history):
         # G4: 周累计 >=3 (用 history 近7天累加, 不含今日 — 今日已在 today 计数里)
         weekly = Counter()
         if isinstance(history, dict):
@@ -1021,34 +1097,49 @@ class DailyCheck:
                       "周累计越界: %s (>=%d)；接受理由：错峰整改在平台侧调度，仓库侧不可控"
                       % (", ".join(weekly_bad), WEEKLY_CUMULATIVE_MIN))
 
+    def _check_g5_sigma(self, dim, history, today, issues):
         # G5: 2σ 越界 — 用 history.daily 的过去值序列判断今日异常
         # (history 与 today 现均为当日窗口口径; 旧口径历史因数值巨大天然不触发误报,
         #  混合窗口最多导致首轮 σ 略偏, 5 天后 history 全为新口径)
+        series = self._g_daily_series(history)
         sigma_bad = []
-        if isinstance(history, dict):
-            daily = history.get("daily", {})
-            if isinstance(daily, dict):
-                series = defaultdict(list)
-                for day, codes in daily.items():
-                    dt = parse_iso(day)
-                    if dt and isinstance(codes, dict):
-                        for code, n in codes.items():
-                            series[code].append(n)
-                for code, n in today.items():
-                    vals = series.get(code, [])
-                    if len(vals) >= 5:
-                        mean = sum(vals) / len(vals)
-                        var = sum((v - mean) ** 2 for v in vals) / len(vals)
-                        sigma = var ** 0.5
-                        if sigma > 0 and n > mean + SIGMA_MULTIPLIER * sigma:
-                            sigma_bad.append("%s(%d>%.1f+2σ)" % (code, n, mean))
+        for code, n in today.items():
+            vals = series.get(code, [])
+            if len(vals) >= 5:
+                mean = sum(vals) / len(vals)
+                var = sum((v - mean) ** 2 for v in vals) / len(vals)
+                sigma = var ** 0.5
+                if sigma > 0 and n > mean + SIGMA_MULTIPLIER * sigma:
+                    sigma_bad.append("%s(%d>%.1f+2σ)" % (code, n, mean))
         if sigma_bad:
             self.fail(dim, "sigma_overflow",
                       "2σ 越界: %s" % ", ".join(sigma_bad))
             issues.append("G5 2σ 越界: %s" % sigma_bad)
         else:
             self.ok(dim, "g5", "无 2σ 越界")
+        return sigma_bad
 
+    @staticmethod
+    def _g_pinned_triggers_for(aid):
+        tl = subprocess.run(
+            ["multica", "autopilot", "trigger-list", aid, "--output", "json"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if tl.returncode != 0 or not tl.stdout:
+            return []
+        pinned = []
+        for t in json.loads(tl.stdout).get("triggers", []):
+            if t.get("kind") != "schedule" or not t.get("enabled"):
+                continue
+            cron = (t.get("cron_expression") or "").strip()
+            # Strip optional `TZ=... ` prefix
+            cron_body = cron.split(None, 1)[1] if cron.startswith("TZ=") else cron
+            fields = cron_body.split()
+            if fields and fields[0] == "0":
+                pinned.append("%s(%s)" % (aid[:8], cron_body))
+        return pinned
+
+    def _check_g6_integer_pinned(self, dim):
         # G6: autopilot 整点碰撞检测 (SEE-1224 #6) — 只读调用 `multica autopilot
         # trigger-list`, 汇总所有 schedule trigger 的 cron, 凡是分钟字段钉在 `0`
         # 的视为整点钉扎, 是 workspace 锁自撞 / launcher timeout 噪声的来源之一
@@ -1067,23 +1158,7 @@ class DailyCheck:
                     aid = a.get("id", "")
                     if not aid:
                         continue
-                    tl = subprocess.run(
-                        ["multica", "autopilot", "trigger-list", aid, "--output", "json"],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    if tl.returncode != 0 or not tl.stdout:
-                        continue
-                    for t in json.loads(tl.stdout).get("triggers", []):
-                        if t.get("kind") != "schedule" or not t.get("enabled"):
-                            continue
-                        cron = (t.get("cron_expression") or "").strip()
-                        # Strip optional `TZ=... ` prefix
-                        cron_body = cron.split(None, 1)[1] if cron.startswith("TZ=") else cron
-                        fields = cron_body.split()
-                        if fields and fields[0] == "0":
-                            integer_pinned.append(
-                                "%s(%s)" % (aid[:8], cron_body)
-                            )
+                    integer_pinned.extend(self._g_pinned_triggers_for(aid))
         except (OSError, subprocess.SubprocessError, ValueError) as e:
             trigger_scan_note = "trigger-list scan failed: %s" % e
 
@@ -1099,10 +1174,27 @@ class DailyCheck:
         else:
             self.ok(dim, "g6", "无整点钉扎 trigger")
 
+    def dim_g(self, failure_daily):
+        dim = "G"
+        issues = []
+        registry = self.load_registry()
+        entries = registry.get("entries", {}) if isinstance(registry, dict) else {}
+        registered_ports, per_agent = self._g_registry_inventory(entries)
+        active_ports = self._g_active_leases()
+        self._check_g1_log_completeness(dim, registered_ports, active_ports, per_agent, issues)
+
+        # G2: 失败码归属 (复用 B3 的当日窗口扫描结果, 归到 port/agent)
+        self.ok(dim, "g2", "当日失败码归属 %d 个源" % len(failure_daily))
+
+        history, today = self._check_g3_daily_delta(dim, failure_daily, issues)
+        self._check_g4_weekly(dim, history)
+        sigma_bad = self._check_g5_sigma(dim, history, today, issues)
+        self._check_g6_integer_pinned(dim)
+
         status = REDLINE if sigma_bad else ("warn" if issues else "ok")
         self.section(dim, status, issues)
         return {"today": dict(today), "per_label": {
-            l: dict(c) for l, c in failure_attr.items()
+            l: dict(c) for l, c in failure_daily.items()
         }, "window": "daily"}
 
     # -- 汇总与输出 ---------------------------------------------------------------

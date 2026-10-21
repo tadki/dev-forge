@@ -161,6 +161,33 @@ def write_state(config: dict[str, Any], state: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _posix_reclaim_stale(fd) -> bool | None:
+    """尝试回收死持有者的 flock 锁。
+
+    返回 True=已抢到并清零；False=非 stale（活持有者或读取失败）；
+    None=判定为 stale 但抢锁失败（调用方按模式决定重试或放弃）。
+    """
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        existing = os.read(fd, 32).decode("utf-8").strip()
+        if not existing.isdigit():
+            return False
+        try:
+            os.kill(int(existing), 0)
+        except OSError:
+            # PID is dead — stale lock, overwrite (non-blocking)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (OSError, BlockingIOError):
+                return None
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.truncate(fd, 0)
+            return True
+        return False
+    except (OSError, ValueError):
+        return False
+
+
 def acquire_lock(lock_path: str, timeout: float = 0.0) -> int | None:
     """Acquire exclusive file lock. Returns fd or None on failure.
 
@@ -198,24 +225,8 @@ def acquire_lock(lock_path: str, timeout: float = 0.0) -> int | None:
                     return fd
                 except (OSError, BlockingIOError):
                     # Check for stale lock
-                    try:
-                        os.lseek(fd, 0, os.SEEK_SET)
-                        existing = os.read(fd, 32).decode("utf-8").strip()
-                        if existing.isdigit():
-                            try:
-                                os.kill(int(existing), 0)
-                            except OSError:
-                                # PID is dead — stale lock, overwrite (non-blocking)
-                                try:
-                                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                                except (OSError, BlockingIOError):
-                                    pass  # Will retry in next loop iteration
-                                else:
-                                    os.lseek(fd, 0, os.SEEK_SET)
-                                    os.truncate(fd, 0)
-                                    return fd
-                    except (OSError, ValueError):
-                        pass
+                    if _posix_reclaim_stale(fd) is True:
+                        return fd
                     time.sleep(0.2)
             os.close(fd)
             return None
@@ -223,24 +234,8 @@ def acquire_lock(lock_path: str, timeout: float = 0.0) -> int | None:
         return fd
     except (OSError, BlockingIOError):
         # Immediate (non-blocking) acquisition failed — check stale
-        try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            existing = os.read(fd, 32).decode("utf-8").strip()
-            if existing.isdigit():
-                try:
-                    os.kill(int(existing), 0)
-                except OSError:
-                    # PID is dead — stale lock (non-blocking)
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    except (OSError, BlockingIOError):
-                        os.close(fd)
-                        return None
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    os.truncate(fd, 0)
-                    return fd
-        except (OSError, ValueError):
-            pass
+        if _posix_reclaim_stale(fd) is True:
+            return fd
         os.close(fd)
         return None
 
@@ -1683,44 +1678,152 @@ def _warn_submodule_lags(
     warned_heads: dict[str, str] = dict(prior)
 
     for sub in submodules:
-        path_rel = sub.get("path", "")
-        url = sub.get("url", "")
-        branch = sub.get("branch", "master")
-        if not path_rel or not url:
-            continue
-        gitlink_sha = link_map.get(path_rel)
-        if not gitlink_sha:
-            continue
-
-        # 单次网络往返取 remote branch head；超时沿用既有 probe 上限。
-        r = git_run(repo_path, ["ls-remote", url, branch], check=False, timeout=30)
-        if r.returncode != 0 or not r.stdout.strip():
-            continue  # 网络失败/分支不存在——静默跳过（§7.4(a) 边界）
-        remote_head = r.stdout.split("\t", 1)[0].strip()
-
-        if remote_head == gitlink_sha:
-            # 已追上——清除该子库的去重记录，下次再次落后时重新告警。
-            warned_heads.pop(path_rel, None)
-            continue
-
-        # 落后（gitlink ≠ remote head）。仅状态变化告警。
-        if prior.get(path_rel) == remote_head:
-            continue
-        short_link = gitlink_sha[:12]
-        short_head = remote_head[:12]
-        # LOW-1（code-review）：判定用「不等」，涵盖 behind / ahead / diverged
-        # 三种关系；祖先校验需要远端 head 对象在本地（通常未 fetch），为判定
-        # 多拉一次网络不值当。故采用评审给出的中性措辞选项——不谎称 "behind"，
-        # 「需人工跟进」的语义不变（消费决策在主库 PR）。
-        logger.warning(
-            "submodule '%s' differs from its remote: gitlink %s vs %s#%s %s — "
-            "父库 pin 旧版可能为设计意图；如需跟进，先推子库已就绪的指针变更"
-            "（消费决策在主库 PR）",
-            path_rel, short_link, url, branch, short_head,
-        )
-        warned_heads[path_rel] = remote_head
+        _warn_single_submodule_lag(repo_path, logger, sub, link_map, prior, warned_heads)
 
     return warned_heads
+
+
+def _warn_single_submodule_lag(
+    repo_path: str,
+    logger: logging.Logger,
+    sub: dict[str, str],
+    link_map: dict,
+    prior: dict[str, str],
+    warned_heads: dict[str, str],
+) -> None:
+    path_rel = sub.get("path", "")
+    url = sub.get("url", "")
+    branch = sub.get("branch", "master")
+    if not path_rel or not url:
+        return
+    gitlink_sha = link_map.get(path_rel)
+    if not gitlink_sha:
+        return
+
+    # 单次网络往返取 remote branch head；超时沿用既有 probe 上限。
+    r = git_run(repo_path, ["ls-remote", url, branch], check=False, timeout=30)
+    if r.returncode != 0 or not r.stdout.strip():
+        return  # 网络失败/分支不存在——静默跳过（§7.4(a) 边界）
+    remote_head = r.stdout.split("\t", 1)[0].strip()
+
+    if remote_head == gitlink_sha:
+        # 已追上——清除该子库的去重记录，下次再次落后时重新告警。
+        warned_heads.pop(path_rel, None)
+        return
+
+    # 落后（gitlink ≠ remote head）。仅状态变化告警。
+    if prior.get(path_rel) == remote_head:
+        return
+    short_link = gitlink_sha[:12]
+    short_head = remote_head[:12]
+    # LOW-1（code-review）：判定用「不等」，涵盖 behind / ahead / diverged
+    # 三种关系；祖先校验需要远端 head 对象在本地（通常未 fetch），为判定
+    # 多拉一次网络不值当。故采用评审给出的中性措辞选项——不谎称 "behind"，
+    # 「需人工跟进」的语义不变（消费决策在主库 PR）。
+    logger.warning(
+        "submodule '%s' differs from its remote: gitlink %s vs %s#%s %s — "
+        "父库 pin 旧版可能为设计意图；如需跟进，先推子库已就绪的指针变更"
+        "（消费决策在主库 PR）",
+        path_rel, short_link, url, branch, short_head,
+    )
+    warned_heads[path_rel] = remote_head
+
+
+def _synced_path_result(
+    repo_path: str, config: dict[str, Any], logger: logging.Logger,
+    result: dict[str, Any], dry_run: bool, timeout: int | None,
+) -> dict[str, Any]:
+    """SYNCED 稳态路径：子库 materialize + 滞后告警；返回最终 result。"""
+    # SEE-1268 follow-up: pointer equality does NOT imply content
+    # equality — a working copy can sit exactly at the remote head yet
+    # have uninitialized submodules (arrived via an older daemon build
+    # or a manual pull). Materialize on the steady-state path too, or
+    # that gap never self-heals (the D-drive missing-plugin.cfg bug).
+    if dry_run:
+        result["message"] = "already synced (dry-run: would verify submodules)"
+        logger.info("already synced")
+    else:
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        if sub_ok:
+            result["message"] = "already synced"
+            logger.info("already synced")
+            # (a) SYNCED 滞后告警（SEE-1268 §7.4(a)）：materialize 成功后
+            # 检测子库 remote 超前——只暴露不动作（不拦截、不置失败）。
+            lag_heads = _warn_submodule_lags(repo_path, config, logger, timeout)
+            if lag_heads is not None:
+                result["lag_warned_heads"] = lag_heads
+            # SEE-1430b 语义改向：向上 forward（SEE-1285 三道 gate）整体退役，
+            # gitlink_forward_enabled 配置键作废——注册文件若仍携带，告警一次。
+            if config.get("gitlink_forward_enabled") is not None:
+                logger.warning(
+                    "gitlink_forward_enabled is retired by sync-to-local "
+                    "semantics (SEE-1430b); ignoring it (warn-once per cycle)"
+                )
+        else:
+            result["success"] = False
+            result["message"] = f"already synced but submodule materialization failed: {sub_msg}"
+            result["error_category"] = classify_error(sub_msg)
+            logger.error(
+                "submodule materialization failed on SYNCED path: %s (category=%s)",
+                sub_msg,
+                result["error_category"],
+            )
+    return result
+
+
+def _diverged_path_result(
+    config: dict[str, Any], logger: logging.Logger, repo_path: str,
+    remote: str, branch: str, stash_on_dirty: bool, conflict_strategy,
+    result: dict[str, Any], dry_run: bool, timeout: int | None,
+) -> dict[str, Any]:
+    # DIVERGED — attempt automatic conflict resolution
+    result["state"] = SyncState.DIVERGED.value
+    logger.warning(
+        "DIVERGED detected: local=%s remote=%s",
+        get_sha(repo_path, branch, timeout=timeout),
+        get_sha(repo_path, f"{remote}/{branch}", timeout=timeout),
+    )
+
+    resolved = resolve_diverged(
+        repo_path,
+        remote,
+        branch,
+        stash_on_dirty,
+        conflict_strategy,
+        logger,
+        dry_run,
+        timeout=timeout,
+    )
+    result.update(
+        {
+            "action": resolved["action"],
+            "success": resolved["success"],
+            "message": resolved["message"],
+            "resolution_steps": resolved.get("resolution_steps", []),
+        }
+    )
+
+    if resolved["success"]:
+        logger.info("DIVERGED resolved: %s", resolved["message"])
+    else:
+        logger.error("DIVERGED resolution failed: %s", resolved["message"])
+        if not dry_run:
+            alert_msg = (
+                "🚨 **Repo Sync Alert — DIVERGED resolution failed**\n\n"
+                f"- Local `{branch}`: `{get_sha(repo_path, branch, timeout=timeout) or 'unknown'}`\n"
+                f"- Remote `{remote}/{branch}`: `{get_sha(repo_path, f'{remote}/{branch}', timeout=timeout) or 'unknown'}`\n"
+                f"- Strategy: `{conflict_strategy.value}`\n"
+                f"- Steps: `{resolved.get('resolution_steps', [])}`\n"
+                f"- Repo: `{repo_path}`\n\n"
+                f"Resolution message: {resolved['message']}\n\n"
+                "Manual intervention required."
+            )
+            ok, err = send_alert(config, alert_msg)
+            if ok:
+                logger.info("alert sent")
+            else:
+                logger.error("alert failed: %s", err)
+    return result
 
 
 def run_sync(
@@ -1793,40 +1896,9 @@ def run_sync(
         logger.info("sync state: %s", state.value)
 
         if state == SyncState.SYNCED:
-            # SEE-1268 follow-up: pointer equality does NOT imply content
-            # equality — a working copy can sit exactly at the remote head yet
-            # have uninitialized submodules (arrived via an older daemon build
-            # or a manual pull). Materialize on the steady-state path too, or
-            # that gap never self-heals (the D-drive missing-plugin.cfg bug).
-            if dry_run:
-                result["message"] = "already synced (dry-run: would verify submodules)"
-                logger.info("already synced")
-            else:
-                sub_ok, sub_msg = do_submodule_update(repo_path, timeout=subprocess_timeout)
-                if sub_ok:
-                    result["message"] = "already synced"
-                    logger.info("already synced")
-                    # (a) SYNCED 滞后告警（SEE-1268 §7.4(a)）：materialize 成功后
-                    # 检测子库 remote 超前——只暴露不动作（不拦截、不置失败）。
-                    lag_heads = _warn_submodule_lags(repo_path, config, logger, subprocess_timeout)
-                    if lag_heads is not None:
-                        result["lag_warned_heads"] = lag_heads
-                    # SEE-1430b 语义改向：向上 forward（SEE-1285 三道 gate）整体退役，
-                    # gitlink_forward_enabled 配置键作废——注册文件若仍携带，告警一次。
-                    if config.get("gitlink_forward_enabled") is not None:
-                        logger.warning(
-                            "gitlink_forward_enabled is retired by sync-to-local "
-                            "semantics (SEE-1430b); ignoring it (warn-once per cycle)"
-                        )
-                else:
-                    result["success"] = False
-                    result["message"] = f"already synced but submodule materialization failed: {sub_msg}"
-                    result["error_category"] = classify_error(sub_msg)
-                    logger.error(
-                        "submodule materialization failed on SYNCED path: %s (category=%s)",
-                        sub_msg,
-                        result["error_category"],
-                    )
+            result = _synced_path_result(
+                repo_path, config, logger, result, dry_run, subprocess_timeout
+            )
             write_state(config, result)
             return result
 
@@ -1854,54 +1926,10 @@ def run_sync(
             write_state(config, result)
             return result
 
-        # DIVERGED — attempt automatic conflict resolution
-        result["state"] = SyncState.DIVERGED.value
-        logger.warning(
-            "DIVERGED detected: local=%s remote=%s",
-            get_sha(repo_path, branch, timeout=subprocess_timeout),
-            get_sha(repo_path, f"{remote}/{branch}", timeout=subprocess_timeout),
+        result = _diverged_path_result(
+            config, logger, repo_path, remote, branch, stash_on_dirty,
+            conflict_strategy, result, dry_run, subprocess_timeout,
         )
-
-        resolved = resolve_diverged(
-            repo_path,
-            remote,
-            branch,
-            stash_on_dirty,
-            conflict_strategy,
-            logger,
-            dry_run,
-            timeout=subprocess_timeout,
-        )
-        result.update(
-            {
-                "action": resolved["action"],
-                "success": resolved["success"],
-                "message": resolved["message"],
-                "resolution_steps": resolved.get("resolution_steps", []),
-            }
-        )
-
-        if resolved["success"]:
-            logger.info("DIVERGED resolved: %s", resolved["message"])
-        else:
-            logger.error("DIVERGED resolution failed: %s", resolved["message"])
-            if not dry_run:
-                alert_msg = (
-                    "🚨 **Repo Sync Alert — DIVERGED resolution failed**\n\n"
-                    f"- Local `{branch}`: `{get_sha(repo_path, branch, timeout=subprocess_timeout) or 'unknown'}`\n"
-                    f"- Remote `{remote}/{branch}`: `{get_sha(repo_path, f'{remote}/{branch}', timeout=subprocess_timeout) or 'unknown'}`\n"
-                    f"- Strategy: `{conflict_strategy.value}`\n"
-                    f"- Steps: `{resolved.get('resolution_steps', [])}`\n"
-                    f"- Repo: `{repo_path}`\n\n"
-                    f"Resolution message: {resolved['message']}\n\n"
-                    "Manual intervention required."
-                )
-                ok, err = send_alert(config, alert_msg)
-                if ok:
-                    logger.info("alert sent")
-                else:
-                    logger.error("alert failed: %s", err)
-
         write_state(config, result)
         return result
     finally:

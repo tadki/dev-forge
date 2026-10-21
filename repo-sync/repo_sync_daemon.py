@@ -168,6 +168,79 @@ def _read_error_category(config: dict, logger: logging.Logger) -> str:
         return "persistent"
 
 
+def _normalize_registry_paths(registries: list[dict]) -> None:
+    # Per-repo path resolution (same semantics as the single-config form).
+    for cfg in registries:
+        repo_root = Path(os.path.expanduser(_resolve_repo_path(cfg["repo_path"])))
+        cfg["repo_path"] = str(repo_root)
+        for key in ("log_dir", "state_file"):
+            val = cfg.get(key, "")
+            if val and not Path(val).is_absolute():
+                cfg[key] = str(repo_root / val)
+
+
+def _setup_daemon_logging(logger: logging.Logger, log_dir: Path) -> None:
+    logger.setLevel(logging.DEBUG)
+    logger.handlers = []
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    fh = logging.FileHandler(log_dir / "repo-sync-daemon.log", encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger.addHandler(fh)
+
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger.addHandler(ch)
+
+
+def _handle_cycle_failure(
+    config: dict, logger: logging.Logger, error_category: str,
+    consecutive_failures: int, max_failures: int,
+    current_interval: int, backoff_max: int,
+) -> tuple:
+    """失败周期处理；返回 (consecutive_failures, current_interval, should_break)。"""
+    skip_count = error_category == "transient"
+    if skip_count:
+        logger.warning(
+            "Sync cycle failed with transient error (category=%s). "
+            "Not counting toward circuit breaker (%d/%d).",
+            error_category,
+            consecutive_failures,
+            max_failures,
+        )
+    else:
+        consecutive_failures += 1
+    if consecutive_failures >= max_failures:
+        alert_msg = (
+            f"🚨 **Repo Sync Daemon Alert — Circuit breaker triggered**\n\n"
+            f"- PID: `{os.getpid()}`\n"
+            f"- Consecutive failures: `{consecutive_failures}`\n"
+            f"- Max allowed: `{max_failures}`\n"
+            f"- Daemon stopped to prevent infinite crash loop."
+        )
+        send_alert(config, alert_msg)
+        logger.error(
+            "Circuit breaker: %d consecutive failures >= threshold %d. Stopping daemon.",
+            consecutive_failures,
+            max_failures,
+        )
+        return consecutive_failures, current_interval, True
+    # Exponential backoff: double interval, capped at backoff_max
+    if not skip_count:
+        current_interval = min(current_interval * 2, backoff_max)
+    logger.warning(
+        "Sync cycle failed (category=%s, counted=%s, %d/%d). Backing off to %ds.",
+        error_category,
+        "no" if skip_count else "yes",
+        consecutive_failures,
+        max_failures,
+        current_interval,
+    )
+    return consecutive_failures, current_interval, False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Repo sync daemon")
     parser.add_argument("--config", required=True, help="Path to config JSON or repos.d/ registry dir")
@@ -177,15 +250,7 @@ def main() -> int:
 
     config = load_config(args.config)
     registries: list[dict] = config.get("_registries") or [config]
-
-    # Per-repo path resolution (same semantics as the single-config form).
-    for cfg in registries:
-        repo_root = Path(os.path.expanduser(_resolve_repo_path(cfg["repo_path"])))
-        cfg["repo_path"] = str(repo_root)
-        for key in ("log_dir", "state_file"):
-            val = cfg.get(key, "")
-            if val and not Path(val).is_absolute():
-                cfg[key] = str(repo_root / val)
+    _normalize_registry_paths(registries)
 
     if args.dry_run:
         print(f"DRY-RUN OK: {len(registries)} repo(s) registered")
@@ -211,19 +276,7 @@ def main() -> int:
 
     # Setup logging
     logger = logging.getLogger("repo_sync_daemon")
-    logger.setLevel(logging.DEBUG)
-    logger.handlers = []
-
-    log_dir.mkdir(parents=True, exist_ok=True)
-    fh = logging.FileHandler(log_dir / "repo-sync-daemon.log", encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter(LOG_FORMAT))
-    logger.addHandler(fh)
-
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter(LOG_FORMAT))
-    logger.addHandler(ch)
+    _setup_daemon_logging(logger, log_dir)
 
     # PID lock
     fd = acquire_pid_lock(pid_file)
@@ -261,43 +314,12 @@ def main() -> int:
                 consecutive_failures = 0
                 current_interval = poll_interval
             else:
-                skip_count = error_category == "transient"
-                if skip_count:
-                    logger.warning(
-                        "Sync cycle failed with transient error (category=%s). "
-                        "Not counting toward circuit breaker (%d/%d).",
-                        error_category,
-                        consecutive_failures,
-                        max_failures,
-                    )
-                else:
-                    consecutive_failures += 1
-                if consecutive_failures >= max_failures:
-                    alert_msg = (
-                        f"🚨 **Repo Sync Daemon Alert — Circuit breaker triggered**\n\n"
-                        f"- PID: `{os.getpid()}`\n"
-                        f"- Consecutive failures: `{consecutive_failures}`\n"
-                        f"- Max allowed: `{max_failures}`\n"
-                        f"- Daemon stopped to prevent infinite crash loop."
-                    )
-                    send_alert(config, alert_msg)
-                    logger.error(
-                        "Circuit breaker: %d consecutive failures >= threshold %d. Stopping daemon.",
-                        consecutive_failures,
-                        max_failures,
-                    )
-                    break
-                # Exponential backoff: double interval, capped at backoff_max
-                if not skip_count:
-                    current_interval = min(current_interval * 2, backoff_max)
-                logger.warning(
-                    "Sync cycle failed (category=%s, counted=%s, %d/%d). Backing off to %ds.",
-                    error_category,
-                    "no" if skip_count else "yes",
-                    consecutive_failures,
-                    max_failures,
-                    current_interval,
+                consecutive_failures, current_interval, should_break = _handle_cycle_failure(
+                    config, logger, error_category, consecutive_failures,
+                    max_failures, current_interval, backoff_max,
                 )
+                if should_break:
+                    break
 
             # Sleep in small increments to allow prompt signal response
             end = time.time() + current_interval

@@ -427,6 +427,39 @@ def enrich_issue_identifiers(
 # --- Main ---
 
 
+def _execute_phase5_reruns(approved, watchdog_state, args, kill_switch, processing_log):
+    # Phase 5: Execute reruns (skip if kill switch active)
+    if kill_switch:
+        rerun_results = [
+            {"issue_id": t.get("issue_id", ""), "task_id": t.get("task_id", ""),
+             "agent_name": t.get("agent_name", ""), "success": False,
+             "dry_run": args.dry_run, "error": "kill_switch_active"}
+            for t in approved
+        ]
+        processing_log.append("phase5_skipped: kill_switch_active")
+    else:
+        rerun_results = execute_reruns(
+            approved, watchdog_state, args.dry_run, processing_log,
+            args.max_restarts_per_hour,
+        )
+    return rerun_results
+
+
+def _auto_kill_switch(rerun_results, processing_log) -> tuple:
+    # Kill switch auto-detect
+    total_ops = len(rerun_results)
+    error_count = sum(
+        1 for r in rerun_results
+        if not r.get("success") and not r.get("dry_run") and r.get("error") != "kill_switch_active"
+    )
+    if total_ops > 0:
+        error_ratio = error_count / total_ops
+        if error_ratio > MAX_ERRORS_RATIO:
+            processing_log.append(f"kill_switch_triggered: error_ratio={error_ratio:.2f}")
+            return True, error_count
+    return False, error_count
+
+
 def main(args: argparse.Namespace) -> None:
     processing_log: list[str] = []
     kill_switch = args.kill_switch.lower() == "true"
@@ -450,32 +483,10 @@ def main(args: argparse.Namespace) -> None:
         idle_watchdog_kills, watchdog_state, args.max_restarts_per_hour, processing_log,
     )
 
-    # Phase 5: Execute reruns (skip if kill switch active)
-    if kill_switch:
-        rerun_results = [
-            {"issue_id": t.get("issue_id", ""), "task_id": t.get("task_id", ""),
-             "agent_name": t.get("agent_name", ""), "success": False,
-             "dry_run": args.dry_run, "error": "kill_switch_active"}
-            for t in approved
-        ]
-        processing_log.append("phase5_skipped: kill_switch_active")
-    else:
-        rerun_results = execute_reruns(
-            approved, watchdog_state, args.dry_run, processing_log,
-            args.max_restarts_per_hour,
-        )
-
-    # Kill switch auto-detect
-    total_ops = len(rerun_results)
-    error_count = sum(
-        1 for r in rerun_results
-        if not r.get("success") and not r.get("dry_run") and r.get("error") != "kill_switch_active"
+    rerun_results = _execute_phase5_reruns(
+        approved, watchdog_state, args, kill_switch, processing_log,
     )
-    if total_ops > 0:
-        error_ratio = error_count / total_ops
-        if error_ratio > MAX_ERRORS_RATIO:
-            kill_switch = True
-            processing_log.append(f"kill_switch_triggered: error_ratio={error_ratio:.2f}")
+    kill_switch, error_count = _auto_kill_switch(rerun_results, processing_log)
 
     # Phase 6: Report
     report = generate_json_report(

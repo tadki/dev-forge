@@ -218,17 +218,7 @@ def clean(e):
     return out
 
 
-def find_bare_repo_path(ws_root: str) -> str:
-    """Detect bare repo path from any worktree's .git file, or fall back to the
-    Multica bare-repo root.
-
-    SEE-1181: the fallback is now derived instead of hardcoded. Resolution order
-    mirrors `repo-checkout.sh`'s `resolve_bare_repo`:
-      1. $MULTICA_BARE_REPOS_ROOT/<ws_id>   (env override for non-default layouts)
-      2. <ancestor-of-ws_root>/.repos/<ws_id>  (walk-up from workspace root)
-      3. /home/jerry/multica_workspaces/.repos/<ws_id>  (legacy default)
-    ``ws_id`` prefers $MULTICA_WORKSPACE_ID and falls back to basename(ws_root).
-    """
+def _find_bare_from_worktrees(ws_root: str) -> str:
     for name in sorted(os.listdir(ws_root)):
         wt_dir = os.path.join(ws_root, name)
         workdir = os.path.join(wt_dir, "workdir")
@@ -239,7 +229,7 @@ def find_bare_repo_path(ws_root: str) -> str:
         # that exited at depth=0 (workdir itself) and never descended into
         # <workdir>/<repo>, making this whole path dead code behind the
         # hardcoded fallback. Prune deeper subtrees by clearing `dirs` instead.
-        for root, dirs, files in os.walk(workdir):
+        for root, dirs, _files in os.walk(workdir):
             depth = root[len(workdir):].count(os.sep)
             if depth > 2:
                 dirs.clear()
@@ -257,7 +247,10 @@ def find_bare_repo_path(ws_root: str) -> str:
                             return bare
                 except (IOError, OSError):
                     pass
+    return ""
 
+
+def _bare_repo_fallback_candidates(ws_root: str) -> list:
     # Fallback: standard Multica bare repo path (derived, not hardcoded).
     ws_id = os.environ.get("MULTICA_WORKSPACE_ID") or os.path.basename(ws_root)
     candidates = []
@@ -272,12 +265,33 @@ def find_bare_repo_path(ws_root: str) -> str:
             break
         cursor = parent
     candidates.append(f"/home/jerry/multica_workspaces/.repos/{ws_id}")
+    return candidates
+
+
+def _first_existing_bare(candidates: list) -> str:
     for fallback_dir in candidates:
         if os.path.isdir(fallback_dir):
             for entry in sorted(os.listdir(fallback_dir)):
                 if entry.endswith(".git") and os.path.isdir(os.path.join(fallback_dir, entry)):
                     return os.path.join(fallback_dir, entry)
     return ""
+
+
+def find_bare_repo_path(ws_root: str) -> str:
+    """Detect bare repo path from any worktree's .git file, or fall back to the
+    Multica bare-repo root.
+
+    SEE-1181: the fallback is now derived instead of hardcoded. Resolution order
+    mirrors `repo-checkout.sh`'s `resolve_bare_repo`:
+      1. $MULTICA_BARE_REPOS_ROOT/<ws_id>   (env override for non-default layouts)
+      2. <ancestor-of-ws_root>/.repos/<ws_id>  (walk-up from workspace root)
+      3. /home/jerry/multica_workspaces/.repos/<ws_id>  (legacy default)
+    ``ws_id`` prefers $MULTICA_WORKSPACE_ID and falls back to basename(ws_root).
+    """
+    bare = _find_bare_from_worktrees(ws_root)
+    if bare:
+        return bare
+    return _first_existing_bare(_bare_repo_fallback_candidates(ws_root))
 
 
 # --- Phase 2 state ---

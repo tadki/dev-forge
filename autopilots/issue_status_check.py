@@ -222,14 +222,7 @@ def fetch_issue_detail(issue_id, processing_log):
         return None
 
 
-def validate_agent_map(processing_log):
-    """Phase 0: Validate AGENT_MAP against live agent and member lists.
-
-    Agent IDs (mention://agent/) are validated against multica agent list.
-    Member IDs (mention://member/) are validated against workspace members.
-    Mismatches are logged and counted as errors (may trigger Kill Switch).
-    Returns the number of mismatches found.
-    """
+def _split_agent_map():
     # Split AGENT_MAP into agent IDs and member IDs by mention URL pattern
     agent_ids_in_map = set()
     member_ids_in_map = set()
@@ -238,75 +231,66 @@ def validate_agent_map(processing_log):
             agent_ids_in_map.add(map_id)
         elif "mention://member/" in mention:
             member_ids_in_map.add(map_id)
+    return agent_ids_in_map, member_ids_in_map
 
+
+def _validate_ids_against_live(processing_log, cmd, kind, map_ids, id_of):
+    """双向比对 map_ids 与 live 清单；mismatch 逐条入 processing_log，返回计数。"""
     mismatch_count = 0
-
-    # Validate agent IDs against multica agent list
-    cmd = "multica agent list --output json"
     raw = run(cmd)
     if not raw:
-        processing_log.append("phase0_agent_list_fetch_failed")
-    else:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            processing_log.append("phase0_agent_list_json_error")
-            data = None
+        processing_log.append(f"phase0_{kind}_list_fetch_failed")
+        return 0
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        processing_log.append(f"phase0_{kind}_list_json_error")
+        data = None
 
-        if data is not None:
-            agents = data if isinstance(data, list) else data.get("agents", [])
-            live_agent_ids = set()
-            for agent in agents:
-                agent_id = agent.get("id", "")
-                agent_name = agent.get("name", "?")
-                live_agent_ids.add(agent_id)
-                if agent_id not in agent_ids_in_map:
-                    mismatch_count += 1
-                    processing_log.append(
-                        f"phase0_agent_map_mismatch: id={agent_id} name={agent_name} "
-                        f"missing_from_agent_map"
-                    )
+    if data is not None:
+        items = data if isinstance(data, list) else data.get(f"{kind}s", [])
+        live_ids = set()
+        for item in items:
+            item_id = id_of(item)
+            item_name = item.get("name", "?")
+            live_ids.add(item_id)
+            if item_id not in map_ids:
+                mismatch_count += 1
+                processing_log.append(
+                    f"phase0_{kind}_map_mismatch: id={item_id} name={item_name} "
+                    f"missing_from_{kind}_map"
+                )
 
-            for map_id in agent_ids_in_map:
-                if map_id not in live_agent_ids:
-                    mismatch_count += 1
-                    processing_log.append(
-                        f"phase0_agent_map_mismatch: id={map_id} in_agent_map_but_not_live_agent"
-                    )
+        for map_id in map_ids:
+            if map_id not in live_ids:
+                mismatch_count += 1
+                processing_log.append(
+                    f"phase0_{kind}_map_mismatch: id={map_id} in_{kind}_map_but_not_live_{kind}"
+                )
 
-    # Validate member IDs against workspace members list
-    cmd = "multica workspace member list --output json"
-    raw = run(cmd)
-    if not raw:
-        processing_log.append("phase0_member_list_fetch_failed")
-    else:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            processing_log.append("phase0_member_list_json_error")
-            data = None
+    return mismatch_count
 
-        if data is not None:
-            members = data if isinstance(data, list) else data.get("members", [])
-            live_member_ids = set()
-            for member in members:
-                # member mention links use user_id, not workspace-specific id
-                member_id = member.get("user_id", "") or member.get("id", "")
-                member_name = member.get("name", "?")
-                live_member_ids.add(member_id)
-                if member_id not in member_ids_in_map:
-                    mismatch_count += 1
-                    processing_log.append(
-                        f"phase0_member_map_mismatch: id={member_id} name={member_name} "
-                        f"missing_from_member_map"
-                    )
 
-            for map_id in member_ids_in_map:
-                if map_id not in live_member_ids:
-                    mismatch_count += 1
-                    processing_log.append(
-                        f"phase0_member_map_mismatch: id={map_id} in_member_map_but_not_live_member"
-                    )
+def validate_agent_map(processing_log):
+    """Phase 0: Validate AGENT_MAP against live agent and member lists.
+
+    Agent IDs (mention://agent/) are validated against multica agent list.
+    Member IDs (mention://member/) are validated against workspace members.
+    Mismatches are logged and counted as errors (may trigger Kill Switch).
+    Returns the number of mismatches found.
+    """
+    agent_ids_in_map, member_ids_in_map = _split_agent_map()
+
+    mismatch_count = _validate_ids_against_live(
+        processing_log, "multica agent list --output json", "agent", agent_ids_in_map,
+        lambda agent: agent.get("id", ""),
+    )
+    # member mention links use user_id, not workspace-specific id
+    mismatch_count += _validate_ids_against_live(
+        processing_log, "multica workspace member list --output json", "member",
+        member_ids_in_map,
+        lambda member: member.get("user_id", "") or member.get("id", ""),
+    )
 
     if mismatch_count > 0:
         processing_log.append(
@@ -339,6 +323,67 @@ STALE_RUN_HOURS = 4
 PLACEHOLDER_THRESHOLD = 40
 
 
+def _no_assignee_decision(issue):
+    # SEE-956 H1: placeholder issues (low completeness score) are routed
+    # to a separate bucket instead of no_assignee so they don't ping
+    # Atlas for what is essentially an empty/unspecified issue.
+    score = issue.get("completeness_score")
+    if score is not None and score < PLACEHOLDER_THRESHOLD:
+        return "placeholder", f"placeholder_low_completeness_score={score}"
+    return "no_assignee", "no_assignee_and_no_commenters"
+
+
+def _decide_issue(issue, has_running_run, push_count, assignee_id, latest_commenter,
+                  completed_stale, has_other_contributor, assignee_recent):
+    if has_running_run:
+        return "running", "has_running_run"
+    if push_count >= PUSH_THRESHOLD:
+        return "need_push_decision", f"push_count={push_count} >= threshold={PUSH_THRESHOLD}"
+    if push_count > 0:
+        return "need_push", f"push_count={push_count} < threshold={PUSH_THRESHOLD}"
+    if completed_stale:
+        return "need_push_decision", "completed_run_stale"
+    if not assignee_id and not latest_commenter:
+        return _no_assignee_decision(issue)
+    if not assignee_id and latest_commenter:
+        return "need_push", "no_assignee_but_has_commenter"
+    if assignee_id and has_other_contributor:
+        # Other agent/member is genuinely active on this issue — visible but not pushed
+        return "active", "other_contributor_active"
+    if assignee_id and assignee_recent:
+        # Assignee recently self-commented — treat as active, not stale
+        return "active", "assignee_recently_active"
+    return "need_push", "assigned_but_stale"
+
+
+def _completed_stale(issue, latest_run_status, runs, reconfirmed_status, processing_log) -> bool:
+    # Check for completed_stale: latest run completed > N hours ago but issue not done
+    completed_stale = False
+    if latest_run_status == "completed" and runs:
+        sorted_runs = sorted(runs, key=lambda r: r.get("created_at", ""), reverse=True)
+        completed_at = sorted_runs[0].get("completed_at", "")
+        if completed_at:
+            try:
+                from datetime import datetime, timezone, timedelta
+                dt = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+                stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_RUN_HOURS)
+                if dt < stale_cutoff and reconfirmed_status not in ("done", "cancelled"):
+                    completed_stale = True
+            except (ValueError, TypeError) as e:
+                processing_log.append(
+                    f"completed_at_parse_error: "
+                    f"issue={issue.get('identifier', issue.get('id', '?'))} "
+                    f"completed_at={completed_at} error={e}"
+                )
+        else:
+            processing_log.append(
+                f"completed_at_missing: "
+                f"issue={issue.get('identifier', issue.get('id', '?'))} "
+                f"run_status=completed but completed_at field absent"
+            )
+    return completed_stale
+
+
 def classify_issue(issue, push_count, latest_commenter, latest_run_status,
                    reconfirmed_status, runs, processing_log, comments=None):
     """Phase 3/4: Classify an issue into a decision category."""
@@ -369,68 +414,11 @@ def classify_issue(issue, push_count, latest_commenter, latest_run_status,
         comments, assignee_id, COMMENT_ACTIVITY_THRESHOLD_MINUTES
     ) if comments else False
 
-    # Check for completed_stale: latest run completed > N hours ago but issue not done
-    completed_stale = False
-    if latest_run_status == "completed" and runs:
-        sorted_runs = sorted(runs, key=lambda r: r.get("created_at", ""), reverse=True)
-        completed_at = sorted_runs[0].get("completed_at", "")
-        if completed_at:
-            try:
-                from datetime import datetime, timezone, timedelta
-                dt = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
-                stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_RUN_HOURS)
-                if dt < stale_cutoff and reconfirmed_status not in ("done", "cancelled"):
-                    completed_stale = True
-            except (ValueError, TypeError) as e:
-                processing_log.append(
-                    f"completed_at_parse_error: "
-                    f"issue={issue.get('identifier', issue.get('id', '?'))} "
-                    f"completed_at={completed_at} error={e}"
-                )
-        else:
-            processing_log.append(
-                f"completed_at_missing: "
-                f"issue={issue.get('identifier', issue.get('id', '?'))} "
-                f"run_status=completed but completed_at field absent"
-            )
-
-    if has_running_run:
-        decision = "running"
-        reason = "has_running_run"
-    elif push_count >= PUSH_THRESHOLD:
-        decision = "need_push_decision"
-        reason = f"push_count={push_count} >= threshold={PUSH_THRESHOLD}"
-    elif push_count > 0:
-        decision = "need_push"
-        reason = f"push_count={push_count} < threshold={PUSH_THRESHOLD}"
-    elif completed_stale:
-        decision = "need_push_decision"
-        reason = "completed_run_stale"
-    elif not assignee_id and not latest_commenter:
-        # SEE-956 H1: placeholder issues (low completeness score) are routed
-        # to a separate bucket instead of no_assignee so they don't ping
-        # Atlas for what is essentially an empty/unspecified issue.
-        score = issue.get("completeness_score")
-        if score is not None and score < PLACEHOLDER_THRESHOLD:
-            decision = "placeholder"
-            reason = f"placeholder_low_completeness_score={score}"
-        else:
-            decision = "no_assignee"
-            reason = "no_assignee_and_no_commenters"
-    elif not assignee_id and latest_commenter:
-        decision = "need_push"
-        reason = "no_assignee_but_has_commenter"
-    elif assignee_id and has_other_contributor:
-        # Other agent/member is genuinely active on this issue — visible but not pushed
-        decision = "active"
-        reason = "other_contributor_active"
-    elif assignee_id and assignee_recent:
-        # Assignee recently self-commented — treat as active, not stale
-        decision = "active"
-        reason = "assignee_recently_active"
-    else:
-        decision = "need_push"
-        reason = "assigned_but_stale"
+    stale = _completed_stale(issue, latest_run_status, runs, reconfirmed_status, processing_log)
+    decision, reason = _decide_issue(
+        issue, has_running_run, push_count, assignee_id, latest_commenter,
+        stale, has_other_contributor, assignee_recent,
+    )
 
     if verbose:
         processing_log.append(
@@ -472,6 +460,108 @@ def classify_issue(issue, push_count, latest_commenter, latest_run_status,
     return decision, entry
 
 
+def _collect_status_issues(processing_log):
+    # Phase 1: Collect issues across all target statuses
+    all_issues = []
+    status_counts = {}
+    for status in STATUSES:
+        issues = fetch_issues_by_status(status, processing_log)
+        all_issues.extend(issues)
+        status_counts[status] = len(issues)
+
+    processing_log.append(
+        f"phase1_complete: total_issues={len(all_issues)} "
+        + " ".join(f"{s}={status_counts[s]}" for s in STATUSES)
+    )
+    return all_issues, status_counts
+
+
+def _process_issue(issue, categories, processing_log):
+    """Phase 2-4: enrich 单个 issue（detail/comments/runs）→ grace/reconfirm/classify。"""
+    issue_id = issue.get("id", "")
+    identifier = issue.get("identifier", "")
+    expected_status = issue.get("status", "")
+
+    # Fetch detail (re-fetch for fresh data)
+    detail = fetch_issue_detail(issue_id, processing_log)
+    if detail is None:
+        categories["errors"].append({
+            "id": issue_id,
+            "identifier": identifier,
+            "error": "detail_fetch_failed",
+        })
+        if verbose:
+            processing_log.append(f"error: issue={identifier} detail_fetch_failed")
+        return
+
+    # Fetch comments first (needed for latest_push_reminder_at)
+    comments = fetch_issue_comments(issue_id, processing_log)
+    push_count = count_push_reminders(comments, self_agent_id)
+    latest_commenter = get_latest_commenter(comments, self_agent_id)
+    # SEE-956 H3: 24h rate-limit for no_assignee pings.
+    latest_push_reminder_at = get_latest_push_reminder_time(
+        comments, self_agent_id
+    )
+
+    # Use detail data as canonical source
+    enriched = {
+        "id": detail.get("id", issue_id),
+        "identifier": detail.get("identifier", identifier),
+        "title": detail.get("title", ""),
+        "status": detail.get("status", expected_status),
+        "assignee_id": detail.get("assignee_id"),
+        "assignee_type": detail.get("assignee_type"),
+        # SEE-956 H1/H2: completeness score from title+description drives
+        # placeholder classification.
+        "completeness_score": completeness_score(
+            detail.get("title", ""), detail.get("description", "")
+        ),
+        # SEE-956 H3: timestamp of our latest push reminder, for 24h
+        # rate-limiting of no_assignee pings in push_comment_sender.
+        "latest_push_reminder_at": latest_push_reminder_at,
+    }
+
+    # Fetch runs
+    runs = fetch_issue_runs(issue_id, processing_log)
+    latest_run_status = get_latest_run_status(runs)
+
+    # Grace period check: skip issues created within the grace window
+    created_at = detail.get("created_at", "")
+    if is_within_grace_period(created_at, GRACE_PERIOD_MINUTES):
+        categories["grace_period"].append({
+            "id": enriched["id"],
+            "identifier": enriched["identifier"],
+            "title": enriched["title"],
+            "status": enriched["status"],
+            "assignee_id": enriched["assignee_id"] or "",
+            "assignee_type": enriched["assignee_type"] or "",
+            "created_at": created_at,
+        })
+        if verbose:
+            processing_log.append(
+                f"grace_period: issue={enriched['identifier']} "
+                f"created_at={created_at} grace_minutes={GRACE_PERIOD_MINUTES}"
+            )
+        return
+
+    # Phase 3/4: Re-confirm status (race condition guard)
+    reconfirmed_status = enriched["status"]
+    if not dry_run and not state["kill_switch"]:
+        reconfirmed_status = reconfirm_issue_status(
+            issue_id, enriched["status"], processing_log
+        )
+
+    # Phase 3/4: Classify
+    decision, entry = classify_issue(
+        enriched, push_count, latest_commenter, latest_run_status,
+        reconfirmed_status, runs, processing_log, comments=comments
+    )
+    if decision is None:
+        # done/cancelled issues are skipped
+        return
+    categories[decision].append(entry)
+
+
 def main():
     processing_log = []
     categories = {
@@ -496,102 +586,11 @@ def main():
         })
 
     # Phase 1: Collect issues across all target statuses
-    all_issues = []
-    status_counts = {}
-    for status in STATUSES:
-        issues = fetch_issues_by_status(status, processing_log)
-        all_issues.extend(issues)
-        status_counts[status] = len(issues)
-
-    processing_log.append(
-        f"phase1_complete: total_issues={len(all_issues)} "
-        + " ".join(f"{s}={status_counts[s]}" for s in STATUSES)
-    )
+    all_issues, status_counts = _collect_status_issues(processing_log)
 
     # Phase 2: Enrich each issue with comments, runs, and detail
     for issue in all_issues:
-        issue_id = issue.get("id", "")
-        identifier = issue.get("identifier", "")
-        expected_status = issue.get("status", "")
-
-        # Fetch detail (re-fetch for fresh data)
-        detail = fetch_issue_detail(issue_id, processing_log)
-        if detail is None:
-            categories["errors"].append({
-                "id": issue_id,
-                "identifier": identifier,
-                "error": "detail_fetch_failed",
-            })
-            if verbose:
-                processing_log.append(f"error: issue={identifier} detail_fetch_failed")
-            continue
-
-        # Fetch comments first (needed for latest_push_reminder_at)
-        comments = fetch_issue_comments(issue_id, processing_log)
-        push_count = count_push_reminders(comments, self_agent_id)
-        latest_commenter = get_latest_commenter(comments, self_agent_id)
-        # SEE-956 H3: 24h rate-limit for no_assignee pings.
-        latest_push_reminder_at = get_latest_push_reminder_time(
-            comments, self_agent_id
-        )
-
-        # Use detail data as canonical source
-        enriched = {
-            "id": detail.get("id", issue_id),
-            "identifier": detail.get("identifier", identifier),
-            "title": detail.get("title", ""),
-            "status": detail.get("status", expected_status),
-            "assignee_id": detail.get("assignee_id"),
-            "assignee_type": detail.get("assignee_type"),
-            # SEE-956 H1/H2: completeness score from title+description drives
-            # placeholder classification.
-            "completeness_score": completeness_score(
-                detail.get("title", ""), detail.get("description", "")
-            ),
-            # SEE-956 H3: timestamp of our latest push reminder, for 24h
-            # rate-limiting of no_assignee pings in push_comment_sender.
-            "latest_push_reminder_at": latest_push_reminder_at,
-        }
-
-        # Fetch runs
-        runs = fetch_issue_runs(issue_id, processing_log)
-        latest_run_status = get_latest_run_status(runs)
-
-        # Grace period check: skip issues created within the grace window
-        created_at = detail.get("created_at", "")
-        if is_within_grace_period(created_at, GRACE_PERIOD_MINUTES):
-            categories["grace_period"].append({
-                "id": enriched["id"],
-                "identifier": enriched["identifier"],
-                "title": enriched["title"],
-                "status": enriched["status"],
-                "assignee_id": enriched["assignee_id"] or "",
-                "assignee_type": enriched["assignee_type"] or "",
-                "created_at": created_at,
-            })
-            if verbose:
-                processing_log.append(
-                    f"grace_period: issue={enriched['identifier']} "
-                    f"created_at={created_at} grace_minutes={GRACE_PERIOD_MINUTES}"
-                )
-            continue
-
-        # Phase 3/4: Re-confirm status (race condition guard)
-        reconfirmed_status = enriched["status"]
-        if not dry_run and not state["kill_switch"]:
-            reconfirmed_status = reconfirm_issue_status(
-                issue_id, enriched["status"], processing_log
-            )
-
-        # Phase 3/4: Classify
-        decision, entry = classify_issue(
-            enriched, push_count, latest_commenter, latest_run_status,
-            reconfirmed_status, runs, processing_log, comments=comments
-        )
-        if decision is None:
-            # done/cancelled issues are skipped
-            continue
-        categories[decision].append(entry)
+        _process_issue(issue, categories, processing_log)
 
     # Kill switch check: if error ratio too high, downgrade
     total_processed = sum(len(v) for v in categories.values())

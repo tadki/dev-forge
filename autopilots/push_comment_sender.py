@@ -270,6 +270,74 @@ def send_push_comments(
 
     Returns dict with push_actions list and push_actions_summary.
     """
+def _send_push_comment(issue_id: str, comment_content: str, identifier: str,
+                       action: str, mention_target_name: str, processing_log: list) -> tuple:
+    base_cmd = f"multica issue comment add {issue_id} --content-stdin"
+    ok, out = multica_stdin_cmd(base_cmd, comment_content)
+    if ok:
+        processing_log.append(
+            f"phase5_push_sent: issue={identifier} "
+            f"action={action} target={mention_target_name}"
+        )
+    else:
+        processing_log.append(
+            f"phase5_push_failed: issue={identifier} "
+            f"action={action} error={out}"
+        )
+    return ok, out
+
+
+def _no_assignee_rate_limited(entry: dict, action: str, should_send: bool,
+                              identifier: str, processing_log: list) -> bool:
+    # SEE-956 H3: rate-limit no_assignee pings to one per cooldown.
+    # If we already pinged within the window, skip silently.
+    if (
+        should_send
+        and action == "no_assignee"
+        and _is_within_hours(
+            entry.get("latest_push_reminder_at", ""),
+            NO_ASSIGNEE_PING_COOLDOWN_HOURS,
+        )
+    ):
+        processing_log.append(
+            f"phase5_no_assignee_rate_limited: issue={identifier} "
+            f"cooldown_hours={NO_ASSIGNEE_PING_COOLDOWN_HOURS}"
+        )
+        return True
+    return False
+
+
+def _check_error_ratio(state: dict, error_count: int, total_attempted: int,
+                       max_errors_ratio: float, processing_log: list) -> bool:
+    # Kill Switch: check error ratio after each send attempt
+    if total_attempted > 0:
+        ratio = error_count / total_attempted
+        if ratio > max_errors_ratio:
+            state["kill_switch"] = True
+            processing_log.append(
+                f"kill_switch_triggered_phase5: "
+                f"error_ratio={ratio:.2f} "
+                f"exceeds max={max_errors_ratio}"
+            )
+            return True
+    return False
+
+
+def send_push_comments(
+    categories: dict,
+    processing_log: list,
+    state: dict,
+    dry_run: bool = False,
+    max_errors_ratio: float = 0.3,
+) -> dict:
+    """Phase 5: Send push comments to classified issues.
+
+    In dry-run mode: computes push_actions with sent=False, no actual sending.
+    In non-dry-run, non-kill-switch mode: sends comments via multica_stdin_cmd.
+    Tracks errors and triggers kill_switch if error ratio exceeds threshold.
+
+    Returns dict with push_actions list and push_actions_summary.
+    """
     push_actions: list[dict] = []
     sent_count = 0
     failed_count = 0
@@ -302,40 +370,21 @@ def send_push_comments(
             if should_send and is_issue_in_terminal_status(issue_id, processing_log):
                 should_send = False
 
-            # SEE-956 H3: rate-limit no_assignee pings to one per cooldown.
-            # If we already pinged within the window, skip silently.
-            if (
-                should_send
-                and action == "no_assignee"
-                and _is_within_hours(
-                    entry.get("latest_push_reminder_at", ""),
-                    NO_ASSIGNEE_PING_COOLDOWN_HOURS,
-                )
-            ):
+            if _no_assignee_rate_limited(entry, action, should_send, identifier, processing_log):
                 should_send = False
-                processing_log.append(
-                    f"phase5_no_assignee_rate_limited: issue={identifier} "
-                    f"cooldown_hours={NO_ASSIGNEE_PING_COOLDOWN_HOURS}"
-                )
 
             if should_send:
                 total_attempted += 1
-                base_cmd = f"multica issue comment add {issue_id} --content-stdin"
-                ok, out = multica_stdin_cmd(base_cmd, comment_content)
+                ok, out = _send_push_comment(
+                    issue_id, comment_content, identifier, action,
+                    mention_target_name, processing_log,
+                )
 
                 if ok:
                     sent_count += 1
-                    processing_log.append(
-                        f"phase5_push_sent: issue={identifier} "
-                        f"action={action} target={mention_target_name}"
-                    )
                 else:
                     failed_count += 1
                     error_count_for_kill_switch += 1
-                    processing_log.append(
-                        f"phase5_push_failed: issue={identifier} "
-                        f"action={action} error={out}"
-                    )
 
                 push_actions.append({
                     "issue_id": issue_id,
@@ -347,17 +396,9 @@ def send_push_comments(
                     "error": out if not ok else None,
                 })
 
-                # Kill Switch: check error ratio after each send attempt
-                if total_attempted > 0:
-                    ratio = error_count_for_kill_switch / total_attempted
-                    if ratio > max_errors_ratio:
-                        state["kill_switch"] = True
-                        kill_switch_triggered = True
-                        processing_log.append(
-                            f"kill_switch_triggered_phase5: "
-                            f"error_ratio={ratio:.2f} "
-                            f"exceeds max={max_errors_ratio}"
-                        )
+                if _check_error_ratio(state, error_count_for_kill_switch,
+                                      total_attempted, max_errors_ratio, processing_log):
+                    kill_switch_triggered = True
             else:
                 skipped_count += 1
                 push_actions.append({
