@@ -309,3 +309,86 @@ def test_g3_daily_increment_warn_still_fires(env):
     c._check_g3_daily_delta("G", {"launcher-a": {"timeout": 3}}, issues)
     codes = [f["code"] for f in c.findings if f["level"] == tdc.WARN]
     assert "threshold_daily" in codes, c.findings
+
+
+# --- 变异击杀补测 (SEE-1449 hardener): 以下用例各自钉扎一个既有测试杀不死的变异 --
+
+
+def test_journal_day_survives_history_write_failure(env, monkeypatch):
+    """M3 (写序颠倒) 击杀: journal 必须先于 history.json 落盘。
+
+    history 原子写失败时当日键必须已进 journal — 若写序颠倒 (先 history 后
+    journal), 写失败路径在 journal 追加之前抛出, 当日键永久丢失。
+    """
+    c, history_file, journal_file, _ = env
+    real_replace = os.replace
+
+    def boom(src, dst):
+        if str(dst) == str(history_file):
+            raise OSError("history replace failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError):
+        c.persist(_report_for("2026-10-11", {"timeout": 4}))
+    entries = _journal_lines(journal_file)
+    assert entries and entries[-1]["day"] == "2026-10-11", \
+        "history 写失败当日键必须已在 journal (journal 先行)"
+
+
+def test_compaction_noop_at_exact_window_boundary(env):
+    """M4b (no-op 边界 <= → <) 击杀: len==keep_days 时压缩必须 no-op。
+
+    用行尾损坏字节作重写标记: no-op 保留原文件字节, 重写则丢弃未识别行。
+    """
+    _, _, journal_file, _ = env
+    for d in range(1, 31):  # 恰好 30 个不同日 == keep_days
+        tdc.journal_append(str(journal_file), "2026-10-%02d" % d, {"timeout": d}, "t")
+    journal_file.write_text(
+        journal_file.read_text(encoding="utf-8") + "not-json\n", encoding="utf-8")
+    tdc.journal_compact(str(journal_file))
+    assert "not-json" in journal_file.read_text(encoding="utf-8"), \
+        "len==keep_days 不得重写 journal (重写会丢弃未识别字节)"
+
+
+def test_persist_evicts_to_30_day_window(env):
+    """M7b (persist 淘汰调用点移除) 击杀: persist 写回必须执行 30 天淘汰。"""
+    c, history_file, _, _ = env
+    days = {"2026-10-%02d" % d: {"timeout": d} for d in range(1, 33)}  # 32 天
+    _write_history(history_file, days)
+    c.persist(_report_for("2026-11-12", {"timeout": 5}))
+    result = json.loads(history_file.read_text(encoding="utf-8"))["daily"]
+    assert len(result) == tdc.MAX_HISTORY, "persist 仍执行 30 天淘汰"
+    assert "2026-11-12" in result, "当日键保留"
+    assert "2026-10-01" not in result and "2026-10-02" not in result, \
+        "最旧两键被淘汰 (33 → 30 窗口)"
+
+
+def test_journal_same_day_last_write_wins(env):
+    """M8a (后写覆盖先写 → 首写优先) 击杀: 同日多行后写胜出。
+
+    persist 每轮无条件追加当日键, 同日多行是恢复重跑后的常态; 读取必须与
+    daily 键覆盖语义一致取最后一行。
+    """
+    _, history_file, journal_file, _ = env
+    _write_history(history_file, {})
+    journal_file.write_text(
+        json.dumps({"day": "2026-10-10", "failures": {"timeout": 99}, "ts": "t0"}) + "\n"
+        + json.dumps({"day": "2026-10-10", "failures": {"timeout": 4}, "ts": "t1"}) + "\n",
+        encoding="utf-8")
+    history, recovered = tdc.load_history_with_recovery(str(history_file))
+    assert recovered == ["2026-10-10"]
+    assert history["daily"]["2026-10-10"] == {"timeout": 4}, "后写覆盖先写"
+
+
+def test_journal_trailing_invalid_day_entry_skipped(env):
+    """M8b (丢 failures-dict 校验) 击杀: 无效行是该日唯一行时整体跳过不崩溃。"""
+    _, history_file, journal_file, _ = env
+    _write_history(history_file, {})
+    journal_file.write_text(
+        json.dumps({"day": "2026-10-09", "failures": {"error": 2}, "ts": "t"}) + "\n"
+        + '{"day": "2026-10-08"}\n',  # 缺 failures → 该日必须跳过
+        encoding="utf-8")
+    history, recovered = tdc.load_history_with_recovery(str(history_file))
+    assert recovered == ["2026-10-09"], recovered
+    assert "2026-10-08" not in history["daily"], "无效日整体跳过 (宁漏勿错)"
