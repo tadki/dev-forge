@@ -123,6 +123,20 @@ DAILY_INCREMENT_MIN = 2
 WEEKLY_CUMULATIVE_MIN = 3
 SIGMA_MULTIPLIER = 2.0
 
+# SEE-1449: history.daily 的口径切换日 (含当日, 不含次日)。SEE-1234 于 2026-09-04
+# 04:33 UTC 落地, 失败码统计自「累计值」切换为「当日窗口值」; 之前写入的 daily 键
+# 是旧累计口径 (timeout 2060-2366 / error 89-116, 比当日窗口值大 1-2 个数量级)。
+# G5 的 σ 序列确定性排除 <= 2026-09-04 的键, 不依赖 30 天窗口自然淘汰 (本轮 6 个
+# 旧口径日按淘汰进度要到 2026-10-27 才清完, 期间假阴性, 见 SEE-1448); 旧键全部
+# 自然淘汰后守卫自动退化为 no-op, 行为与无守卫一致。
+DAILY_WINDOW_EPOCH_LAST_LEGACY = "2026-09-04"
+
+# SEE-1449: history.json 防单点整体覆盖 — append-only journal (与 history.json 同目录,
+# 即 report_dir 内)。persist 每轮先追加当日键再原子写 history.json; 读取路径
+# load_history_with_recovery 用 journal 恢复被整体覆盖/丢失的日 (SEE-1448 实证
+# 10-05..10-10 六天被外部覆盖后不可再生)。journal 只写 report_dir, 不越界。
+HISTORY_JOURNAL_NAME = "history-journal.jsonl"
+
 # 三层钩子链: wrapper → dispatcher → 业务脚本（SEE-1430 后真源在 dev-forge）
 HOOK_CHAIN = {
     "wrapper": os.path.join(DEV_FORGE_ROOT, "claude-hooks", "hook-wrapper.sh"),
@@ -172,6 +186,105 @@ def read_json(path, default=None):
         return json.loads(text)
     except (ValueError, TypeError):
         return default
+
+
+def journal_path_for(history_file):
+    """journal 与 history.json 同目录 (report_dir 边界内, SEE-1449)。"""
+    return os.path.join(os.path.dirname(history_file), HISTORY_JOURNAL_NAME)
+
+
+def journal_read_days(journal_file):
+    """读 journal → {day: entry} (后写覆盖先写, 与 daily 键覆盖语义一致)。
+
+    损坏行跳过 (宁漏勿错, 与失败码扫描同口径); 文件缺失/不可读返回 {}。
+    """
+    days = {}
+    try:
+        with open(journal_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict) and isinstance(entry.get("day"), str) \
+                        and isinstance(entry.get("failures"), dict):
+                    days[entry["day"]] = entry
+    except OSError:
+        return {}
+    return days
+
+
+def journal_append(journal_file, day, failures, ts):
+    """append-only 追加当日键 (write+flush+fsync), 先于 history.json 落盘。"""
+    line = json.dumps({"day": day, "failures": failures, "ts": ts},
+                      ensure_ascii=False) + "\n"
+    with open(journal_file, "a", encoding="utf-8") as f:
+        f.write(line)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def journal_compact(journal_file, keep_days=MAX_HISTORY):
+    """journal 保留最近 keep_days 个不同日的条目 (界定体积), 原子替换。
+
+    覆盖恢复窗口 >= 30 天淘汰窗口, 压缩不会丢可恢复日。
+    """
+    days = journal_read_days(journal_file)
+    if len(days) <= keep_days:
+        return
+    keep = set(sorted(days.keys())[-keep_days:])
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(journal_file) or ".", prefix=".journal-", suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            for day in sorted(days):
+                if day in keep:
+                    f.write(json.dumps(days[day], ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, journal_file)
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def evict_daily(daily, max_days=MAX_HISTORY):
+    """滑动窗口淘汰: 只删最旧 key 至 <= max_days (30 天淘汰语义唯一定义点)。"""
+    for old_day in sorted(daily.keys()):
+        if len(daily) > max_days:
+            daily.pop(old_day, None)
+        else:
+            break
+    return daily
+
+
+def load_history_with_recovery(history_file):
+    """读取路径自愈: history.json 缺某天而 journal 有 → 该天被恢复 (内存)。
+
+    返回 (history, recovered_days)。不写盘 — 物理落盘由 persist 统一原子写;
+    恢复合并后按 30 天淘汰语义裁剪, 不破坏现有窗口语义。
+    """
+    history = read_json(history_file)
+    if not isinstance(history, dict):
+        history = {}
+    daily = history.get("daily")
+    if not isinstance(daily, dict):
+        daily = {}
+    recovered = []
+    for day, entry in journal_read_days(journal_path_for(history_file)).items():
+        if day not in daily:
+            daily[day] = entry["failures"]
+            recovered.append(day)
+    if recovered:
+        evict_daily(daily)
+        history["daily"] = daily
+    return history, recovered
 
 
 def _lock_holder(path):
@@ -1026,7 +1139,12 @@ class DailyCheck:
 
     def _check_g3_daily_delta(self, dim, failure_attr, issues):
         # G3: 与昨日 delta — 读 history.json 昨日当日窗口计数
-        history = read_json(HISTORY_FILE)
+        # (经 journal 自愈读取路径, SEE-1449: history 被整体覆盖丢日时可恢复)
+        history, recovered_days = load_history_with_recovery(HISTORY_FILE)
+        if recovered_days:
+            self.info(dim, "history_recovered",
+                      "history 缺失 %d 天已由 journal 恢复: %s"
+                      % (len(recovered_days), ", ".join(sorted(recovered_days))))
         previous = {}
         if isinstance(history, dict):
             prev_total = history.get("failures", {})
@@ -1036,44 +1154,62 @@ class DailyCheck:
         for label, codes in failure_attr.items():
             for code, n in codes.items():
                 today[code] += n
+        # 旧口径迁移哨兵: previous 任何一项大于今日全码总和 → 是旧累计值, 本轮跳过告警
+        if previous and previous.get("timeout", 0) + previous.get("error", 0) + \
+                previous.get("denied", 0) + previous.get("editor_busy", 0) + \
+                previous.get("another_client", 0) > max(sum(today.values()), 0) + 1:
+            self.ok(dim, "g3", "history 为旧累计口径, 本轮跳过日增比对 (下轮起正常)")
+        else:
+            suspicious, deltas = self._g3_suspicious_deltas(today, previous)
+            if suspicious:
+                self.warn(dim, "threshold_daily",
+                          "失败码日增越界: %s (日增>=%d 且昨日基数>=1)"
+                          % (", ".join("%s+%d" % (c, deltas[c]) for c in suspicious),
+                             DAILY_INCREMENT_MIN))
+                issues.append("G3 日增越界: %s" % suspicious)
+        return history, today
+
+    @staticmethod
+    def _g3_suspicious_deltas(today, previous):
+        """日增越界码: 日增 >= DAILY_INCREMENT_MIN 且昨日基数 >=1。
+
+        today 与 previous 同为"当日窗口"口径 (SEE-1234 修复后), 但首次以新口径
+        运行时 history 里还是旧累计值, 会算出巨大 delta — 用昨日 > 今日的哨兵排除:
+        当日窗口计数单调性弱于累计值, 负 delta 反而说明 previous 是旧口径残留。
+        """
         deltas = {}
         for code in today:
             prev = previous.get(code, 0)
             d = today[code] - prev
             if d > 0:
                 deltas[code] = d
-        # today 与 previous 同为"当日窗口"口径 (SEE-1234 修复后), 但首次以新口径
-        # 运行时 history 里还是旧累计值, 会算出巨大 delta — 用昨日 > 今日的哨兵排除:
-        # 当日窗口计数单调性弱于累计值, 负 delta 反而说明 previous 是旧口径残留
         suspicious = [code for code, d in deltas.items()
                       if previous.get(code, 0) >= 1 and previous.get(code, 0) <= today[code]
                       and d >= DAILY_INCREMENT_MIN]
-        # 旧口径迁移哨兵: previous 任何一项大于今日全码总和 → 是旧累计值, 本轮跳过告警
-        if previous and previous.get("timeout", 0) + previous.get("error", 0) + \
-                previous.get("denied", 0) + previous.get("editor_busy", 0) + \
-                previous.get("another_client", 0) > max(sum(today.values()), 0) + 1:
-            self.ok(dim, "g3", "history 为旧累计口径, 本轮跳过日增比对 (下轮起正常)")
-            suspicious = []
-        if suspicious:
-            self.warn(dim, "threshold_daily",
-                      "失败码日增越界: %s (日增>=%d 且昨日基数>=1)"
-                      % (", ".join("%s+%d" % (c, deltas[c]) for c in suspicious),
-                         DAILY_INCREMENT_MIN))
-            issues.append("G3 日增越界: %s" % suspicious)
-        return history, today
+        return suspicious, deltas
 
     @staticmethod
     def _g_daily_series(history):
+        """G5 σ 输入序列 + 被跳过的旧累计口径日列表。
+
+        daily 键 <= DAILY_WINDOW_EPOCH_LAST_LEGACY (2026-09-04, SEE-1234 口径
+        切换落地当日) 的是旧累计口径日, 确定性排除 — 巨大累计值混入会把
+        mean+2σ 抬高约 22 倍造成假阴性 (SEE-1448), 不依赖 30 天窗口自然淘汰。
+        """
         series = defaultdict(list)
+        skipped = []
         if isinstance(history, dict):
             daily = history.get("daily", {})
             if isinstance(daily, dict):
                 for day, codes in daily.items():
                     dt = parse_iso(day)
                     if dt and isinstance(codes, dict):
+                        if dt.date().isoformat() <= DAILY_WINDOW_EPOCH_LAST_LEGACY:
+                            skipped.append(day)
+                            continue
                         for code, n in codes.items():
                             series[code].append(n)
-        return series
+        return series, skipped
 
     def _check_g4_weekly(self, dim, history):
         # G4: 周累计 >=3 (用 history 近7天累加, 不含今日 — 今日已在 today 计数里)
@@ -1099,9 +1235,16 @@ class DailyCheck:
 
     def _check_g5_sigma(self, dim, history, today, issues):
         # G5: 2σ 越界 — 用 history.daily 的过去值序列判断今日异常
-        # (history 与 today 现均为当日窗口口径; 旧口径历史因数值巨大天然不触发误报,
-        #  混合窗口最多导致首轮 σ 略偏, 5 天后 history 全为新口径)
-        series = self._g_daily_series(history)
+        # 口径守卫 (SEE-1449): σ 序列只含新当日窗口口径日 (> DAILY_WINDOW_EPOCH_LAST_LEGACY);
+        # 旧累计口径日被 _g_daily_series 确定性跳过, 跳过天数以 info 观测。守卫与
+        # 30 天窗口自然淘汰互相独立: 旧键淘汰完 (约 2026-10-27) 后跳过集为空、
+        # 守卫退化为 no-op, 但排除语义不依赖淘汰进度, 口径切换类污染不再复发。
+        series, skipped = self._g_daily_series(history)
+        if skipped:
+            self.info(dim, "g5_legacy_window_skipped",
+                      "σ 序列跳过 %d 个旧累计口径日 (<=%s): %s"
+                      % (len(skipped), DAILY_WINDOW_EPOCH_LAST_LEGACY,
+                         ", ".join(sorted(skipped))))
         sigma_bad = []
         for code, n in today.items():
             vals = series.get(code, [])
@@ -1245,23 +1388,29 @@ class DailyCheck:
                 pass
             raise
 
-        # history 追加 (滑动窗口)
-        history = read_json(history_file)
-        if not isinstance(history, dict):
-            history = {}
-        daily = history.get("daily", {})
+        # history 追加 (滑动窗口); 经 journal 自愈读取 (SEE-1449), 被外部整体
+        # 覆盖丢掉的日随本轮 persist 物理写回 history.json。
+        history, _recovered = load_history_with_recovery(history_file)
+        daily = history.get("daily")
         if not isinstance(daily, dict):
             daily = {}
         day_key = report["generated_at"][:10]
         daily[day_key] = report["failures"]
-        for old_day in sorted(daily.keys()):
-            if len(daily) > MAX_HISTORY:
-                daily.pop(old_day, None)
-            else:
-                break
+        evict_daily(daily)
         history["daily"] = daily
         history["failures"] = report["failures"]
         history["updated_at"] = report["generated_at"]
+        # journal 先于 history.json 落盘: 两写之间崩溃时, journal 保有当日键,
+        # 下轮读取路径可恢复 (append-only, 只写 report_dir)
+        journal_file = journal_path_for(history_file)
+        try:
+            journal_append(journal_file, day_key, report["failures"],
+                           report["generated_at"])
+            journal_compact(journal_file)
+        except OSError as exc:
+            # journal 是 resilience 通道, 失败不阻断主报告落盘, 但必须显式可闻
+            sys.stderr.write("[toolchain] history journal write failed (%s): %s\n"
+                             % (journal_file, exc))
         tmp_fd2, tmp_path2 = tempfile.mkstemp(dir=report_root, prefix=".history-", suffix=".tmp")
         try:
             with os.fdopen(tmp_fd2, "w", encoding="utf-8") as f:
