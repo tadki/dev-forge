@@ -40,7 +40,8 @@ def _write_history(path, days):
 
 
 def _journal_lines(journal_file):
-    return [json.loads(l) for l in journal_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = journal_file.read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
 
 
 # --- 读取路径恢复 --------------------------------------------------------------
@@ -81,7 +82,7 @@ def test_corrupt_journal_lines_skipped(env):
     assert history["daily"]["2026-10-08"] == {"error": 1}, "后写覆盖先写"
 
 
-def test_journal_unreadable_returns_empty(env):
+def test_journal_unreadable_returns_empty():
     """journal 不可读 (目录不存在) → {} 而非抛错, 读取路径永不因 journal 中断。"""
     assert tdc.journal_read_days("/nonexistent/dir/journal.jsonl") == {}
 
@@ -205,7 +206,7 @@ def test_loader_treats_non_dict_history_as_empty(env):
 
 def test_persist_journal_append_failure_warns_but_does_not_block(env, monkeypatch, capsys):
     """journal 通道失败不阻断主报告落盘, 但 stderr 显式可闻 (§SPEC-007 禁静默)。"""
-    c, history_file, journal_file, tmp_path = env
+    c, history_file, _, tmp_path = env
 
     def boom(*_a, **_k):
         raise OSError("disk full")
@@ -218,7 +219,7 @@ def test_persist_journal_append_failure_warns_but_does_not_block(env, monkeypatc
 
 
 def test_persist_journal_compact_failure_warns_but_does_not_block(env, monkeypatch, capsys):
-    c, history_file, journal_file, _ = env
+    c, history_file, _, _ = env
 
     def boom(*_a, **_k):
         raise OSError("compact failed")
