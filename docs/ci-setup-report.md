@@ -1,6 +1,6 @@
 # dev-forge CI 建立排查与配置报告
 
-> 任务：SEE-1445（① 编码环节）· 2026-10-21 · 以 GitHub API 实证为准（R3）
+> 任务：SEE-1445 · 2026-10-21 · 以 GitHub API 实证为准
 
 ## 1. 排查实证
 
@@ -19,7 +19,7 @@ Actions runs 总览：https://github.com/tadki/dev-forge/actions
 
 ## 2. 已配置项清单（本任务由 agent 通过 gh api 直接完成）
 
-### 2.1 `.github/workflows/ci.yml` 结构加固（§SPEC-002，commit 见分支 HEAD）
+### 2.1 `.github/workflows/ci.yml` 结构加固（§SPEC-002，commit 785eb1b）
 
 | 项 | 生效值 |
 |---|---|
@@ -45,7 +45,7 @@ Actions runs 总览：https://github.com/tadki/dev-forge/actions
 
 | 项 | 生效值 |
 |---|---|
-| required status checks | `["engine-tests","lint"]`（strict=false，R1：取自实跑 job 名） |
+| required status checks | `["engine-tests","lint"]`（strict=false，check 名取自实跑 job 名） |
 | require pull request | true（0 approvals） |
 | `allow_force_pushes` | false（禁 force push，PR-10 服务端兜底） |
 | `allow_deletions` | false（禁删除） |
@@ -64,5 +64,5 @@ Actions runs 总览：https://github.com/tadki/dev-forge/actions
 **无必办项** — 全部配置已由 agent 通过 GitHub API 完成（token 具 admin 权限，Owner 已授权「你能配的就直接配好」）。
 
 可选确认项（仅知会，无需操作）：
-- 分支保护生效后，所有 PR 合并前 `lint` + `engine-tests` 必须全绿；若未来新增/改名 job，需同步更新 required checks（R1：check 名必须与实跑 job 名一致，否则会卡死合并）。
+- 分支保护生效后，所有 PR 合并前 `lint` + `engine-tests` 必须全绿；若未来新增/改名 job，需同步更新 required checks（check 名必须与实跑 job 名一致，否则会卡死合并）。
 - `enforce_admins=false`：Owner 直推 main 不受门禁拦截，属有意保留的应急通道。
