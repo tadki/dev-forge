@@ -97,6 +97,97 @@ if [ -z "$CURRENT_HASH" ]; then
   CURRENT_HASH="$(autopilots_current_hash "$WORKSPACE_ROOT")"
 fi
 
+# SEE-1460: SOP-side submodule materialization (SEE-1434 decision 1, wrapper
+# shell layer). The Python sweep stays read-only — its unmaterialized-gitlink
+# skip guard is the in-script fallback; this wrapper owns the one write-side
+# action: materialize the redline gitlink before sweeping. Any failure here is
+# fatal (non-zero + explicit error): silently continuing would reintroduce the
+# zero-coverage `redline=skipped_uninitialized` state the guard surfaces.
+
+# Read a quoted string value from the patrol config by key. Shell-side (sed)
+# on purpose: wrapper setup must not depend on a Python one-liner, and the
+# config is repo-owned with single-line string values.
+sweep_config_value() {
+  local key="$1" config_file="$2"
+  sed -n "s/^.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*$/\1/p" "$config_file" | head -n 1
+}
+
+# Mirror architecture_sweep.py _locate_repo_root: hash-slot layouts, direct
+# workspace layouts, CWD walk-up, then a scan of workspace_root slots — all
+# keyed by the config's repo_name (nothing hardcoded).
+sweep_locate_repo() {
+  local repo_name="$1" root="$2" hash="$3" dir parent cand
+  local -a cands=()
+  if [ -n "$root" ]; then
+    if [ -n "$hash" ]; then
+      cands+=("$root/$hash/workdir/$repo_name" "$root/$hash/$repo_name")
+    fi
+    cands+=("$root/workdir/$repo_name" "$root/$repo_name")
+  fi
+  dir="$PWD"
+  while :; do
+    if [ -d "$dir/$repo_name" ]; then
+      cands+=("$dir/$repo_name")
+    fi
+    parent="$(dirname "$dir")"
+    if [ "$parent" = "$dir" ]; then
+      break
+    fi
+    dir="$parent"
+  done
+  for cand in "${cands[@]}"; do
+    if [ -d "$cand" ]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  if [ -n "$root" ] && [ -d "$root" ]; then
+    for dir in "$root"/*/; do
+      if [ -d "${dir}workdir/$repo_name" ]; then
+        printf '%s\n' "${dir}workdir/$repo_name"
+        return 0
+      fi
+      if [ -d "${dir}$repo_name" ]; then
+        printf '%s\n' "${dir}$repo_name"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+sweep_materialize() {
+  local repo_name redline_dir kol_repo
+  local config_file="${ARCH_SWEEP_CONFIG:-$SCRIPT_DIR/configs/kol.json}"
+  if [ ! -f "$config_file" ]; then
+    echo "{\"error\": \"arch-sweep wrapper: patrol config not found: $config_file (cannot resolve repo_name for submodule materialization)\"}" >&2
+    return 1
+  fi
+  repo_name="$(sweep_config_value "repo_name" "$config_file")"
+  if [ -z "$repo_name" ]; then
+    echo "{\"error\": \"arch-sweep wrapper: repo_name missing/unreadable in $config_file (cannot locate patrol repo for submodule materialization)\"}" >&2
+    return 1
+  fi
+  kol_repo="$(sweep_locate_repo "$repo_name" "$WORKSPACE_ROOT" "$CURRENT_HASH")" || {
+    echo "{\"error\": \"arch-sweep wrapper: cannot locate $repo_name worktree for submodule materialization (searched workspace root, CWD walk-up, slot scan); refusing a redline sweep with an unmaterialized gitlink\"}" >&2
+    return 1
+  }
+  if ! git -C "$kol_repo" submodule update --init --recursive; then
+    echo "{\"error\": \"arch-sweep wrapper: git submodule update --init --recursive failed in $kol_repo; failing explicitly instead of silently skipping redline coverage (SEE-1460)\"}" >&2
+    return 1
+  fi
+  # Post-check mirrors the Python guard's materialized criterion (and the
+  # manifest's `.git` exclusion, SEE-1289 HIGH-1): the redline dir must hold
+  # content beyond the gitdir pointer, so a no-op "success" can never pass.
+  redline_dir="$(sweep_config_value "redline_dir" "$config_file")"
+  if [ -n "$redline_dir" ] && [ -z "$(find "$kol_repo/$redline_dir" -mindepth 1 -maxdepth 1 -not -name .git -print -quit 2>/dev/null)" ]; then
+    echo "{\"error\": \"arch-sweep wrapper: submodule update succeeded but $redline_dir is still empty in $kol_repo (gitlink materialized nothing); refusing a zero-coverage sweep\"}" >&2
+    return 1
+  fi
+}
+
+sweep_materialize || exit 1
+
 # D8: omit --workspace-root / --current-hash when unknown so the python script
 # auto-detects them instead of receiving an empty override.
 PY_ARGS=("$SCRIPT_DIR/architecture_sweep.py")
