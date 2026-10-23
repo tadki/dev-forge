@@ -37,6 +37,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -47,7 +48,7 @@ try:
 except ImportError:  # win32: 无法 flock 探测, 退化为 PID 存活判定
     fcntl = None
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 # --- 常量 ---------------------------------------------------------------------
 
@@ -67,6 +68,15 @@ WATCHDOG_STATE = os.path.join(MULTICA_HOME, "watchdog_state.json")
 WORKSPACE_LOCK = os.path.join(MULTICA_HOME, "autopilot_workspace.lock")
 HOOK_FIRE_LOG = os.path.join(HOME, ".claude", "hook-fire.log")
 CLAUDE_SETTINGS = os.path.join(HOME, ".claude", "settings.json")
+
+# SEE-1457/1458 §SPEC-103: launcher 状态目录并集。SEE-1430b .dev 合并后 launcher
+# 自举曾失配, 现网状态漂移写入 env.sh 中性默认目录 (~/.config/godot-mcp) —
+# 扫描源只认 ~/.multica 时当日活动一行都读不到 (G3/G5 空转 4 天)。扫描覆盖
+# 双目录并集: 当日活动落在任一目录都能被 B3/G2/G3/G5 拿到。
+GODOT_MCP_NEUTRAL_HOME = os.path.join(HOME, ".config", "godot-mcp")
+LAUNCHER_LOG_DIRS = (MULTICA_HOME, GODOT_MCP_NEUTRAL_HOME)
+LAUNCHER_LOG_PREFIX = "godot-mcp-launcher-"
+LAUNCHER_LOG_SUFFIX = ".log"
 
 # repo 相对路径 (相对脚本所在仓库)
 # SEE-1408: 旧 .dev/godot-mcp/launch 已随 SEE-1273 M3 退役, 控制面现挂载为
@@ -286,6 +296,83 @@ def load_history_with_recovery(history_file):
     return history, recovered
 
 
+def backfill_history_failures(days, report_dir=None):
+    """SEE-1458 §SPEC-105 tested 基线回填: 重扫双目录并集重算指定日失败码。
+
+    历史基线曾只由 ~/.multica 单源扫描生成, 漂移期 (2026-09-16/09-21/09-22)
+    失败码被系统性低估, 压低 G4/G5 的 2σ 门槛 — 本入口按双目录并集重扫指定日
+    并覆盖写回 history["daily"][day]。
+
+    写路径沿用 journal + 原子替换机制 (与 persist 同族, 不裸写); history.json
+    改前先备份 <history>.bak-<UTC 时间戳>。仅经 --backfill-failures 显式调用
+    时执行, 日检主路径保持 HARD SAFETY 只读。
+    返回 (backfilled {day: codes}, backup_path)。
+    """
+    history_file = os.path.join(report_dir or REPORT_ROOT, "history.json")
+    backup_path = history_file + ".bak-" + datetime.now(timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ")
+    shutil.copy2(history_file, backup_path)
+    history, _recovered = load_history_with_recovery(history_file)
+    daily = history.get("daily")
+    if not isinstance(daily, dict):
+        daily = {}
+    backfilled = {}
+    now = now_iso()
+    journal_file = journal_path_for(history_file)
+    for day in days:
+        # scan_launcher_failures 按 .date().isoformat() 归一, date 对象直接可用
+        per_label = scan_launcher_failures(date.fromisoformat(day))
+        codes = Counter()
+        for cnt in per_label.values():
+            codes.update(cnt)
+        day_codes = dict(codes)
+        daily[day] = day_codes
+        backfilled[day] = day_codes
+        # journal 与 persist 同序先落 (崩溃窗口内可恢复); 不在此 compact —
+        # 回填日常超出 compact 的 30 天窗口, 压缩恰好丢掉本次要保护的条目,
+        # 体积由下一轮常规 persist 的 compact 收敛
+        journal_append(journal_file, day, day_codes, now)
+    history["daily"] = daily
+    history["updated_at"] = now
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(history_file) or ".", prefix=".history-", suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, history_file)
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return backfilled, backup_path
+
+
+def _run_backfill(raw_days, report_dir):
+    """--backfill-failures 入口: 解析日期列表 (显式拒绝非法值, 不静默跳过)。"""
+    days = []
+    for raw in raw_days.split(","):
+        day = raw.strip()
+        if not day:
+            continue
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            sys.stderr.write("ERROR: --backfill-failures 非法日期 %r (需 YYYY-MM-DD)\n" % day)
+            return 1
+        days.append(day)
+    if not days:
+        sys.stderr.write("ERROR: --backfill-failures 未给出任何日期\n")
+        return 1
+    backfilled, backup_path = backfill_history_failures(days, report_dir)
+    print(json.dumps({"backfilled": backfilled, "backup": backup_path},
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
 def _lock_holder(path):
     """只读判定锁文件当前是否被存活进程持有。
 
@@ -356,37 +443,87 @@ def git_out(repo_path, args):
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def is_launcher_log_name(name):
+    return name.startswith(LAUNCHER_LOG_PREFIX) and name.endswith(LAUNCHER_LOG_SUFFIX)
+
+
+def launcher_log_label(name):
+    return name[len(LAUNCHER_LOG_PREFIX):-len(LAUNCHER_LOG_SUFFIX)]
+
+
+def launcher_log_sources():
+    """launcher 日志源并集枚举 → [(label, logs_dir, path)] (LAUNCHER_LOG_DIRS 顺序)。
+
+    SEE-1458 §SPEC-103: 扫描源 = ~/.multica ∪ ~/.config/godot-mcp。同一 label
+    的双目录副本全部返回、不去重 — 两副本可能是互补历史段 (漂移期各自追加,
+    SEE-1457 的真实基线 = 两段之和), 也可能是归位拷贝的相同内容; 复制/互补
+    的区分在扫描层按行多重集 max 合并处理 (见 scan_launcher_failures), 目录
+    层缺乏区分依据, 不在此臆断。
+    """
+    sources = []
+    for logs_dir in LAUNCHER_LOG_DIRS:
+        try:
+            names = os.listdir(logs_dir)
+        except OSError:
+            continue
+        for name in names:
+            if not is_launcher_log_name(name):
+                continue
+            sources.append((launcher_log_label(name), logs_dir,
+                            os.path.join(logs_dir, name)))
+    return sorted(sources, key=lambda s: (s[0], s[1]))
+
+
+def _scan_day_lines(path, today_str):
+    """单文件当日窗口行计数 → Counter(line -> n); 文件不可读返回 None。"""
+    text = safe_read(path, max_bytes=20_000_000)
+    if not text:
+        return None
+    counts = Counter()
+    for line in text.splitlines():
+        m = LAUNCHER_LOG_LINE_TS.match(line)
+        if not m or m.group(1) != today_str:
+            continue
+        counts[line] += 1
+    return counts
+
+
+def _merge_label_line_counts(file_counts):
+    """同 label 各文件当日行计数 → 行多重集 max 合并 (副本计一次, 互补段求和)。"""
+    merged = Counter()
+    for counts in file_counts:
+        for line, n in counts.items():
+            if n > merged[line]:
+                merged[line] = n
+    return merged
+
+
 def scan_launcher_failures(today_utc):
-    """当日窗口扫描 launcher 日志失败码。
+    """当日窗口扫描 launcher 日志失败码 (扫描源 = 双目录并集, SEE-1458 §SPEC-103)。
 
     launcher 日志永不轮转且行首带 `YYYY-MM-DDTHH...` 时间戳: 按行归属 UTC 日期,
     只统计 today_utc 当日的失败码, 避免把自日志诞生起的累计横幅误当"今日" (SEE-1234)。
     无时间戳的行无法定位日期, 一律不计 (宁漏勿错)。
+
+    同 label 双目录副本按行多重集 max 合并: 相同拷贝计一次 (max = 单份计数),
+    互补历史段自然求和 (行不相交), 归位后规范侧超集不双计 (每行 max 取规范侧)。
     返回 {label: Counter(code -> n)}。
     """
-    per_label = defaultdict(Counter)
     # 行首捕获组是纯日期 "YYYY-MM-DD": today_utc 可能是 datetime 或 date,
     # 都归一到 date().isoformat() 才能对上 (datetime.isoformat() 带时间恒不等, SEE-1234 复审 HIGH-1)
     today_str = today_utc.date().isoformat() if hasattr(today_utc, "date") \
         else today_utc.isoformat()
-    try:
-        names = os.listdir(MULTICA_HOME)
-    except OSError:
-        return per_label
-    for name in names:
-        if not (name.startswith("godot-mcp-launcher-") and name.endswith(".log")):
-            continue
-        text = safe_read(os.path.join(MULTICA_HOME, name), max_bytes=20_000_000)
-        if not text:
-            continue
-        label = name[len("godot-mcp-launcher-"):-len(".log")]
-        for line in text.splitlines():
-            m = LAUNCHER_LOG_LINE_TS.match(line)
-            if not m or m.group(1) != today_str:
-                continue
+    per_label_files = defaultdict(list)  # label -> [各文件当日行 Counter]
+    for label, _logs_dir, path in launcher_log_sources():
+        counts = _scan_day_lines(path, today_str)
+        if counts is not None:
+            per_label_files[label].append(counts)
+    per_label = defaultdict(Counter)
+    for label, file_counts in per_label_files.items():
+        for line, n in _merge_label_line_counts(file_counts).items():
             for code, pattern in PROXY_FAILURE_PATTERNS:
                 if pattern.search(line):
-                    per_label[label][code] += 1
+                    per_label[label][code] += n
     return per_label
 
 
@@ -681,11 +818,18 @@ class DailyCheck:
         scanned_logs = len(failure_daily)
         for codes in failure_daily.values():
             failure_counter.update(codes)
-        if scanned_logs:
+        if not launcher_log_sources():
+            # SEE-1458 §SPEC-103: 双目录皆无 launcher 日志 = 测量断供, 显式 warn
+            # 而非 ok — 「无日志当作 ok」曾把 4 天扫描断供压成 GREEN (SEE-1457)
+            self.warn(dim, "b3_no_sources",
+                      "双目录皆无 launcher 日志源 (%s) — 失败码判据空转"
+                      % ", ".join(LAUNCHER_LOG_DIRS))
+        elif scanned_logs:
             self.ok(dim, "b3", "当日窗口扫描 %d 个 launcher 日志源, 失败码=%s"
                     % (scanned_logs, dict(failure_counter)))
         else:
-            self.ok(dim, "b3", "无 launcher 日志可扫 (或当日无失败码)")
+            self.ok(dim, "b3", "有日志源但当日无失败码 (共 %d 源)"
+                    % len(launcher_log_sources()))
         return failure_daily
 
     def _check_b4_double_prefix(self, dim):
@@ -1109,17 +1253,8 @@ class DailyCheck:
         return active_ports
 
     def _g_launcher_log_labels(self):
-        launcher_labels = set()
-        launcher_logs_dir = MULTICA_HOME
-        try:
-            for name in os.listdir(launcher_logs_dir):
-                if name.startswith("godot-mcp-launcher-") and name.endswith(".log"):
-                    # label 形式: <agent> 或 port-<port>
-                    label = name[len("godot-mcp-launcher-"):-len(".log")]
-                    launcher_labels.add(label)
-        except OSError:
-            pass
-        return launcher_labels
+        # SEE-1458 §SPEC-103: label 采集覆盖双目录并集 (原只扫 ~/.multica)
+        return {label for label, _logs_dir, _path in launcher_log_sources()}
 
     def _check_g1_log_completeness(self, dim, registered_ports, active_ports, per_agent, issues):
         # G1: 日志完整性 — 应采 vs 实采: 注册端口 ∪ 活跃 lease 均应被 launcher 日志覆盖
@@ -1135,6 +1270,32 @@ class DailyCheck:
             issues.append("G1 日志源缺失 %d 个" % len(missing_logs))
         else:
             self.ok(dim, "g1", "日志完整性 OK (应采 %d, 实采 %d)" % (len(expected), len(launcher_labels)))
+
+    def _check_g_drift(self, dim):
+        # SEE-1458 §SPEC-104 漂移哨兵: 规范目录 (~/.multica) 之外存在当日 launcher
+        # 活动 = 状态写入漂出规范目录 (GODOT_MCP_HOME 钉扎失效的指纹, SEE-1457
+        # 曾因此 4 天漏报), 显式标记而非静默 ok。「当日」沿用行首时间戳口径
+        # (LAUNCHER_LOG_LINE_TS), 与失败码当日窗口同源。
+        today_str = datetime.now(timezone.utc).date().isoformat()
+        drift_labels = []
+        for label, logs_dir, path in launcher_log_sources():
+            if logs_dir == MULTICA_HOME:
+                continue
+            text = safe_read(path, max_bytes=20_000_000)
+            if not text:
+                continue
+            for line in text.splitlines():
+                m = LAUNCHER_LOG_LINE_TS.match(line)
+                if m and m.group(1) == today_str:
+                    drift_labels.append(label)
+                    break
+        if drift_labels:
+            self.warn(dim, "g_drift_detected",
+                      "中性目录存在当日 launcher 活动 %d 个源 (%s) — 状态目录漂移, "
+                      "GODOT_MCP_HOME 钉扎失效?"
+                      % (len(drift_labels), ", ".join(sorted(drift_labels)[:8])))
+        else:
+            self.ok(dim, "g_drift", "无规范目录之外的当日 launcher 活动")
 
     def _check_g3_daily_delta(self, dim, failure_attr, issues):
         # G3: 与昨日 delta — 读 history.json 昨日当日窗口计数
@@ -1325,6 +1486,7 @@ class DailyCheck:
         registered_ports, per_agent = self._g_registry_inventory(entries)
         active_ports = self._g_active_leases()
         self._check_g1_log_completeness(dim, registered_ports, active_ports, per_agent, issues)
+        self._check_g_drift(dim)
 
         # G2: 失败码归属 (复用 B3 的当日窗口扫描结果, 归到 port/agent)
         self.ok(dim, "g2", "当日失败码归属 %d 个源" % len(failure_daily))
@@ -1480,7 +1642,14 @@ def main():
                         help="stdout 输出 JSON (供 1b autopilot 复用)")
     parser.add_argument("--report-dir", default=REPORT_ROOT,
                         help="报告输出目录 (默认 %s)" % REPORT_ROOT)
+    parser.add_argument("--backfill-failures", default=None, metavar="YYYY-MM-DD[,..]",
+                        help="tested 基线回填 (SEE-1458 §SPEC-105): 重扫双目录并集重算"
+                             "指定日失败码并写回 history.json, 写前自动备份; "
+                             "与日检主流程互斥, 只回填不巡检")
     args = parser.parse_args()
+
+    if args.backfill_failures:
+        return _run_backfill(args.backfill_failures, args.report_dir)
 
     check = DailyCheck(args)
     check.dim_a()
