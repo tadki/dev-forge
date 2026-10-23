@@ -151,23 +151,54 @@ def live(tmp_path):
 
 def test_build_plan_is_read_only(live):
     canon, neut = live
-    before = os.listdir(canon)
+    canon_reg = os.path.join(canon, msr.REGISTRY_NAME)
+    neut_reg = os.path.join(neut, msr.REGISTRY_NAME)
+    with open(canon_reg, encoding="utf-8") as f:
+        canon_before = f.read()
+    with open(neut_reg, encoding="utf-8") as f:
+        neut_before = f.read()
+    listings_before = (sorted(os.listdir(canon)), sorted(os.listdir(neut)))
     plan = msr.build_plan(canon, neut)
     assert plan["dry_run"] is True
     assert plan["entries_canonical"] == 1
     assert plan["entries_neutral"] == 2
     assert plan["entries_after"] == 2
     assert len(plan["log_copies"]) == 1, "只有 revy.log 需补缺"
-    assert os.listdir(canon) == before, "dry-run 零写盘"
+    assert (sorted(os.listdir(canon)), sorted(os.listdir(neut))) == listings_before, \
+        "dry-run 零写盘 (双目录均无文件增删)"
+    with open(canon_reg, encoding="utf-8") as f:
+        assert f.read() == canon_before, "dry-run 不改写规范侧 registry 内容"
+    with open(neut_reg, encoding="utf-8") as f:
+        assert f.read() == neut_before, "dry-run 不改写中性侧 registry 内容"
 
 
 def test_apply_merges_and_copies(live):
     canon, neut = live
+    canon_reg = os.path.join(canon, msr.REGISTRY_NAME)
+    neut_reg = os.path.join(neut, msr.REGISTRY_NAME)
+    # apply 前快照 (原文级): 备份与「不改写」断言的比对基准
+    with open(canon_reg, encoding="utf-8") as f:
+        canon_snapshot = f.read()
+    with open(neut_reg, encoding="utf-8") as f:
+        neut_snapshot = f.read()
     result = msr.apply_relocation(canon, neut)
-    merged = _read_registry(os.path.join(canon, msr.REGISTRY_NAME))
+    merged = _read_registry(canon_reg)
     assert set(merged["entries"]) == {"rid-x", "rid-y"}, "并集落盘"
     assert merged["entries"]["rid-x"]["port"] == 9, "中性侧更新者胜出"
     assert result["neutral_won"] == 1
+    # 两份 registry 改前备份均存在, 且内容与各自 apply 前快照逐字节一致
+    # (备份时机/对象错误 — 如备份的是合并后内容 — 在此转红)
+    assert len(result["backups"]) == 2
+    snapshots = {canon_reg: canon_snapshot, neut_reg: neut_snapshot}
+    for reg_path, backup_path in result["backups"].items():
+        assert os.path.exists(backup_path)
+        assert backup_path.startswith(reg_path + ".bak-")
+        with open(backup_path, encoding="utf-8") as f:
+            assert f.read() == snapshots[reg_path], \
+                "备份必须等于 apply 前该 registry 快照: %s" % backup_path
+    # 中性侧 registry 只备份不改写 (合并结果只落规范侧)
+    with open(neut_reg, encoding="utf-8") as f:
+        assert f.read() == neut_snapshot, "apply 不改写中性侧 registry"
     # 日志: 既有 bachi.log 内容不被覆盖; revy.log 补缺且 mtime 保留
     with open(os.path.join(canon, "godot-mcp-launcher-bachi.log"),
               encoding="utf-8") as f:
@@ -176,12 +207,6 @@ def test_apply_merges_and_copies(live):
     assert os.path.exists(revy_dst)
     assert os.path.getmtime(revy_dst) == os.path.getmtime(
         os.path.join(neut, "godot-mcp-launcher-revy.log")), "copy2 保留 mtime"
-    # 两份 registry 改前备份均存在
-    assert len(result["backups"]) == 2
-    for reg_path, backup_path in result["backups"].items():
-        assert os.path.exists(backup_path)
-        assert _read_registry(backup_path) == _read_registry(reg_path) or True
-        assert backup_path.startswith(reg_path + ".bak-")
 
 
 def test_apply_default_dry_run_no_write(live):
