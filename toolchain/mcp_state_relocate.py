@@ -31,7 +31,13 @@ import tempfile
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from toolchain_daily_check import GODOT_MCP_NEUTRAL_HOME, MULTICA_HOME, read_json  # noqa: E402
+from toolchain_daily_check import (  # noqa: E402
+    GODOT_MCP_NEUTRAL_HOME,
+    LAUNCHER_LOG_PREFIX,
+    LAUNCHER_LOG_SUFFIX,
+    MULTICA_HOME,
+    read_json,
+)
 
 REGISTRY_NAME = "godot-port-registry.json"
 
@@ -100,7 +106,7 @@ def plan_log_copies(neutral_dir, canonical_dir):
     except OSError:
         return plan
     for name in names:
-        if not (name.startswith("godot-mcp-launcher-") and name.endswith(".log")):
+        if not (name.startswith(LAUNCHER_LOG_PREFIX) and name.endswith(LAUNCHER_LOG_SUFFIX)):
             continue
         dst = os.path.join(canonical_dir, name)
         if not os.path.exists(dst):
