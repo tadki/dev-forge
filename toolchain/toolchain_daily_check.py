@@ -296,7 +296,36 @@ def load_history_with_recovery(history_file):
     return history, recovered
 
 
-def backfill_history_failures(days, report_dir=None):
+class BackfillEmptyScanError(Exception):
+    """回填重扫得空但既有基线非空 (数据源断供风险), 拒绝静默清零。
+
+    放行通道: backfill_history_failures(allow_empty=True) / CLI --allow-empty。
+    """
+
+
+def _backfill_compute_days(days, daily, allow_empty):
+    """第一段: 全部日重算 + 护栏校验 → [(day, codes)]; 任一拒绝即抛 (零写盘)。
+
+    scan_launcher_failures 按 .date().isoformat() 归一, date 对象直接可用。
+    """
+    computed = []
+    for day in days:
+        per_label = scan_launcher_failures(date.fromisoformat(day))
+        codes = Counter()
+        for cnt in per_label.values():
+            codes.update(cnt)
+        day_codes = dict(codes)
+        existing = daily.get(day)
+        # 复审 Finding 2: 空扫 + 既有非空 = 日志断供/日期误传指纹, 拒绝静默清零
+        if not day_codes and existing and not allow_empty:
+            raise BackfillEmptyScanError(
+                "回填 %s 重扫得空但既有基线非空 %s — 疑日志断供/日期误传, "
+                "拒绝静默清零 (--allow-empty 显式放行)" % (day, existing))
+        computed.append((day, day_codes))
+    return computed
+
+
+def backfill_history_failures(days, report_dir=None, allow_empty=False):
     """SEE-1458 §SPEC-105 tested 基线回填: 重扫双目录并集重算指定日失败码。
 
     历史基线曾只由 ~/.multica 单源扫描生成, 漂移期 (2026-09-16/09-21/09-22)
@@ -306,31 +335,30 @@ def backfill_history_failures(days, report_dir=None):
     写路径沿用 journal + 原子替换机制 (与 persist 同族, 不裸写); history.json
     改前先备份 <history>.bak-<UTC 时间戳>。仅经 --backfill-failures 显式调用
     时执行, 日检主路径保持 HARD SAFETY 只读。
+
+    复审 Finding 2 护栏: 重扫得空而既有该日非空 = 日志断供/误传日期的指纹,
+    拒绝静默清零 (raise BackfillEmptyScanError), --allow_empty 显式放行;
+    两段式先全量计算+校验再落盘, 任一日拒绝则零写盘 (无半套回填)。
     返回 (backfilled {day: codes}, backup_path)。
     """
     history_file = os.path.join(report_dir or REPORT_ROOT, "history.json")
-    backup_path = history_file + ".bak-" + datetime.now(timezone.utc).strftime(
-        "%Y%m%dT%H%M%SZ")
-    shutil.copy2(history_file, backup_path)
     history, _recovered = load_history_with_recovery(history_file)
     daily = history.get("daily")
     if not isinstance(daily, dict):
         daily = {}
+    computed = _backfill_compute_days(days, daily, allow_empty)
+    backup_path = history_file + ".bak-" + datetime.now(timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ")
+    shutil.copy2(history_file, backup_path)
+    # 第二段: 落盘 (journal 与 persist 同序先落, 崩溃窗口内可恢复; 不在此
+    # compact — 回填日常超出 30 天窗口, 压缩恰好丢掉本次要保护的条目, 体积
+    # 由下一轮常规 persist 的 compact 收敛)
     backfilled = {}
     now = now_iso()
     journal_file = journal_path_for(history_file)
-    for day in days:
-        # scan_launcher_failures 按 .date().isoformat() 归一, date 对象直接可用
-        per_label = scan_launcher_failures(date.fromisoformat(day))
-        codes = Counter()
-        for cnt in per_label.values():
-            codes.update(cnt)
-        day_codes = dict(codes)
+    for day, day_codes in computed:
         daily[day] = day_codes
         backfilled[day] = day_codes
-        # journal 与 persist 同序先落 (崩溃窗口内可恢复); 不在此 compact —
-        # 回填日常超出 compact 的 30 天窗口, 压缩恰好丢掉本次要保护的条目,
-        # 体积由下一轮常规 persist 的 compact 收敛
         journal_append(journal_file, day, day_codes, now)
     history["daily"] = daily
     history["updated_at"] = now
@@ -351,7 +379,7 @@ def backfill_history_failures(days, report_dir=None):
     return backfilled, backup_path
 
 
-def _run_backfill(raw_days, report_dir):
+def _run_backfill(raw_days, report_dir, allow_empty=False):
     """--backfill-failures 入口: 解析日期列表 (显式拒绝非法值, 不静默跳过)。"""
     days = []
     for raw in raw_days.split(","):
@@ -367,10 +395,49 @@ def _run_backfill(raw_days, report_dir):
     if not days:
         sys.stderr.write("ERROR: --backfill-failures 未给出任何日期\n")
         return 1
-    backfilled, backup_path = backfill_history_failures(days, report_dir)
+    try:
+        backfilled, backup_path = backfill_history_failures(
+            days, report_dir, allow_empty=allow_empty)
+    except BackfillEmptyScanError as exc:
+        sys.stderr.write("ERROR: %s\n" % exc)
+        return 1
     print(json.dumps({"backfilled": backfilled, "backup": backup_path},
                      ensure_ascii=False, indent=2))
     return 0
+
+
+def _registry_entries_of(registry):
+    entries = registry.get("entries") if isinstance(registry, dict) else None
+    return entries if isinstance(entries, dict) else {}
+
+
+def _entry_is_newer(candidate, incumbent):
+    cand_ts = candidate.get("updated_at") if isinstance(candidate, dict) else None
+    inc_ts = incumbent.get("updated_at") if isinstance(incumbent, dict) else None
+    return isinstance(cand_ts, str) and isinstance(inc_ts, str) and cand_ts > inc_ts
+
+
+def merge_registry_entries(canonical, neutral):
+    """port-registry entries 按 rid 键合并视图 → (merged_entries, neutral_won)。
+
+    并集: 两边 entries 全保留 (无丢失无重复); 同 rid 冲突取 updated_at 新者
+    (registry writer 统一 UTC ISO8601, 字典序即时间序), 时间戳缺失/并列取
+    规范侧 — 规范侧权威。纯函数不改输入。
+    复审 Finding 1: 日检 load_registry 并集读与 mcp_state_relocate 合并写
+    共用此 SSOT, 两端语义永不漂移; 归位后中性侧无新增条目, 并集自然退化为
+    规范侧, 不双计。
+    """
+    canon = _registry_entries_of(canonical)
+    neut = _registry_entries_of(neutral)
+    merged = dict(neut)
+    neutral_won = 0
+    for rid, entry in canon.items():
+        merged[rid] = entry
+        # 规范侧默认权威; 仅当中性侧时间戳严格更新时让位
+        if _entry_is_newer(neut.get(rid), entry):
+            merged[rid] = neut[rid]
+            neutral_won += 1
+    return merged, neutral_won
 
 
 def _lock_holder(path):
@@ -587,9 +654,19 @@ class DailyCheck:
     # -- 输入准备 --------------------------------------------------------------
 
     def load_registry(self):
+        """port-registry 并集读: 规范侧 ∪ 中性侧 (复审 Finding 1)。
+
+        漂移窗内现网活跃条目写在中性侧 (env.sh 中性默认目录), 单源读使 G1
+        应采集合盲 (QA 实测 dry-run entries 0+73)。合并语义与归位脚本共用
+        merge_registry_entries SSOT; 归位后并集自然退化为规范侧。
+        """
         if self._registry is not None:
             return self._registry
-        self._registry = read_json(PORT_REGISTRY)
+        canonical = read_json(PORT_REGISTRY)
+        neutral = read_json(os.path.join(GODOT_MCP_NEUTRAL_HOME,
+                                         os.path.basename(PORT_REGISTRY)))
+        merged, _won = merge_registry_entries(canonical, neutral)
+        self._registry = {"entries": merged}
         return self._registry
 
     def load_ports_table(self):
@@ -815,21 +892,22 @@ class DailyCheck:
         # B3: proxy 失败码计数 (当日窗口, 见 scan_launcher_failures / SEE-1234)
         failure_daily = scan_launcher_failures(datetime.now(timezone.utc))
         failure_counter = Counter()
-        scanned_logs = len(failure_daily)
         for codes in failure_daily.values():
             failure_counter.update(codes)
-        if not launcher_log_sources():
+        sources = launcher_log_sources()
+        if not sources:
             # SEE-1458 §SPEC-103: 双目录皆无 launcher 日志 = 测量断供, 显式 warn
             # 而非 ok — 「无日志当作 ok」曾把 4 天扫描断供压成 GREEN (SEE-1457)
             self.warn(dim, "b3_no_sources",
                       "双目录皆无 launcher 日志源 (%s) — 失败码判据空转"
                       % ", ".join(LAUNCHER_LOG_DIRS))
-        elif scanned_logs:
-            self.ok(dim, "b3", "当日窗口扫描 %d 个 launcher 日志源, 失败码=%s"
-                    % (scanned_logs, dict(failure_counter)))
+        elif failure_daily:
+            # 复审 Finding 3 文案口径: failure_daily 键是「有失败码的 label」,
+            # 与源数分开报, 不再把 label 数冒充源数
+            self.ok(dim, "b3", "%d 个日志源中 %d 个 label 有当日失败码: %s"
+                    % (len(sources), len(failure_daily), dict(failure_counter)))
         else:
-            self.ok(dim, "b3", "有日志源但当日无失败码 (共 %d 源)"
-                    % len(launcher_log_sources()))
+            self.ok(dim, "b3", "%d 个日志源均无当日失败码" % len(sources))
         return failure_daily
 
     def _check_b4_double_prefix(self, dim):
@@ -1646,10 +1724,14 @@ def main():
                         help="tested 基线回填 (SEE-1458 §SPEC-105): 重扫双目录并集重算"
                              "指定日失败码并写回 history.json, 写前自动备份; "
                              "与日检主流程互斥, 只回填不巡检")
+    parser.add_argument("--allow-empty", action="store_true",
+                        help="回填护栏放行 (复审 Finding 2): 重扫得空而既有该日非空时"
+                             "默认拒绝清零, 本旗标显式允许 (仅与 --backfill-failures 同用)")
     args = parser.parse_args()
 
     if args.backfill_failures:
-        return _run_backfill(args.backfill_failures, args.report_dir)
+        return _run_backfill(args.backfill_failures, args.report_dir,
+                             allow_empty=args.allow_empty)
 
     check = DailyCheck(args)
     check.dim_a()

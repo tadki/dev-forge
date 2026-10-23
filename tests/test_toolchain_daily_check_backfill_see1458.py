@@ -169,3 +169,71 @@ def test_backfill_run_entry_empty_and_blank_segments(env):
     assert tdc._run_backfill(" , ", str(tmp_path)) == 1, "纯空白段=空输入"
     assert tdc._run_backfill("%s, ,%s" % (D0916, D0922), str(tmp_path)) == 0, \
         "夹空白段的合法列表正常回填"
+
+
+# --- 复审 Finding 2: 空扫护栏 ----------------------------------------------------
+# 夹具的 "2026-10-23" 日有非空基线 ({"timeout": 5}) 且双目录均无该日日志 —
+# 正是「重扫得空 + 既有非空」的断供形态, 作拒绝路径用例; D0916 等有日志日作对照。
+
+
+def test_backfill_refuses_empty_rescan_over_nonempty(env):
+    tmp_path, history_file = env
+    with pytest.raises(tdc.BackfillEmptyScanError):
+        tdc.backfill_history_failures(["2026-10-23"], report_dir=str(tmp_path))
+    with open(history_file, encoding="utf-8") as f:
+        assert json.load(f)["daily"]["2026-10-23"] == {"timeout": 5}, \
+            "拒绝路径不得清零既有基线"
+    assert not glob.glob(history_file + ".bak-*"), "拒绝在备份前发生, 不留备份"
+    assert "2026-10-23" not in tdc.journal_read_days(
+        tdc.journal_path_for(history_file)), "拒绝路径不落 journal"
+
+
+def test_backfill_partial_refusal_zero_writes(env):
+    tmp_path, history_file = env
+    with pytest.raises(tdc.BackfillEmptyScanError):
+        tdc.backfill_history_failures([D0916, "2026-10-23"], report_dir=str(tmp_path))
+    with open(history_file, encoding="utf-8") as f:
+        persisted = json.load(f)["daily"]
+    assert persisted[D0916] == {"error": 6, "timeout": 6}, \
+        "任一日拒绝则整批零写盘 (无半套回填)"
+    assert D0916 not in tdc.journal_read_days(tdc.journal_path_for(history_file))
+
+
+def test_backfill_allow_empty_zeroes_explicitly(env):
+    tmp_path, history_file = env
+    backfilled, backup = tdc.backfill_history_failures(
+        ["2026-10-23"], report_dir=str(tmp_path), allow_empty=True)
+    assert backfilled["2026-10-23"] == {}, "显式放行才允许清零"
+    assert os.path.exists(backup)
+    with open(history_file, encoding="utf-8") as f:
+        assert json.load(f)["daily"]["2026-10-23"] == {}
+
+
+def test_backfill_run_entry_refusal_exit_1(env, capsys):
+    tmp_path, _history_file = env
+    assert tdc._run_backfill("2026-10-23", str(tmp_path)) == 1
+    err = capsys.readouterr().err
+    assert "2026-10-23" in err and "拒绝静默清零" in err, "报错须带日期上下文与放行指引"
+
+
+def test_backfill_run_entry_allow_empty_passes_through(env, capsys):
+    tmp_path, _history_file = env
+    assert tdc._run_backfill("2026-10-23", str(tmp_path), allow_empty=True) == 0
+    assert json.loads(capsys.readouterr().out)["backfilled"]["2026-10-23"] == {}
+
+
+def test_cli_allow_empty_flag_wiring(env, monkeypatch):
+    tmp_path, history_file = env
+    monkeypatch.setattr(sys, "argv", [
+        "toolchain_daily_check.py", "--backfill-failures", "2026-10-23",
+        "--allow-empty", "--report-dir", str(tmp_path)])
+    assert tdc.main() == 0, "--allow-empty 须接通护栏放行"
+    with open(history_file, encoding="utf-8") as f:
+        assert json.load(f)["daily"]["2026-10-23"] == {}
+
+
+def test_backfill_empty_rescan_of_absent_day_allowed(env):
+    tmp_path, history_file = env
+    backfilled, _b = tdc.backfill_history_failures(
+        ["2026-09-30"], report_dir=str(tmp_path))
+    assert backfilled["2026-09-30"] == {}, "既有为空/缺失的日无基线可毁, 不拦"

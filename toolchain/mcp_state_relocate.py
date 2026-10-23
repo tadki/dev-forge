@@ -13,6 +13,9 @@
 运行窗口约束: 必须在 launcher 修复 (fork shared/SEE-1458) 部署后执行, 否则
 新写入继续漂移、归位后状态再度分裂。默认 dry-run 只打印计划不落盘; --apply
 才执行, 两份 registry 改前均备份 <file>.bak-<UTC 时间戳>。
+注 (复审 Finding 4): 归位只拷贝不删除中性侧历史日志, 归位当日中性侧仍含当日
+行 → 日检 g_drift_detected 当日仍会报一次, 属预期 (当日确实漂移过), 次日起
+随当日窗口推进自然消退, 不是归位失败信号。
 
 用法:
   python3 toolchain/mcp_state_relocate.py              # dry-run 计划
@@ -36,6 +39,8 @@ from toolchain_daily_check import (  # noqa: E402
     LAUNCHER_LOG_PREFIX,
     LAUNCHER_LOG_SUFFIX,
     MULTICA_HOME,
+    _registry_entries_of,
+    merge_registry_entries,
     read_json,
 )
 
@@ -50,19 +55,11 @@ def merge_registries(canonical, neutral):
     """registry entries 按 rid 键合并 → 新 dict (不改输入, 不可变语义)。
 
     并集: 两边 entries 全保留; 同 rid 冲突取 updated_at 新者, 缺失/并列取
-    规范侧。合并文件 updated_at 取两侧最新输入时间戳 (缺则当前 UTC 时刻)。
+    规范侧 (entries 合并复用日检 load_registry 的 merge_registry_entries
+    SSOT, 复审 Finding 1 — 读侧并集与写侧归位永不语义漂移)。合并文件
+    updated_at 取两侧最新输入时间戳 (缺则当前 UTC 时刻)。
     """
-    canon_entries = _entries_of(canonical)
-    neut_entries = _entries_of(neutral)
-    merged_entries = dict(neut_entries)
-    neutral_won = 0
-    for rid, entry in canon_entries.items():
-        merged_entries[rid] = entry
-        neut_entry = neut_entries.get(rid)
-        # 规范侧默认权威; 仅当中性侧时间戳严格更新时让位
-        if _entry_is_newer(neut_entry, entry):
-            merged_entries[rid] = neut_entry
-            neutral_won += 1
+    merged_entries, neutral_won = merge_registry_entries(canonical, neutral)
     return {
         "schema_version": _schema_version(canonical, neutral),
         "updated_at": _newest_updated_at(canonical, neutral),
@@ -72,14 +69,8 @@ def merge_registries(canonical, neutral):
 
 
 def _entries_of(registry):
-    entries = registry.get("entries") if isinstance(registry, dict) else None
-    return entries if isinstance(entries, dict) else {}
-
-
-def _entry_is_newer(candidate, incumbent):
-    cand_ts = candidate.get("updated_at") if isinstance(candidate, dict) else None
-    inc_ts = incumbent.get("updated_at") if isinstance(incumbent, dict) else None
-    return isinstance(cand_ts, str) and isinstance(inc_ts, str) and cand_ts > inc_ts
+    # entries 解构复用日检侧 SSOT 助手 (与 merge 同源, 防两端口径漂移)
+    return _registry_entries_of(registry)
 
 
 def _schema_version(canonical, neutral):

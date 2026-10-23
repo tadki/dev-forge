@@ -11,6 +11,7 @@ SEE-1457 实证: 扫描只认 ~/.multica 时, 漂移写入 ~/.config/godot-mcp �
 """
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -251,3 +252,104 @@ def test_drift_tolerates_unreadable_neutral_log(sandbox, monkeypatch):
     checker = _checker(tmp_path)
     checker._check_g_drift("G")
     assert ("warn", "g_drift_detected") not in _codes(checker), "不可读不误报"
+
+
+# --- 复审 Finding 1: port-registry 并集读 ---------------------------------------
+
+
+def _write_registry(dirpath, entries):
+    os.makedirs(dirpath, exist_ok=True)
+    with open(os.path.join(dirpath, "godot-port-registry.json"), "w",
+              encoding="utf-8") as f:
+        json.dump({"schema_version": 2,
+                   "updated_at": "2026-10-23T00:00:00Z",
+                   "entries": entries}, f)
+
+
+@pytest.fixture()
+def registry_sandbox(sandbox, monkeypatch):
+    tmp_path, canon, neutral = sandbox
+    monkeypatch.setattr(tdc, "PORT_REGISTRY", os.path.join(canon, "godot-port-registry.json"))
+    return tmp_path, canon, neutral
+
+
+def test_load_registry_union_includes_neutral_entries(registry_sandbox):
+    tmp_path, canon, neutral = registry_sandbox
+    _write_registry(canon, {"rid-x": {"port": 6551, "updated_at": "2026-10-01T00:00:00Z"}})
+    _write_registry(neutral, {
+        "rid-x": {"port": 6559, "updated_at": "2026-10-20T00:00:00Z"},
+        "rid-y": {"port": 6552, "updated_at": "2026-10-21T00:00:00Z"},
+    })
+    entries = _checker(tmp_path).load_registry()["entries"]
+    assert set(entries) == {"rid-x", "rid-y"}, "漂移窗内中性条目必须进入应采集"
+    assert entries["rid-x"]["port"] == 6559, "同 rid 冲突取 updated_at 新者"
+    assert entries["rid-y"]["port"] == 6552
+
+
+def test_load_registry_post_relocate_no_double_count(registry_sandbox):
+    tmp_path, canon, neutral = registry_sandbox
+    shared = {"port": 6551, "updated_at": "2026-10-20T00:00:00Z"}
+    _write_registry(canon, {"rid-a": shared, "rid-b": {"port": 6552, "updated_at": "t"}})
+    _write_registry(neutral, {"rid-a": dict(shared)})
+    entries = _checker(tmp_path).load_registry()["entries"]
+    assert len(entries) == 2, "归位后并集退化为规范侧, 不双计"
+    assert entries["rid-a"] == shared, "并列取规范侧"
+
+
+def test_load_registry_neutral_only_still_visible(registry_sandbox):
+    tmp_path, canon, neutral = registry_sandbox
+    _write_registry(neutral, {"rid-y": {"port": 6552, "updated_at": "t"}})
+    checker = _checker(tmp_path)
+    entries = checker.load_registry()["entries"]
+    registered, _per_agent = checker._g_registry_inventory(entries)
+    assert 6552 in registered, "G1 应采集含中性条目 (QA dry-run entries 0+73 回归)"
+
+
+def test_load_registry_reads_both_registry_paths(registry_sandbox, monkeypatch):
+    tmp_path, canon, neutral = registry_sandbox
+    _write_registry(canon, {"rid-a": {"port": 1, "updated_at": "t"}})
+    _write_registry(neutral, {"rid-b": {"port": 2, "updated_at": "t"}})
+    read_paths = []
+    real_read = tdc.read_json
+
+    def spy(path, **kw):
+        read_paths.append(path)
+        return real_read(path, **kw)
+
+    monkeypatch.setattr(tdc, "read_json", spy)
+    _checker(tmp_path).load_registry()
+    assert any(p.startswith(canon) for p in read_paths), "规范侧 registry 必须被读"
+    assert any(p.startswith(neutral) for p in read_paths), "中性侧 registry 必须被读"
+
+
+def test_merge_registry_entries_pure_and_shared_with_relocate():
+    # 与 mcp_state_relocate 共用同一 SSOT (复审 Finding 1: 读侧并集与写侧归位
+    # 永不语义漂移) — 模块导入即验, 两端口径分叉时此处转红
+    import mcp_state_relocate as msr
+    assert msr.merge_registry_entries is tdc.merge_registry_entries
+    canon = {"entries": {"x": {"port": 1, "updated_at": "2026-10-01T00:00:00Z"}}}
+    neut = {"entries": {"x": {"port": 9, "updated_at": "2026-10-20T00:00:00Z"},
+                        "y": {"port": 2, "updated_at": "t"}}}
+    canon_before = json.dumps(canon, sort_keys=True)
+    merged, won = tdc.merge_registry_entries(canon, neut)
+    assert set(merged) == {"x", "y"} and merged["x"]["port"] == 9 and won == 1
+    assert json.dumps(canon, sort_keys=True) == canon_before, "纯函数不改输入"
+
+
+def test_load_registry_caches_after_first_read(registry_sandbox, monkeypatch):
+    # 缓存分支: 第二次调用必须命中 _registry, 不再触盘 (读一次语义)
+    tmp_path, canon, neutral = registry_sandbox
+    _write_registry(canon, {"rid-a": {"port": 1, "updated_at": "t"}})
+    checker = _checker(tmp_path)
+    calls = []
+    real_read = tdc.read_json
+
+    def spy(path, **kw):
+        calls.append(path)
+        return real_read(path, **kw)
+
+    monkeypatch.setattr(tdc, "read_json", spy)
+    first = checker.load_registry()
+    second = checker.load_registry()
+    assert first is second, "缓存命中返回同一对象"
+    assert len(calls) == 2, "仅首轮触盘 (规范侧 + 中性侧各一次)"
