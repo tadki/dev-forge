@@ -129,6 +129,16 @@ def test_sources_union_enumerates_both_dirs(sandbox):
     assert any(p.startswith(neutral) for p in paths)
 
 
+def test_production_launcher_log_dirs_are_real_union():
+    # 其余用例全部 sandbox 覆盖 LAUNCHER_LOG_DIRS, 生产常量的真实双目录布线
+    # 若被退化 (单源/错序/漏目录) 此处转红 — SEE-1457 的病根即单源扫描
+    home = os.path.expanduser("~")
+    assert tdc.LAUNCHER_LOG_DIRS == (
+        os.path.join(home, ".multica"),
+        os.path.join(home, ".config", "godot-mcp"),
+    ), "生产扫描源必须是 ~/.multica ∪ ~/.config/godot-mcp 双目录并集"
+
+
 def test_g_labels_union(sandbox):
     tmp_path, canon, neutral = sandbox
     _write_log(canon, "atlas", [_log_line(TODAY, "x")])
@@ -153,6 +163,21 @@ def test_b3_ok_with_sources_no_failures_today(sandbox):
     codes = _codes(checker)
     assert ("warn", "b3_no_sources") not in codes, "有日志源只是当日无失败码, 不该 warn"
     assert any(level == "ok" and code == "b3" for level, code in codes)
+
+
+def test_b3_ok_with_sources_and_failures_today(sandbox):
+    # B3 happy path (有源 + 当日有失败码 → ok 且带明细): 日检 B 维度主路径,
+    # 此分支此前无 fixture 触达 — 现网有失败码当日若该分支崩溃, 整轮日检必炸
+    tmp_path, canon, neutral = sandbox
+    _write_log(neutral, "bachi", [_log_line(TODAY, "proxy timeout exceeded")])
+    checker = _checker(tmp_path)
+    checker._check_b3_failure_codes("B")
+    codes = _codes(checker)
+    assert ("warn", "b3_no_sources") not in codes, "有源有失败码不是断供"
+    ok_b3 = [f for f in checker.findings
+             if f["level"] == "ok" and f["code"] == "b3"]
+    assert len(ok_b3) == 1, "有源有失败码必须走 ok 分支 (带明细)"
+    assert "'timeout': 1" in ok_b3[0]["message"], "ok 明细须携带当日失败码计数"
 
 
 # --- §SPEC-104: 漂移哨兵 -------------------------------------------------------

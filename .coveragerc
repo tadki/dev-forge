@@ -1,0 +1,8 @@
+# SEE-1458 §SPEC-108: 统一覆盖率口径。`__main__` guard 体 (如
+# toolchain/mcp_state_relocate.py 的 sys.exit(main())) 仅在脚本直跑可达,
+# pytest 的 import 驱动执行无法触达 — 按 coverage.py 标准排除; CLI 语义由
+# main() 直调的 test_cli_* 用例等价钉扎, 不因排除而失护。
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
