@@ -179,6 +179,11 @@ python autopilots/architecture_sweep.py \
   --dry-run --fast
 ```
 
+### 执行步骤
+
+1. 检出 `master`：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`，随后物化 submodule：`git -C KingOfLikes-Godot submodule update --init --recursive`（等价物化动作已内置于 `architecture_sweep.sh` wrapper，在调用 Python 脚本前执行；物化失败时 wrapper 以非零退出码显式失败，不做静默降级）
+2. 调用 `autopilots/architecture_sweep.sh` 执行只读静态巡检（参数见下述「执行方式」「参数说明」）
+
 ### 参数说明
 
 | 参数 | 默认值 | 说明 |
@@ -196,6 +201,7 @@ python autopilots/architecture_sweep.py \
 
 **L0 每日**（每次执行都跑）：
 - `REDLINE_INIT/DELETED/MODIFIED/NEW` — `addons/godot_mcp/` SHA256 manifest 校验
+- `REDLINE_SKIPPED_UNINITIALIZED`（warn）— `addons/godot_mcp` gitlink 未物化时（`git submodule update --init` 未执行或失败）跳过整段红线比对，仅产出一条显式降级告警；此告警入 baseline，增量机制不会重复捕获，恢复覆盖需先物化 submodule（SEE-1460）
 - `DEPRECATED_BRIDGE` — `@deprecated` 兼容桥存量
 - `SEE_COMMENT` — `SEE-\d+` 注释存量
 - `FILE_TOO_LONG` — 文件 > 800 行
