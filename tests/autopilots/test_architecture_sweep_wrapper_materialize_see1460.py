@@ -17,6 +17,17 @@ write-side materialization action).
 (stubbed here); the Python layer itself stays untouched — the SEE-1434 guard
 suite keeps asserting the skip semantics against the real module.
 
+§SPEC-1460-D (决策 6' fix 1, AC-8 kill-switch dimension): the wrapper passes
+`--kill-switch` ONLY when the KILL_SWITCH environment variable is explicitly
+set; otherwise the flag is omitted entirely so Python's kill_switch_default()
+(kill_switch.py single source: paused file OR env) resolves the canonical
+value. Unconditionally passing the flag (the SEE-1440 boilerplate default)
+overrode the paused-file contract on the wrapper entry point (Revy F-1).
+
+§SPEC-1460-E (决策 6' fix 2, AC-9): space-form `--execution-issue-id <v>`,
+`--workspace-root <v>` and `--current-hash <v>` capture their values exactly
+like the equals forms — the autopilot command line uses the space form.
+
 The real wrapper is copied into a scratch script_dir (with a scratch
 configs/kol.json) so tests control `repo_name` without touching the repo's
 own config. `python3` on PATH is a stub that only logs its invocation, so no
@@ -127,13 +138,18 @@ def _install_script_dir(tmp_path, config):
     return script_dir
 
 
-def _run_wrapper(script_dir, workspace_root, stub_env, cwd, env_extra=None):
+def _run_wrapper(script_dir, workspace_root, stub_env, cwd, env_extra=None, extra_args=None):
     env = os.environ.copy()
+    env.pop("KILL_SWITCH", None)  # deterministic baseline; tests opt in via env_extra
     env["PATH"] = f"{stub_env['bin']}{os.pathsep}{env['PATH']}"
     env["STUB_LOG"] = str(stub_env["log"])
     env.update(env_extra or {})
+    wrapper_args = [str(script_dir / "architecture_sweep.sh")]
+    wrapper_args.extend(extra_args or [])
+    if workspace_root is not None:
+        wrapper_args.append(str(workspace_root))
     return subprocess.run(
-        ["bash", str(script_dir / "architecture_sweep.sh"), str(workspace_root)],
+        ["bash", *wrapper_args],
         capture_output=True,
         text=True,
         cwd=str(cwd),
@@ -309,3 +325,138 @@ def test_python_layer_has_no_materialization_code():
     assert "submodule" in sweep_src  # the SEE-1434 skip guard mentions it
     assert "submodule', 'update'" not in sweep_src
     assert '"update", "--init"' not in sweep_src
+
+
+# ---------------------------------------------------------------------------
+# §SPEC-1460-D: --kill-switch only when the env var is explicitly set
+# (AC-8 kill-switch dimension; canonical default = kill_switch.py paused
+# file OR env, resolved by Python when the flag is absent)
+# ---------------------------------------------------------------------------
+
+
+def _stub_args(run_env):
+    return _read(run_env["stub"]["log"])
+
+
+def test_kill_switch_flag_omitted_when_env_unset(run_env, tmp_path):
+    ws = tmp_path / "ws"
+    _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
+
+    proc = _run_wrapper(run_env["script_dir"], ws, run_env["stub"], run_env["cwd"])
+
+    assert proc.returncode == 0, proc.stderr
+    assert "--kill-switch" not in _stub_args(run_env)
+
+
+def test_kill_switch_env_value_passed_through_raw(run_env, tmp_path):
+    ws = tmp_path / "ws"
+    _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        ws,
+        run_env["stub"],
+        run_env["cwd"],
+        env_extra={"KILL_SWITCH": "true"},
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "--kill-switch true" in _stub_args(run_env)
+
+
+def test_kill_switch_explicit_false_still_passed(run_env, tmp_path):
+    """An explicit KILL_SWITCH=false stays an explicit override (session-level
+    opt-out); only an UNSET env drops the flag."""
+    ws = tmp_path / "ws"
+    _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        ws,
+        run_env["stub"],
+        run_env["cwd"],
+        env_extra={"KILL_SWITCH": "false"},
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "--kill-switch false" in _stub_args(run_env)
+
+
+# ---------------------------------------------------------------------------
+# §SPEC-1460-E: space and equals forms both capture values (AC-9)
+# ---------------------------------------------------------------------------
+
+
+def test_space_form_execution_issue_id_captured(run_env, tmp_path):
+    ws = tmp_path / "ws"
+    _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        ws,
+        run_env["stub"],
+        run_env["cwd"],
+        extra_args=["--execution-issue-id", "ISSUE-42"],
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "--execution-issue-id ISSUE-42" in _stub_args(run_env)
+
+
+def test_space_form_workspace_root_captured(run_env, tmp_path):
+    ws = tmp_path / "ws"
+    parent = _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        None,
+        run_env["stub"],
+        run_env["cwd"],
+        extra_args=["--workspace-root", str(ws)],
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert (parent / REDLINE_DIR / "a.txt").is_file()
+    assert f"--workspace-root {ws}" in _stub_args(run_env)
+
+
+def test_space_form_current_hash_captured(run_env, tmp_path):
+    ws = tmp_path / "ws"
+    parent = _seed_parent(ws / "H1" / "workdir", sub_url=f"file://{ws}/H1/workdir/subrepo")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        ws,
+        run_env["stub"],
+        run_env["cwd"],
+        extra_args=["--current-hash", "H1"],
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert (parent / REDLINE_DIR / "a.txt").is_file()
+    assert "--current-hash H1" in _stub_args(run_env)
+
+
+def test_equals_form_flags_captured(run_env, tmp_path):
+    """Equals forms keep working — AC-9 requires both forms to be equivalent."""
+    ws = tmp_path / "ws"
+    parent = _seed_parent(ws / "H2" / "workdir", sub_url=f"file://{ws}/H2/workdir/subrepo")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        None,
+        run_env["stub"],
+        run_env["cwd"],
+        extra_args=[
+            "--execution-issue-id=ISSUE-7",
+            f"--workspace-root={ws}",
+            "--current-hash=H2",
+        ],
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert (parent / REDLINE_DIR / "a.txt").is_file()
+    stub_args = _stub_args(run_env)
+    assert "--execution-issue-id ISSUE-7" in stub_args
+    assert f"--workspace-root {ws}" in stub_args
+    assert "--current-hash H2" in stub_args
