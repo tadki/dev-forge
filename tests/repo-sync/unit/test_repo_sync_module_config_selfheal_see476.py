@@ -47,6 +47,7 @@ from repo_sync_daemon import run_one_cycle  # noqa: E402
 sys.path.insert(0, os.path.dirname(__file__))
 from test_repo_sync_submodule_see1268 import (  # noqa: E402
     _init_repo_with_submodule,
+    _make_child_repo,
     _run_git,
 )
 
@@ -306,3 +307,114 @@ class TestDaemonWiring:
         assert category == ""
         assert len(_corrupt_backups(cfg)) == 1
         assert cfg.read_text().startswith("[core]")
+
+
+@pytest.fixture
+def repo_with_spaced_submodule():
+    """Same shape as repo_with_submodule but the submodule path contains a
+    space ('vendor/sub tool') — exercises path parsing end to end."""
+    with tempfile.TemporaryDirectory() as d:
+        sub_remote = _make_child_repo(d)
+        remote = os.path.join(d, "remote.git")
+        local = os.path.join(d, "local")
+        os.makedirs(remote)
+        _run_git(remote, ["init", "--bare", "-b", "master"])
+        os.makedirs(local)
+        _run_git(local, ["init", "-b", "master"])
+        _run_git(local, ["config", "user.email", "test@test.com"])
+        _run_git(local, ["config", "user.name", "Test"])
+        Path(local, "a.txt").write_text("a")
+        _run_git(local, ["add", "a.txt"])
+        _run_git(local, ["commit", "-m", "init"])
+        _run_git(local, ["submodule", "add", sub_remote, "vendor/sub tool"])
+        _run_git(local, ["commit", "-m", "add spaced submodule"])
+        _run_git(local, ["remote", "add", "origin", remote])
+        _run_git(local, ["push", "-u", "origin", "master"])
+        _run_git(local, ["config", "protocol.file.allow", "always"])
+        _run_git(local, ["submodule", "update", "--init", "--recursive"])
+        yield {"local": local, "sub_remote": sub_remote, "remote": remote}
+
+
+SPACED_CFG_REL = Path(".git") / "modules" / "vendor" / "sub tool" / "config"
+
+
+class TestReviewLowBackupCollision:
+    def test_same_second_repairs_keep_distinct_backups(
+        self, repo_with_submodule, monkeypatch
+    ):
+        """LOW-1 pin: two repairs inside one wall-clock second must yield two
+        non-overwriting forensic copies, each holding its own corrupt payload."""
+        import repo_sync
+
+        monkeypatch.setattr(repo_sync, "_backup_stamp", lambda: "20260101-000000")
+        cfg = _module_config(repo_with_submodule)
+        first_payload = b"\x00" * cfg.stat().st_size
+        cfg.write_bytes(first_payload)
+        ok1, _ = repair_module_config(repo_with_submodule["local"], cfg, LOGGER)
+
+        second_payload = b"x" * cfg.stat().st_size
+        cfg.write_bytes(second_payload)
+        ok2, _ = repair_module_config(repo_with_submodule["local"], cfg, LOGGER)
+
+        assert ok1 and ok2
+        backups = _corrupt_backups(cfg)
+        assert len(backups) == 2
+        names = {b.name for b in backups}
+        assert names == {
+            "config.corrupt-20260101-000000",
+            "config.corrupt-20260101-000000-1",
+        }
+        assert (
+            cfg.parent / "config.corrupt-20260101-000000"
+        ).read_bytes() == first_payload
+        assert (
+            cfg.parent / "config.corrupt-20260101-000000-1"
+        ).read_bytes() == second_payload
+        assert cfg.read_text().startswith("[core]")
+
+
+class TestReviewLowSpacePaths:
+    def test_relative_parse_error_extracts_full_path_and_repairs(
+        self, repo_with_spaced_submodule
+    ):
+        """LOW-2 pin (relative form): the spaced relative path must be captured
+        whole and drive a successful repair."""
+        rel = ".git/modules/vendor/sub tool/config"
+        err = f"fatal: bad config line 1 in file {rel}"
+        assert is_module_config_parse_failure(err) == rel
+
+        local = repo_with_spaced_submodule["local"]
+        cfg = Path(local) / SPACED_CFG_REL
+        cfg.write_bytes(b"\x00" * cfg.stat().st_size)
+        ok, msg = repair_module_config(local, Path(rel), LOGGER)
+
+        assert ok, msg
+        _run_git(local, ["submodule", "status"])
+        assert len(_corrupt_backups(cfg)) == 1
+
+    def test_absolute_parse_error_extracts_full_path(self):
+        """LOW-2 pin (absolute form): spaces anywhere in the path survive."""
+        path = "/tmp/my repo/.git/modules/vendor/sub tool/config"
+        assert (
+            is_module_config_parse_failure(f"fatal: bad config line 1 in file {path}")
+            == path
+        )
+        # trailing newline / extra stderr lines must not leak into the path
+        err = f"fatal: bad config line 1 in file {path}\nfatal: some later note\n"
+        assert is_module_config_parse_failure(err) == path
+
+    def test_absolute_space_path_selfheals_via_real_git(
+        self, repo_with_spaced_submodule
+    ):
+        """LOW-2 end to end: real git emits a spaced absolute path in its parse
+        error; the self-heal must still complete backup→rebuild→retry."""
+        local = repo_with_spaced_submodule["local"]
+        cfg = Path(local) / SPACED_CFG_REL
+        cfg.write_bytes(b"\x00" * cfg.stat().st_size)
+
+        ok, msg = do_submodule_update(local, logger=LOGGER)
+
+        assert ok, msg
+        assert "self-heal" in msg
+        _run_git(local, ["submodule", "status"])
+        assert len(_corrupt_backups(cfg)) == 1
