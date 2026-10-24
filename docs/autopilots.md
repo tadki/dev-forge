@@ -161,30 +161,31 @@ python autopilots/local_repo_check.py \
 - **Autopilot ID**: `5a40f7e4-2d76-46e8-821f-a3c0d7544235`
 - **Assignee**: Chekky（agent `b2384294-919a-4a91-9f35-2c45848577aa`）
 - **调度**: cron `0 4 * * *` Asia/Hong_Kong（trigger id `72c55517-7362-4a91-b396-6e0aad2e56e1`）
-- **脚本路径**: `autopilots/architecture_sweep.py`（wrapper: `autopilots/architecture_sweep.sh`）
-- **执行方式**:
+- **脚本路径**: `autopilots/architecture_sweep.sh`（wrapper，**唯一执行入口**：调用 Python 前对 KOL worktree 物化 submodule；内部委托 `autopilots/architecture_sweep.py` 执行巡检）
+- **执行方式**（一律经 wrapper，不直调 `.py`）:
 
 ```bash
-# 日常 L0 巡检
-python autopilots/architecture_sweep.py \
+# 日常 L0 巡检（与平台 autopilot Step 2 命令线一致；仓内执行去掉 dev-forge/ 前缀）
+bash dev-forge/autopilots/architecture_sweep.sh \
   --execution-issue-id <本执行IssueID>
 
 # 每周一（UTC，脚本内部判定基准）自动附加 L1 深度检查；其他日子可用 --l1 强制开启
-python autopilots/architecture_sweep.py \
-  --l1 \
-  --execution-issue-id <本执行IssueID>
+bash autopilots/architecture_sweep.sh \
+  --l1 --execution-issue-id <本执行IssueID>
 
 # Revy 验证用：快速预览（跳过 gdlint 与 L1）
-python autopilots/architecture_sweep.py \
+bash autopilots/architecture_sweep.sh \
   --dry-run --fast
 ```
 
 ### 执行步骤
 
-1. 检出 `master`：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`，随后物化 submodule：`git -C KingOfLikes-Godot submodule update --init --recursive`（等价物化动作已内置于 `architecture_sweep.sh` wrapper，在调用 Python 脚本前执行；物化失败时 wrapper 以非零退出码显式失败，不做静默降级）
-2. 调用 `autopilots/architecture_sweep.sh` 执行只读静态巡检（参数见下述「执行方式」「参数说明」）
+1. 检出 `master`：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`
+2. 经 wrapper 执行只读静态巡检（命令见「执行方式」）。wrapper 在调用 Python 脚本前，按巡逻 config（默认 `autopilots/configs/kol.json` 的 `repo_name`，`ARCH_SWEEP_CONFIG` 可覆盖）定位 KOL worktree，自动执行 `git submodule update --init --recursive` 物化红线 gitlink 并后置校验非空；物化失败（config 缺失 / repo_name 缺失 / worktree 定位失败 / update 失败 / 物化后红线目录仍空）一律非零退出 + 显式 JSON 错误，严禁静默降级（SEE-1460）
 
 ### 参数说明
+
+以下参数由 wrapper 透传至 `architecture_sweep.py`：
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -195,7 +196,7 @@ python autopilots/architecture_sweep.py \
 | `--l1` | 无 | 强制开启 L1 周检（默认周一 UTC，脚本内部判定基准，自动开启） |
 | `--execution-issue-id` | 空 | 本执行 Issue ID |
 
-环境变量： `DRY_RUN=true`、`ARCH_SWEEP_L1=true`、`MULTICA_WORKTREE_HASH=<hash>`（wrapper 用）。
+环境变量： `DRY_RUN=true`、`ARCH_SWEEP_L1=true`、`MULTICA_WORKTREE_HASH=<hash>`（wrapper 用）；`ARCH_SWEEP_CONFIG=<path>`（wrapper 物化步用的巡逻 config 覆盖）。
 
 ### 检查维度
 
@@ -232,12 +233,12 @@ python autopilots/architecture_sweep.py \
 ### 严禁行为（脚本内部保证）
 
 - 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程、不开 PR、不 @ 任何成员
-- 所有写操作仅落在 `~/.multica/arch-patrol/`
+- 所有写操作仅落在 `~/.multica/arch-patrol/`（唯一例外：wrapper 层 `git submodule update --init --recursive` 物化——按 gitlink pinned commit 恢复 `addons/godot_mcp/` 内容，属覆盖性恢复而非改动）
 
 ### 退出码
 
 - `0` — 全部检查通过
-- `1` — 致命错误（锁冲突、repo 不存在）
+- `1` — 致命错误（锁冲突、repo 不存在；wrapper 层 submodule 物化失败，见「执行步骤」第 2 步）
 - `2` — 至少一个检查阶段失败（SEE-1109：严禁静默 exit 0）
 
 ---
