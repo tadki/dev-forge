@@ -1113,8 +1113,12 @@ def _recover_submodule_residue(repo_path: str, timeout: int | None) -> tuple[boo
 # ---------------------------------------------------------------------------
 
 # Parse-class git config errors name the offending file as "in file <path>".
+# git prints the offending file as "in file <path>" at line end; the path may
+# contain spaces (anywhere in the checkout path), so capture to end-of-line
+# rather than \S+ (which truncated and silently degraded to no-repair).
 _MODULE_CONFIG_PARSE_RE = re.compile(
-    r"(?:bad config line|missing '='|bad config section)[^\n]*?in file (\S+)"
+    r"(?:bad config line|missing '='|bad config section)[^\n]*?in file (.+?)\s*$",
+    re.MULTILINE,
 )
 
 SELFHEAL_LOG_PREFIX = "[repo-sync-self-heal]"
@@ -1226,6 +1230,11 @@ def _module_config_check_reason(config_file: Path, repo_path: str) -> str:
     return "healthy"
 
 
+def _backup_stamp() -> str:
+    """Timestamp for backup names; a seam so tests can pin same-second collisions."""
+    return time.strftime("%Y%m%d-%H%M%S")
+
+
 def repair_module_config(
     repo_path: str, config_file: Path, logger: logging.Logger
 ) -> tuple[bool, str]:
@@ -1250,8 +1259,14 @@ def repair_module_config(
             f".gitmodules; refusing to rebuild {config_file} without a source of truth"
         )
 
-    # Backup first — the corrupt original is the only forensic copy.
-    backup = config_file.parent / f"config.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
+    # Backup first — the corrupt original is the only forensic copy. Same-second
+    # repairs append -N so a later fix never overwrites an earlier forensic copy.
+    stamp = _backup_stamp()
+    backup = config_file.parent / f"config.corrupt-{stamp}"
+    n = 1
+    while backup.exists():
+        backup = config_file.parent / f"config.corrupt-{stamp}-{n}"
+        n += 1
     try:
         shutil.copy2(config_file, backup)
     except OSError as e:
