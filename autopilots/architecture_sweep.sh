@@ -22,10 +22,26 @@ FAST_ARG=""
 DRY_RUN_ARG=""
 L1_ARG=""
 SKIP_NEXT=""
+SKIP_TARGET=""
 EXECUTION_ISSUE_ID=""
 for ARG in "$@"; do
   if [ -n "$SKIP_NEXT" ]; then
     SKIP_NEXT=""
+    # SEE-1460 决策 6' (AC-9): a space-form flag consumes AND captures its
+    # value — dropping it here made the autopilot command line silently lose
+    # --execution-issue-id / --workspace-root / --current-hash values.
+    case "$SKIP_TARGET" in
+      workspace-root)
+        WORKSPACE_ROOT="$ARG"
+        ;;
+      current-hash)
+        CURRENT_HASH="$ARG"
+        ;;
+      execution-issue-id)
+        EXECUTION_ISSUE_ID="$ARG"
+        ;;
+    esac
+    SKIP_TARGET=""
     continue
   fi
   case "$ARG" in
@@ -42,12 +58,14 @@ for ARG in "$@"; do
       case "$ARG" in
         --workspace-root)
           SKIP_NEXT=1
+          SKIP_TARGET=workspace-root
           ;;
         --workspace-root=*)
           WORKSPACE_ROOT="${ARG#--workspace-root=}"
           ;;
         --current-hash)
           SKIP_NEXT=1
+          SKIP_TARGET=current-hash
           ;;
         --current-hash=*)
           CURRENT_HASH="${ARG#--current-hash=}"
@@ -58,6 +76,7 @@ for ARG in "$@"; do
       case "$ARG" in
         --execution-issue-id)
           SKIP_NEXT=1
+          SKIP_TARGET=execution-issue-id
           ;;
         --execution-issue-id=*)
           EXECUTION_ISSUE_ID="${ARG#--execution-issue-id=}"
@@ -78,6 +97,17 @@ if [ -z "$WORKSPACE_ROOT" ]; then
 fi
 
 DRY_RUN="${DRY_RUN:-false}"
+
+# SEE-1460 决策 6' (AC-8, Revy F-1): capture whether KILL_SWITCH came from the
+# environment BEFORE autopilots_kill_switch applies its default. The flag is
+# only forwarded when explicitly set; an unset env omits --kill-switch so the
+# Python layer's kill_switch_default() (kill_switch.py single source: paused
+# file OR env) resolves the canonical value — an unconditional flag overrode
+# the paused-file contract on this entry point.
+KILL_SWITCH_FROM_ENV=0
+if [ -n "${KILL_SWITCH+x}" ]; then
+  KILL_SWITCH_FROM_ENV=1
+fi
 
 autopilots_kill_switch
 autopilots_detect_python || exit 1
@@ -197,6 +227,9 @@ fi
 if [ -n "$CURRENT_HASH" ]; then
   PY_ARGS+=(--current-hash "$CURRENT_HASH")
 fi
-PY_ARGS+=(${FAST_ARG:-} ${DRY_RUN_ARG:-} ${L1_ARG:-} --execution-issue-id "$EXECUTION_ISSUE_ID" --kill-switch "$KILL_SWITCH")
+PY_ARGS+=(${FAST_ARG:-} ${DRY_RUN_ARG:-} ${L1_ARG:-} --execution-issue-id "$EXECUTION_ISSUE_ID")
+if [ "$KILL_SWITCH_FROM_ENV" = "1" ]; then
+  PY_ARGS+=(--kill-switch "$KILL_SWITCH")
+fi
 
 "$PYTHON_CMD" "${PY_ARGS[@]}"
