@@ -29,6 +29,13 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck -S warning $(find bootstrap launch adapters -name "*.sh")
+      # gqt complexity gate（SEE-1463 §SPEC-009）：CI 守护复杂度治理回归。
+      # 安装行 pin git tag v0.1.0——tag 落地前由 Leader 合并 GQT PR 后补打；
+      # tag 不存在时本步在本地验证（pip 装远程 @tag 属既定时序，Phase 7 复核）。
+      - name: gqt complexity gate
+        run: |
+          pip install -q "git+https://github.com/tadki/godot-qa-toolkit.git@v0.1.0"
+          gqt complexity . --warn 10 --max 15
   engine-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
