@@ -18,6 +18,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -933,7 +934,11 @@ def do_pull_ff_only(
     return pull_ok, pull_msg
 
 
-def do_submodule_update(repo_path: str, timeout: int | None = None) -> tuple[bool, str]:
+def do_submodule_update(
+    repo_path: str,
+    timeout: int | None = None,
+    logger: logging.Logger | None = None,
+) -> tuple[bool, str]:
     """Materialize submodule content to match recorded pointers (SEE-1268).
 
     Pointer-level ops (pull/push/rebase) move gitlinks but never populate the
@@ -944,19 +949,52 @@ def do_submodule_update(repo_path: str, timeout: int | None = None) -> tuple[boo
     uninitialized status that has_submodule_changes() treats as a sync-blocking
     intermediate state.
 
-    Self-healing: the vendored→submodule migration leaves the pre-switch files
-    on disk, and `git submodule update --init` refuses to clone into a
-    non-empty directory — it then fails on EVERY cycle, which is how D-drive
-    master ended up without addons/godot_mcp/plugin.cfg. On that specific
-    failure the residue is MOVED ASIDE (never deleted) and the init retried
-    once; the message names what moved so the condition is never silent.
+    Self-healing (two failure classes, each retried once, never silent):
+    - vendored→submodule migration residue (SEE-1268): `git submodule update
+      --init` refuses to clone into a non-empty directory — the residue is
+      MOVED ASIDE (never deleted) and the init retried.
+    - module-config corruption (SEE-476): a parse-class failure naming a
+      .git/modules/**/config file (the thrice-repeated power-cut all-0x00
+      incident) triggers backup → rebuild → retry, so the cycle succeeds
+      without burning a circuit-breaker count.
     """
+    log = logger or logging.getLogger("repo_sync")
     if not (Path(repo_path) / ".gitmodules").is_file():
         return True, "no submodules (.gitmodules absent)"
 
     ok, err = _run_submodule_init(repo_path, timeout)
     if ok:
         return True, "submodule update --init --recursive success"
+
+    corrupt_cfg = is_module_config_parse_failure(err)
+    if corrupt_cfg is not None:
+        # SEE-476: only parse-class module-config failures self-heal; every
+        # other failure keeps its normal persistent accounting.
+        cfg_path = Path(corrupt_cfg)
+        if not cfg_path.is_absolute():
+            cfg_path = Path(repo_path) / cfg_path
+        log.warning(
+            "%s parse-class module config failure: %s", SELFHEAL_LOG_PREFIX, err.strip()
+        )
+        repaired, repair_msg = repair_module_config(repo_path, cfg_path, log)
+        if not repaired:
+            return False, (
+                f"submodule update --init --recursive failed: {err}; "
+                f"module-config self-heal failed: {repair_msg}"
+            )
+        ok2, err2 = _run_submodule_init(repo_path, timeout)
+        if not ok2:
+            return False, (
+                f"submodule update --init --recursive still failing after "
+                f"module-config self-heal ({repair_msg}): {err2}"
+            )
+        log.info(
+            "%s submodule update succeeded after module config rebuild",
+            SELFHEAL_LOG_PREFIX,
+        )
+        return True, (
+            f"submodule update success after module-config self-heal ({repair_msg})"
+        )
 
     if not _is_residue_blocked(err):
         # Not the migration class — a real fetch/URL failure. Surface it.
@@ -1057,6 +1095,257 @@ def _recover_submodule_residue(repo_path: str, timeout: int | None) -> tuple[boo
     if not moved:
         return False, "residue recovery found nothing to move (init failure not path-related)"
     return True, "; ".join(moved)
+
+
+# ---------------------------------------------------------------------------
+# Module-config self-heal & boot precheck (SEE-476)
+#
+# Three same-root-cause circuit-breaker incidents (2026-09-22 / 10-23 /
+# 10-24): an abnormal power cut left a size-correct but all-0x00 module
+# config (.git/modules/addons/godot_mcp/config on the NTFS/9p D-drive
+# checkout); every sync cycle then died on `fatal: bad config line 1 ...`
+# (classified persistent by default) until the breaker tripped at 10/10.
+# The thrice-validated manual fix — back up the corrupt file, rebuild the
+# standard structure (core section + relative worktree + remote.origin, url
+# from the parent repo's stored submodule url), retry — is automated here.
+# Repair only ever triggers on parse-class failures naming a config under
+# .git/modules/, so network/conflict/gitlink failures keep their accounting.
+# ---------------------------------------------------------------------------
+
+# Parse-class git config errors name the offending file as "in file <path>".
+_MODULE_CONFIG_PARSE_RE = re.compile(
+    r"(?:bad config line|missing '='|bad config section)[^\n]*?in file (\S+)"
+)
+
+SELFHEAL_LOG_PREFIX = "[repo-sync-self-heal]"
+PRECHECK_LOG_PREFIX = "[repo-sync-precheck]"
+
+
+def is_module_config_parse_failure(stderr: str) -> str | None:
+    """Return the config-file path named by a parse-class git error, else None.
+
+    Textual detection only — the caller (repair_module_config) re-checks that
+    the path actually resolves under .git/modules/ before touching anything.
+    """
+    m = _MODULE_CONFIG_PARSE_RE.search(stderr or "")
+    return m.group(1) if m else None
+
+
+def _parse_gitmodules_with_names(repo_path: str) -> list[dict[str, str]]:
+    """Parse .gitmodules into [{name, path, url}] entries.
+
+    Keeps the section NAME because the parent repo's .git/config keys
+    `submodule.<name>.url` by that name, which may differ from the checkout
+    path (`path = ...`).
+    """
+    gm_path = Path(repo_path) / ".gitmodules"
+    if not gm_path.is_file():
+        return []
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for raw in gm_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("[submodule"):
+            if current:
+                entries.append(current)
+            name = line[line.find('"') + 1 : line.rfind('"')] if '"' in line else ""
+            current = {"name": name}
+        elif current is not None and "=" in line:
+            key, _, val = line.partition("=")
+            current[key.strip()] = val.strip()
+    if current:
+        entries.append(current)
+    return entries
+
+
+def _registered_submodule_urls(repo_path: str) -> dict[str, str]:
+    """path → url for registered submodules.
+
+    Precedence mirrors `git submodule init`: the parent .git/config stored
+    value first, .gitmodules fallback second. Empty url means no source of
+    truth — callers must refuse to rebuild from it.
+    """
+    urls: dict[str, str] = {}
+    for entry in _parse_gitmodules_with_names(repo_path):
+        path, name = entry.get("path", ""), entry.get("name", "")
+        if not path:
+            continue
+        r = git_run(
+            repo_path, ["config", "--get", f"submodule.{name}.url"], check=False
+        )
+        url = r.stdout.strip() if r.returncode == 0 else ""
+        urls[path] = url or entry.get("url", "")
+    return urls
+
+
+def _module_rel_from_config_path(repo_path: str, config_file: Path) -> str | None:
+    """Map a .git/modules/<rel>/config path back to the submodule path <rel>.
+
+    Returns None when the file does not resolve under .git/modules/ — the
+    scope guard that keeps this repair away from every other config file.
+    """
+    if not config_file.is_absolute():
+        config_file = Path(repo_path) / config_file
+    try:
+        modules_root = (Path(repo_path) / ".git" / "modules").resolve()
+        rel = config_file.resolve().parent.relative_to(modules_root)
+    except (OSError, ValueError):
+        return None
+    if not rel.parts:
+        return None
+    return "/".join(rel.parts)
+
+
+def _git_config_parses(config_file: Path, repo_path: str) -> bool:
+    r = git_run(
+        repo_path, ["config", "--file", str(config_file), "--list"], check=False
+    )
+    return r.returncode == 0
+
+
+def _module_config_check_reason(config_file: Path, repo_path: str) -> str:
+    """First failing integrity gate as human-readable text; 'healthy' if none.
+
+    The three gates mirror the incident: power cuts leave size-correct
+    all-zero content (the fast byte-level check), other corruption only shows
+    as a git parse failure.
+    """
+    try:
+        data = config_file.read_bytes()
+    except OSError as e:
+        return f"unreadable: {e}"
+    if not data:
+        return "empty file"
+    if set(data) == {0}:
+        return f"all-zero content ({len(data)} bytes)"
+    if not _git_config_parses(config_file, repo_path):
+        r = git_run(
+            repo_path, ["config", "--file", str(config_file), "--list"], check=False
+        )
+        return f"git parse failed: {r.stderr.strip()}"
+    return "healthy"
+
+
+def repair_module_config(
+    repo_path: str, config_file: Path, logger: logging.Logger
+) -> tuple[bool, str]:
+    """Back up a corrupt module config and rebuild the verified structure.
+
+    Mirrors the thrice-validated manual fix (SEE-476): same-directory
+    `config.corrupt-<ts>` backup, then core section + relative worktree +
+    [remote "origin"], url taken from the parent repo's stored submodule url.
+    Reversible by construction (the corrupt original is preserved); refuses to
+    rewrite when no source of truth for the url exists.
+    """
+    if not config_file.is_absolute():
+        config_file = Path(repo_path) / config_file
+    rel = _module_rel_from_config_path(repo_path, config_file)
+    if rel is None:
+        return False, f"not a module config under .git/modules/: {config_file}"
+
+    url = _registered_submodule_urls(repo_path).get(rel, "")
+    if not url:
+        return False, (
+            f"no submodule url found for '{rel}' in parent .git/config or "
+            f".gitmodules; refusing to rebuild {config_file} without a source of truth"
+        )
+
+    # Backup first — the corrupt original is the only forensic copy.
+    backup = config_file.parent / f"config.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        shutil.copy2(config_file, backup)
+    except OSError as e:
+        return False, f"could not back up {config_file} to {backup}: {e}"
+    logger.warning(
+        "%s corrupt module config backed up: %s -> %s (module=%s)",
+        SELFHEAL_LOG_PREFIX,
+        config_file,
+        backup,
+        rel,
+    )
+
+    worktree_rel = os.path.relpath(
+        os.path.join(repo_path, rel), start=str(config_file.parent)
+    ).replace(os.sep, "/")
+    # Mirror the parent repo's core.filemode; when unset, "false" matches the
+    # NTFS/9p reality of the incident checkout (mode bits are not trackable).
+    fm = git_run(repo_path, ["config", "--get", "core.filemode"], check=False)
+    filemode = fm.stdout.strip() or "false"
+
+    content = "\n".join(
+        [
+            "[core]",
+            "\trepositoryformatversion = 0",
+            f"\tfilemode = {filemode}",
+            "\tbare = false",
+            "\tlogallrefupdates = true",
+            f"\tworktree = {worktree_rel}",
+            '[remote "origin"]',
+            f"\turl = {url}",
+            "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+        ]
+    )
+    tmp = config_file.parent / "config.rebuild-tmp"
+    try:
+        tmp.write_text(content + "\n", encoding="utf-8")
+        os.replace(tmp, config_file)
+    except OSError as e:
+        return False, f"could not write rebuilt config {config_file}: {e}"
+
+    if not _git_config_parses(config_file, repo_path):
+        logger.error(
+            "%s rebuilt module config still fails git parse: %s; corrupt "
+            "original preserved at %s",
+            SELFHEAL_LOG_PREFIX,
+            config_file,
+            backup,
+        )
+        return False, f"rebuilt config failed git parse: {config_file}"
+
+    logger.info(
+        "%s module config rebuilt: %s (module=%s url=%s)",
+        SELFHEAL_LOG_PREFIX,
+        config_file,
+        rel,
+        url,
+    )
+    return True, f"rebuilt {config_file} (backup: {backup})"
+
+
+def precheck_module_configs(repo_path: str, logger: logging.Logger) -> list[str]:
+    """Boot precheck (SEE-476 goal 2): validate every registered submodule's
+    module config (exists / not all-zero / git-parseable) BEFORE the first
+    sync cycle, repairing anything corrupt. Returns repaired config paths.
+
+    A missing module config (uninitialized submodule) is materialization's
+    job, not corruption — skipped here. Repair failures are logged loudly and
+    left for the runtime self-heal backstop; startup never aborts on them.
+    """
+    repaired: list[str] = []
+    for rel in sorted(_registered_submodule_urls(repo_path)):
+        cfg = Path(repo_path) / ".git" / "modules" / rel / "config"
+        if not cfg.is_file():
+            continue
+        reason = _module_config_check_reason(cfg, repo_path)
+        if reason == "healthy":
+            continue
+        logger.warning(
+            "%s module config failed integrity check (path=%s): %s",
+            PRECHECK_LOG_PREFIX,
+            cfg,
+            reason,
+        )
+        ok, msg = repair_module_config(repo_path, cfg, logger)
+        if ok:
+            repaired.append(str(cfg))
+        else:
+            logger.error(
+                "%s precheck repair FAILED for %s: %s (runtime self-heal will retry)",
+                PRECHECK_LOG_PREFIX,
+                cfg,
+                msg,
+            )
+    return repaired
 
 
 def _git_path(repo_path: str, rel: str, timeout: int | None) -> Path | None:
@@ -1360,7 +1649,7 @@ def _resolve_rebase_first(
         logger.info("rebase succeeded for DIVERGED resolution")
         # SEE-1430b 语义改向：化解后不再 push（向上同步退役）。
         # 保留子库物化——materialize 是向下 sync 的一部分。
-        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout, logger=logger)
         result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
         result["success"] = sub_ok
         if not sub_ok:
@@ -1379,7 +1668,7 @@ def _resolve_rebase_first(
     if merge_ok:
         logger.info("merge fallback succeeded for DIVERGED resolution")
         # SEE-1430b 语义改向：化解后不再 push；保留子库物化。
-        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout, logger=logger)
         result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
         result["success"] = sub_ok
         if not sub_ok:
@@ -1408,7 +1697,7 @@ def _resolve_merge_first(
     if merge_ok:
         logger.info("merge succeeded for DIVERGED resolution")
         # SEE-1430b 语义改向：化解后不再 push；保留子库物化。
-        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout, logger=logger)
         result["resolution_steps"].append(f"submodule_update({'ok' if sub_ok else 'fail'})")
         result["success"] = sub_ok
         if not sub_ok:
@@ -1743,7 +2032,7 @@ def _synced_path_result(
         result["message"] = "already synced (dry-run: would verify submodules)"
         logger.info("already synced")
     else:
-        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout)
+        sub_ok, sub_msg = do_submodule_update(repo_path, timeout=timeout, logger=logger)
         if sub_ok:
             result["message"] = "already synced"
             logger.info("already synced")

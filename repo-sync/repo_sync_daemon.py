@@ -26,7 +26,11 @@ from pathlib import Path
 if sys.platform != "win32":
     import fcntl
 
-from repo_sync import send_alert
+from repo_sync import (
+    PRECHECK_LOG_PREFIX,
+    precheck_module_configs,
+    send_alert,
+)
 
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
@@ -304,6 +308,33 @@ def main() -> int:
 
     consecutive_failures = 0
     current_interval = poll_interval
+
+    # SEE-476 boot precheck: validate registered submodules' module configs
+    # BEFORE the first cycle — a power-cut-corrupted all-zero config would
+    # otherwise burn persistent failures up to the circuit breaker (three
+    # incidents: 09-22 / 10-23 / 10-24) before anyone looked. Precheck never
+    # blocks startup: failures fall through to the runtime self-heal backstop.
+    try:
+        repaired = precheck_module_configs(str(repo_root), logger)
+        if repaired:
+            logger.info(
+                "%s boot precheck repaired %d module config(s): %s",
+                PRECHECK_LOG_PREFIX,
+                len(repaired),
+                ", ".join(repaired),
+            )
+        else:
+            logger.info(
+                "%s boot precheck: all registered module configs healthy",
+                PRECHECK_LOG_PREFIX,
+            )
+    except Exception as e:
+        logger.error(
+            "%s boot precheck crashed: %s (continuing; runtime self-heal is "
+            "the backstop)",
+            PRECHECK_LOG_PREFIX,
+            e,
+        )
 
     try:
         while _running:
