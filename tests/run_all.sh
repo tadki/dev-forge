@@ -56,7 +56,11 @@ EXCLUDED=(
   # Final Review O1/O3 标签校正（SEE-1381 §SPEC-013）：以下两条真实归因不属
   # pwd-firelog-daemon 簇，单列标签；对 CI 口径的排除结论不变（条目不移出）
   test_see781_firelog_path.sh                       # env:real-firelog  (断言真实机器 hook firelog 存在性——CI ubuntu 无该文件必红；dev 机有即 GREEN，排除为 CI 口径而非 dev 漂移)
-  test_setup.sh                                     # env:real-repo-mutation  (被测对象 .githooks/setup.sh 设计上直接操作真实仓库配置与 hooks 可执行位，非环境漂移)
+  # SEE-1470 Track A 裁定：原条目 test_setup.sh（env:real-repo-mutation）移除——
+  # tests/test_setup.sh 在本仓已不存在，被测对象 .githooks/setup.sh 亦未随
+  # SEE-1429 迁入（本仓 .githooks/ 仅 README + pre-commit）；空条目残留会让
+  # is_excluded 子串匹配误伤未来同名新套件。setup.sh 语义若回迁需重评归因。
+
   # SEE-1381 §SPEC-016 CI 首跑/复跑归因增补（merge-ref 侧文件不在本分支树，条目
   # 仅在 CI merge checkout 生效；本机 glob 不触达 = 零行为变化）
   test_auto_pr_on_stop_boundary_cases.sh            # env:pwd-firelog-daemon  (SEE-1382 master 侧新增，auto-pr 通知系依赖 daemon)
