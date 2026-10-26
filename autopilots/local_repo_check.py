@@ -48,24 +48,27 @@ except ImportError:
 
 # --- Argument parsing ---
 
+def _is_task_slot(path: str) -> bool:
+    """True if `path` is a task-slot directory (has ``.gc_meta.json`` or a
+    ``workdir/``). Single source of the slot-marker definition."""
+    return (
+        os.path.isfile(os.path.join(path, ".gc_meta.json"))
+        or os.path.isdir(os.path.join(path, "workdir"))
+    )
+
+
 def _has_task_slots(candidate: str) -> bool:
     """True if the candidate directory holds at least one task-slot child.
 
-    A task slot is a child directory containing ``.gc_meta.json`` or a
-    ``workdir/``. SEE-1473 defect A: a bare isdir check cannot tell a real
-    workspace root from a leftover/hollow directory, so rule-1 candidates
-    must actually hold slots before they may short-circuit resolution.
+    SEE-1473 defect A: a bare isdir check cannot tell a real workspace root
+    from a leftover/hollow directory, so rule-1 candidates must actually
+    hold slots before they may short-circuit resolution.
     """
     if not os.path.isdir(candidate):
         return False
     for name in os.listdir(candidate):
         child = os.path.join(candidate, name)
-        if not os.path.isdir(child):
-            continue
-        if (
-            os.path.isfile(os.path.join(child, ".gc_meta.json"))
-            or os.path.isdir(os.path.join(child, "workdir"))
-        ):
+        if os.path.isdir(child) and _is_task_slot(child):
             return True
     return False
 
@@ -114,10 +117,7 @@ def _default_workspace_root() -> str:
 
     cursor = os.path.abspath(os.path.dirname(__file__))
     for _ in range(6):
-        if (
-            os.path.isfile(os.path.join(cursor, ".gc_meta.json"))
-            or os.path.isdir(os.path.join(cursor, "workdir"))
-        ):
+        if _is_task_slot(cursor):
             parent = os.path.dirname(cursor)
             if parent and parent != cursor:
                 return parent
