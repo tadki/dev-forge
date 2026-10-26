@@ -48,29 +48,76 @@ except ImportError:
 
 # --- Argument parsing ---
 
+def _has_task_slots(candidate: str) -> bool:
+    """True if the candidate directory holds at least one task-slot child.
+
+    A task slot is a child directory containing ``.gc_meta.json`` or a
+    ``workdir/``. SEE-1473 defect A: a bare isdir check cannot tell a real
+    workspace root from a leftover/hollow directory, so rule-1 candidates
+    must actually hold slots before they may short-circuit resolution.
+    """
+    if not os.path.isdir(candidate):
+        return False
+    for name in os.listdir(candidate):
+        child = os.path.join(candidate, name)
+        if not os.path.isdir(child):
+            continue
+        if (
+            os.path.isfile(os.path.join(child, ".gc_meta.json"))
+            or os.path.isdir(os.path.join(child, "workdir"))
+        ):
+            return True
+    return False
+
+
+def _workspace_root_candidates(ws_id: str) -> list:
+    """Rule-1 candidate roots for ws_id, current platform layout first.
+
+    The platform migrated from ``<root>/<ws_id>`` to
+    ``<root>/seed-<last-12-of-ws_id>`` (see ~/.multica/task_roots index
+    entries, e.g. ``relative_path: "seed-478690824e46/see-…"``). The legacy
+    ``<ws_id>`` directory often still exists as a stale leftover — SEE-1473
+    defect A — so the current-layout candidate is tried first; a leftover
+    must never outrank the live root it was migrated away from.
+    """
+    root_base = os.environ.get(
+        "MULTICA_WORKSPACES_ROOT",
+        os.path.expanduser("~/multica_workspaces"),
+    )
+    candidates = []
+    suffix = ws_id.replace("-", "")[-12:]
+    if suffix:
+        candidates.append(os.path.join(root_base, f"seed-{suffix}"))
+    candidates.append(os.path.join(root_base, ws_id))
+    return candidates
+
+
 def _default_workspace_root() -> str:
     """Derive the Multica workspace root without hardcoding.
 
     Resolution order:
-      1. $MULTICA_WORKSPACE_ID under $MULTICA_WORKSPACES_ROOT
-         (or its default ~/multica_workspaces).
-      2. Walk up from this script looking for an ancestor whose children are
-         worktree slots (each contains a ``.gc_meta.json`` or a ``workdir/``).
+      1. Task-slot-backed candidate under $MULTICA_WORKSPACES_ROOT
+         (or its default ~/multica_workspaces), current platform layout
+         (``seed-<ws_id last 12>``) before legacy ``<ws_id>`` — and only
+         when the candidate actually holds task slots (SEE-1473 defect A:
+         a leftover/hollow directory must not short-circuit resolution).
+      2. Walk up from this script looking for a task slot (a directory
+         containing ``.gc_meta.json`` or ``workdir/``); its parent is the
+         workspace root.
       3. Empty string — caller must fail fast and ask for --workspace-root.
     """
     ws_id = os.environ.get("MULTICA_WORKSPACE_ID", "")
     if ws_id:
-        root_base = os.environ.get(
-            "MULTICA_WORKSPACES_ROOT",
-            os.path.expanduser("~/multica_workspaces"),
-        )
-        candidate = os.path.join(root_base, ws_id)
-        if os.path.isdir(candidate):
-            return candidate
+        for candidate in _workspace_root_candidates(ws_id):
+            if _has_task_slots(candidate):
+                return candidate
 
     cursor = os.path.abspath(os.path.dirname(__file__))
     for _ in range(6):
-        if os.path.isfile(os.path.join(cursor, ".gc_meta.json")):
+        if (
+            os.path.isfile(os.path.join(cursor, ".gc_meta.json"))
+            or os.path.isdir(os.path.join(cursor, "workdir"))
+        ):
             parent = os.path.dirname(cursor)
             if parent and parent != cursor:
                 return parent
@@ -292,6 +339,26 @@ def find_bare_repo_path(ws_root: str) -> str:
     if bare:
         return bare
     return _first_existing_bare(_bare_repo_fallback_candidates(ws_root))
+
+
+def _list_agent_branches(bare_repo: str) -> list:
+    """Return agent/* branch short names in bare_repo.
+
+    SEE-1473 defect B: plain `git branch` output paints position markers
+    (``*`` current, ``+`` checked out in a linked worktree) that survived the
+    old lstrip("* ") and made every worktree-attached branch look orphaned.
+    --format emits bare refnames, so there is no marker left to strip.
+    """
+    agent_branches_raw = run(
+        f'git -C "{bare_repo}" branch --list "agent/*" '
+        f"--format='%(refname:short)'",
+        timeout=30,
+    )
+    return [
+        line.strip()
+        for line in agent_branches_raw.splitlines()
+        if line.strip()
+    ]
 
 
 # --- Phase 2 state ---
@@ -806,15 +873,7 @@ if __name__ == "__main__":
                 short = line[len("branch "):].replace("refs/heads/", "", 1)
                 active_branches.add(short)
 
-        # Get all agent/* branches (already short names)
-        agent_branches_raw = run(
-            f'git -C "{bare_repo}" branch --list "agent/*"', timeout=30
-        )
-        agent_branches = [
-            line.strip().lstrip("* ").strip()
-            for line in agent_branches_raw.splitlines()
-            if line.strip()
-        ]
+        agent_branches = _list_agent_branches(bare_repo)
 
         # Orphan = agent branches not in active worktrees
         orphans = [b for b in agent_branches if b not in active_branches]
