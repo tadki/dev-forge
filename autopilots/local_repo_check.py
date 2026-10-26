@@ -77,8 +77,8 @@ def _workspace_root_candidates(ws_id: str) -> list:
     """Rule-1 candidate roots for ws_id, current platform layout first.
 
     The platform migrated from ``<root>/<ws_id>`` to
-    ``<root>/seed-<last-12-of-ws_id>`` (see ~/.multica/task_roots index
-    entries, e.g. ``relative_path: "seed-478690824e46/see-…"``). The legacy
+    ``<root>/seed-<last-12-of-ws_id>`` (see ~/multica_workspaces/.task_roots
+    index entries, e.g. ``relative_path: "seed-478690824e46/see-…"``). The legacy
     ``<ws_id>`` directory often still exists as a stale leftover — SEE-1473
     defect A — so the current-layout candidate is tried first; a leftover
     must never outrank the live root it was migrated away from.
