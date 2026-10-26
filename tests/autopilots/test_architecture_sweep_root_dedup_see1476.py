@@ -115,6 +115,46 @@ class TestDefaultWorkspaceRoot:
         root = self._walk_from(monkeypatch, cwd)
         assert root == str(seed)
 
+    def test_top_level_real_slot_and_seed_coexist_prefers_seed(
+        self, tmp_path, monkeypatch
+    ):
+        # Review MEDIUM-1 (SEE-1476): when a top level hosts BOTH a real slot
+        # and a seed dir, the walk-up must not overshoot to the top level —
+        # the cross-slot scan probes a single level below the chosen root and
+        # would miss the seed-nested slots near CWD (same defect class as the
+        # original 4-Monday false positive).
+        top = tmp_path / "R"
+        legacy_repo = top / "legacyslot" / "workdir" / "KingOfLikes-Godot"
+        legacy_repo.mkdir(parents=True)  # real top-level slot, empty reports
+        seed = top / "seedA"
+        seeded_repo = seed / "slotX" / "workdir" / "KingOfLikes-Godot"
+        _write(str(seeded_repo / "tests" / "reports" / "junit_report.xml"),
+               "<testsuite><testcase name=\"t0\" classname=\"tests/unit/test_x.gd\"/></testsuite>")
+        cwd = seed / "slotX" / "workdir" / "dev-forge"
+        cwd.mkdir(parents=True)
+        root = self._walk_from(monkeypatch, cwd)
+        assert root == str(seed)
+        # End-to-end pin of the failure chain: scanning from the CHOSEN root
+        # must actually reach the fresh junit (pre-fix root was `top`, 0 hits).
+        path, count, mtime = sweep._newest_junit_across_slots(
+            root, "tests/reports/junit_report.xml", 1
+        )
+        assert path != ""
+        assert count == 1
+
+    def test_no_seed_ancestor_keeps_highest_qualifying_ancestor(
+        self, tmp_path, monkeypatch
+    ):
+        # Without a seed ancestor on the CWD chain the historical behaviour
+        # is preserved: highest qualifying ancestor wins.
+        top = tmp_path / "R"
+        legacy_repo = top / "legacyslot" / "workdir" / "KingOfLikes-Godot"
+        legacy_repo.mkdir(parents=True)
+        cwd = top / "legacyslot" / "workdir" / "dev-forge"
+        cwd.mkdir(parents=True)
+        root = self._walk_from(monkeypatch, cwd)
+        assert root == str(top)
+
 
 # =============================================================================
 # SPEC-1476-2 — D1 per-dir dedup key distinct from the global key
