@@ -175,32 +175,64 @@ GUT_PARTIAL_RUN_TOLERANCE = 0.95
 # ---------------------------------------------------------------------------
 
 
+def _slot_hosts_repo(slot_dir: str) -> bool:
+    """SEE-1476 SPEC-1: a slot counts only if it actually hosts the target
+    repo checkout (``<slot>/workdir/KingOfLikes-Godot`` or
+    ``<slot>/KingOfLikes-Godot``). A residual directory that merely contains
+    an empty-ish ``workdir/`` (e.g. an orphaned reply-scope md) must not
+    qualify, or it pushes the detected workspace root one level too high and
+    blinds the cross-slot junit scan."""
+    return (
+        os.path.isdir(os.path.join(slot_dir, "workdir", "KingOfLikes-Godot"))
+        or os.path.isdir(os.path.join(slot_dir, "KingOfLikes-Godot"))
+    )
+
+
 def _default_workspace_root() -> str:
     """Auto-detect the Multica workspace root (D8: no hardcoded machine path).
 
     Strategy: a workspace root is a directory whose children look like
-    ``<hash>/workdir/<repo>/`` slots. (Multi-level fallback originally
-    mirrored the local_repo_check chain retired in SEE-1473 R3.) Walk up from CWD to the highest ancestor
-    that contains at least one such slot, falling back to
-    ``MULTICA_WORKSPACE_ROOT`` then ``~/.multica/workspaces``.
+    ``<hash>/workdir/<repo>/`` slots that actually host the target repo
+    (SEE-1476 SPEC-1: a residual ``<hash>/workdir`` dir without the repo
+    must not count). Walk up from CWD and prefer the closest qualifying
+    ``seed-*`` ancestor (MEDIUM-1: keeps the root aligned with the one-level
+    cross-slot scan when a higher level also hosts real slots); absent a
+    seed ancestor, take the highest qualifying ancestor. Then fall back to
+    ``MULTICA_WORKSPACE_ROOT`` then ``~/.multica/workspaces``. SEE-1128:
+    when none of those resolves, return an explicit (logged) empty result
+    rather than silently guessing CWD — a loud unresolved root beats a
+    quietly wrong one. (The original multi-level fallback mirrored the
+    local_repo_check chain retired in SEE-1473 R3.)
     """
     cwd = os.path.abspath(os.getcwd())
     best = ""
+    seed_best = ""
     current = cwd
     while current:
         try:
             has_slot = any(
-                os.path.isdir(os.path.join(current, name, "workdir"))
+                _slot_hosts_repo(os.path.join(current, name))
                 for name in os.listdir(current)
             )
         except OSError:
             has_slot = False
         if has_slot:
             best = current
+            # SEE-1476 review MEDIUM-1: remember the closest qualifying
+            # ``seed-*`` ancestor on the CWD chain. The cross-slot junit scan
+            # probes exactly one level below the chosen root, so a higher
+            # qualifying ancestor (e.g. a top level that also hosts real slots
+            # next to the seed dir) would blind the scan to the seed-nested
+            # slots near CWD — the same walk-up-depth vs scan-depth mismatch
+            # class as the original SEE-1476 defect.
+            if not seed_best and os.path.basename(current).startswith("seed"):
+                seed_best = current
         parent = os.path.dirname(current)
         if parent == current:
             break
         current = parent
+    if seed_best:
+        return seed_best
     if best:
         return best
     # Fallback 1: explicit env var pointing at the workspace root.
@@ -212,7 +244,15 @@ def _default_workspace_root() -> str:
     home_ws = os.path.expanduser("~/.multica/workspaces")
     if os.path.isdir(home_ws):
         return home_ws
-    return cwd
+    # SEE-1476 SPEC-1: no slot-hosting root found and no explicit fallback —
+    # surface the failure instead of returning CWD (the old silent default).
+    # The cross-slot junit scan then reports "no junit report found" as a
+    # finding, so the broken environment is visible instead of mis-scanned.
+    log_error(
+        "Workspace root auto-detection failed: no ancestor of CWD hosts a "
+        "slot with KingOfLikes-Godot; set MULTICA_WORKSPACE_ROOT explicitly"
+    )
+    return ""
 
 
 def parse_args():
@@ -1458,12 +1498,18 @@ def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
                 continue
             actual_dir = actual_by_dir.get(rel_dir, 0)
             threshold_dir = int(expected_dir * GUT_PARTIAL_RUN_TOLERANCE)
+            # SEE-1476 SPEC-2: encode the dir into the dedup key (via `file`)
+            # so a whole-dir finding can never collide with the global
+            # `.gutconfig.json:0:GUT_SILENT_SKIP:error` key and be swallowed
+            # by the baseline — a real dir-level skip must reach
+            # new_findings and the escalation path.
+            dir_file = f".gutconfig.json#dir={rel_dir}"
             if actual_dir == 0:
                 findings.append(
                     {
                         "rule_id": "GUT_SILENT_SKIP",
                         "severity": SEVERITY_ERROR,
-                        "file": ".gutconfig.json",
+                        "file": dir_file,
                         "line": 0,
                         "message": (
                             f"GUT silent skip (dir): {rel_dir}/ expected "
@@ -1477,7 +1523,7 @@ def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
                     {
                         "rule_id": "GUT_SILENT_SKIP",
                         "severity": SEVERITY_ERROR,
-                        "file": ".gutconfig.json",
+                        "file": dir_file,
                         "line": 0,
                         "message": (
                             f"GUT silent skip (dir): {rel_dir}/ expected "
