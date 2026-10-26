@@ -79,7 +79,6 @@ def test_synthetic_tree_counts_exactly_one_guard_pending(tmp_path: Path) -> None
 def test_threshold_zero_exit_semantics(tmp_path: Path) -> None:
     _make_tree(tmp_path)
     # 超 threshold → 1；豁免后只剩 Track-D → 0
-    assert guard_pending.main.__module__  # import 健在
     rc_over = subprocess.run(
         [sys.executable, str(SCRIPT), "--repo-root", str(tmp_path), "--format", "json"],
         capture_output=True, text=True, check=False,
@@ -114,7 +113,7 @@ def test_multiline_and_hyphenated_track_d_exemptions(tmp_path: Path) -> None:
         "func test_a() -> void:\n"
         '\tpending("FlowTelemetry not implemented yet (Track-D pending)")\n',
     )
-    # 窗口边界：pending( 后Track-D 标识落在第 3 行（本行+2）仍在窗口内
+    # 窗口边界：pending( 后 Track-D 标识落在第 3 行（本行+2）仍在窗口内
     _write(
         tests / "window.gd",
         "func test_b() -> void:\n"
@@ -160,20 +159,20 @@ def test_unreadable_file_raises_not_silent_zero(tmp_path: Path) -> None:
 def test_sweep_l0_wiring_emits_findings_and_metric(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _make_tree(repo)
-    findings = sweep.check_guard_pending(str(repo))
-    assert len(findings) == 1
-    f = findings[0]
+    # 直接重放 L0 的第 9 项接线逻辑（不拉起整个 sweep main 的锁/状态面）：
+    # all_findings.extend(gp) + metrics["guard_pending"] = len(gp)
+    all_findings: list = []
+    metrics: dict = {}
+    gp = sweep.check_guard_pending(str(repo))
+    all_findings.extend(gp)
+    metrics["guard_pending"] = len(gp)
+    assert len(gp) == 1
+    f = gp[0]
     assert f["rule_id"] == "GUARD_PENDING"
     assert f["severity"] == sweep.SEVERITY_ERROR
     assert f["file"] == "tests/sample_a.gd"
     assert f["line"] == 4
     # metrics 口径：sweep L0 把站点数计入 metrics["guard_pending"]
-    all_findings: list = []
-    metrics: dict = {}
-    # 直接重放 L0 的第 9 项接线逻辑（不拉起整个 sweep main 的锁/状态面）
-    gp = sweep.check_guard_pending(str(repo))
-    all_findings.extend(gp)
-    metrics["guard_pending"] = len(gp)
     assert metrics["guard_pending"] == 1
     assert len(all_findings) == 1
 

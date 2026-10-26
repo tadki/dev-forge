@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SEE-1470 Track A: canonical upgrade-surface test for SEE-899 (static + compat).
 # 迁移并合并 KOL devtests 三件静态语义：
 #   tests/devtests/scripts/test_see899_regression.sh        (fail-fast / idiom / helpers)
@@ -13,12 +13,6 @@ TARGET="$REPO_ROOT/adapters/upgrade-multica-selfhost.sh"
 
 fail=0
 note() { echo "[see899-static] $*"; }
-_require_target() {
-    if [[ ! -f "$TARGET" ]]; then
-        echo "[see899-static] FAIL: production script not found at $TARGET" >&2
-        exit 1
-    fi
-}
 
 # --- 1. 语法（R1/R2 两轮修改不得引入 quoting/heredoc 损伤） -------------------
 if bash -n "$TARGET"; then

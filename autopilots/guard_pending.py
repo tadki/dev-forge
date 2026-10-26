@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""guard_pending — tests/ 内未豁免 pending(...) 站点日检（SEE-1300 SPEC-001）。
+"""guard_pending — tests/ 内未豁免 pending(...) 站点日检（ledger 2026-09 SPEC-001）。
 
 自 KOL tests/devtests/scripts/check_guard_pending.py 迁入生产化（SEE-1470
 Track A），作为 dev-forge 日检能力，并由 architecture_sweep L0 接线
