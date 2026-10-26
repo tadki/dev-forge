@@ -27,6 +27,7 @@ TEMP_SANDBOX="$SANDBOX/tmp"
 WORKING_BRANCH="qa/see1005-canon"
 REPO_DIR_NAME="repo-checkout-canon"
 FAKE_ISSUE_ID="00000000-0000-4000-8000-000000000000"
+FAKE_TASK_ID="qa-see1005-timeout"
 trap 'rm -rf "$SANDBOX"' EXIT
 export TEMP="$TEMP_SANDBOX"
 mkdir -p "$TEMP_SANDBOX"
@@ -121,10 +122,18 @@ EOF
 }
 
 # 运行生产脚本（空 stdin），记录 wall/exit/输出。
+# Multica 会话上下文由测试自给并隔离（§SPEC-014）：生产 resolve_issue_id 的
+# Path 0-2 依赖继承自宿主会话的 MULTICA_TASK_ID / MULTICA_AGENT_ID，CI runner
+# 无这些 env 时 align 路径不执行（S2 marker 不重写 / S3 sentinel 零触达假红）。
+# env 固定注入 TASK_ID（走 shim 的 run-messages 腿）并显式清空其余会话变量，
+# 结果不随宿主 env 漂移；shim 只认 "$SANDBOX/origin.git" 与固定分支，无外网。
 run_script() {
     local target="$1" t0 t1
     t0=$(now_ms)
-    OUT="$( cd "$WORKDIR" && printf '' | bash "$target" 2>/dev/null )"
+    OUT="$( cd "$WORKDIR" && printf '' | env \
+        MULTICA_TASK_ID="$FAKE_TASK_ID" \
+        MULTICA_AGENT_ID= MULTICA_AGENT_NAME= MULTICA_WORKSPACE_ID= \
+        bash "$target" 2>/dev/null )"
     RC=$?
     t1=$(now_ms)
     ELAPSED=$(elapsed "$t0" "$t1")
