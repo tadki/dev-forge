@@ -39,6 +39,9 @@ from multica_helpers import (
     log_error as _log_error_orig,
     multica_cli,
 )
+# SEE-1470 Track A: guard_pending 日检（ledger 2026-09 SPEC-001）生产接线——
+# 扫描口径单源于同目录 guard_pending.py，sweep 只消费其 scan()。
+from guard_pending import scan as scan_guard_pendings
 
 # ---------------------------------------------------------------------------
 # Exit-code discipline (SEE-1109): any phase failure bumps _phase_error_count;
@@ -1084,6 +1087,33 @@ def check_blacklist_functions(repo_root: str, gd_files: list[str]) -> list[dict]
     return findings
 
 
+def check_guard_pending(repo_root: str) -> list[dict]:
+    """Guard-pending 日检（SEE-1470 Track A，ledger 2026-09 SPEC-001 口径）。
+
+    扫描 repo_root/tests/ 下未带 Track-D 标识的 pending(...) 站点（分类规则
+    单源于 guard_pending.py）。扫描面缺失（无 tests/）按零站点处理——目标仓
+    无测试树不是违规；文件不可读由底层显式报错，不让整个 sweep 静默转绿。
+    """
+    try:
+        result = scan_guard_pendings(Path(repo_root))
+    except RuntimeError as exc:
+        log_error(str(exc))
+        return []
+    findings = []
+    for rel, hits in result["by_file"].items():
+        for line, snippet in hits:
+            findings.append(
+                {
+                    "rule_id": "GUARD_PENDING",
+                    "severity": SEVERITY_ERROR,
+                    "file": rel,
+                    "line": line,
+                    "message": f"Guard pending (silent-skip fallback): {snippet}",
+                }
+            )
+    return findings
+
+
 def check_gdlint_increment(repo_root: str, gd_files: list[str], dry_run: bool) -> list[dict]:
     """Run gdlint and report new warnings relative to baseline.
 
@@ -1715,6 +1745,11 @@ def _run_l0_checks(repo_root: str, prod_gd, fast_mode: bool, dry_run: bool,
             gdlint_findings = gdlint_result
         all_findings.extend(gdlint_findings)
         metrics["gdlint_new_warnings"] = len(gdlint_findings)
+
+    # 9. Guard pending（SEE-1470 Track A：ledger 2026-09 SPEC-001 日检生产接线）
+    gp_findings = check_guard_pending(repo_root)
+    all_findings.extend(gp_findings)
+    metrics["guard_pending"] = len(gp_findings)
 
     return redline_skipped, gdlint_warnings
 
