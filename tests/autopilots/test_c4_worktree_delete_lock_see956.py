@@ -109,6 +109,10 @@ class TestAcquireWorktreeDeleteLock:
         wt_dir = str(tmp_path / "wt-release")
         os.makedirs(wt_dir, exist_ok=True)
         fake_porcelain = f"worktree {wt_dir}\nlocked\n"
+        # SEE-1473: restore the REAL lrc.run afterwards — the previous finally
+        # installed a permanent fallback-stub, silently breaking every later
+        # in-process caller of run() (exposed by the SEE-1473 branch tests).
+        original_run = lrc.run
         lrc.run = lambda cmd, timeout=30: fake_porcelain
         try:
             status, fd = acquire_worktree_delete_lock(wt_dir, bare_repo="/fake/bare")
@@ -119,8 +123,7 @@ class TestAcquireWorktreeDeleteLock:
             assert status2 == "skipped_git_locked"
             assert fd2 is None
         finally:
-            # restore default import reference for other tests
-            lrc.run = lambda cmd, fallback="", timeout=30: fallback
+            lrc.run = original_run
 
 
 class TestC4IntegrationInDeletePath:
