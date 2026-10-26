@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SEE-1470 Track A: canonical upgrade-FLOW test for SEE-899.
 # 迁移并合并 KOL devtests 三件流语义：
 #   tests/devtests/e2e/test_see899_upgrade_flow_live_e2e.sh          (A/A2/A3/B 路径)
@@ -50,12 +50,16 @@ guard_extract "stash-pop block" "$STASH_BLOCK"
 guard_extract "image-pull loop" "$PULL_LOOP"
 
 # 生产块内的 exit 必须仍是 fail-fast 语义：提取后子 shell 退出码 1。
-setup_conflict_repo() {
+init_repo() {
     local repo="$1"
     mkdir -p "$repo"
     git -C "$repo" init -q
     git -C "$repo" config user.email "qa@kingoflikes.test"
     git -C "$repo" config user.name "SEE1470 sandbox"
+}
+setup_conflict_repo() {
+    local repo="$1"
+    init_repo "$repo"
     printf 'services:\n  backend:\n    image: backend:v1\n' > "$repo/docker-compose.selfhost.yml"
     git -C "$repo" add -A
     git -C "$repo" commit -qm "base compose"
@@ -115,10 +119,7 @@ fi
 echo ""
 echo "=== Path A3: clean stash restore (production block) ==="
 REPO_A3="$SANDBOX/repo_a3"
-mkdir -p "$REPO_A3"
-git -C "$REPO_A3" init -q
-git -C "$REPO_A3" config user.email "qa@kingoflikes.test"
-git -C "$REPO_A3" config user.name "SEE1470 sandbox"
+init_repo "$REPO_A3"
 printf 'base\n' > "$REPO_A3/app.conf"
 git -C "$REPO_A3" add -A && git -C "$REPO_A3" commit -qm base
 printf 'local\n' > "$REPO_A3/app.conf"

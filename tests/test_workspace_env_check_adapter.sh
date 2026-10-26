@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SEE-1470 Track A: workspace-env-check adapter 行为矩阵（自 KOL devtests 迁入）。
 # 源件 tests/devtests/scripts/test_workspace_env_check.sh（SEE-1465 §SPEC-017
 # 重裁版）1:1 保持 adapter 合同断言；SEE-1430 迁移后生产脚本已在本仓，寻址

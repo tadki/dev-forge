@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SEE-1470 Track A: canonical RECOVERY test for SEE-899 R2 pre-flight block.
 # 迁移并合并 KOL devtests 两件恢复语义：
 #   tests/devtests/e2e/test_see899_r2_worktree_recovery_live_e2e.sh (A/B1/B2/C/D 场景)
@@ -68,6 +68,24 @@ init_repo() {
     git -C "$repo" config user.email "qa@kingoflikes.test"
     git -C "$repo" config user.name "SEE1470 sandbox"
 }
+# Scenario A/D 共用的 merge 冲突仓装配：main 与 feat 交替改同一 compose 后互 merge；
+# 仅 frontend 服务块随场景不同（A 双服务，D 单服务传空）。
+build_merge_conflict_repo() {
+    local repo="$1" frontend_block="$2"
+    (
+        cd "$repo"
+        git symbolic-ref HEAD refs/heads/main
+        printf 'services:\n  backend:\n    image: v1\n%s' "$frontend_block" > docker-compose.selfhost.yml
+        git add -A && git commit -qm base
+        git checkout -q -b feat
+        printf 'services:\n  backend:\n    image: v2-feat\n%s' "$frontend_block" > docker-compose.selfhost.yml
+        git commit -qam feat
+        git checkout -q main
+        printf 'services:\n  backend:\n    image: v3-main\n%s' "$frontend_block" > docker-compose.selfhost.yml
+        git commit -qam mainchange
+        git merge feat >/dev/null 2>&1 || true
+    )
+}
 
 # -----------------------------------------------------------------------------
 # Scenario A: MERGE_HEAD + unmerged paths → merge --abort → HEAD 态恢复
@@ -75,19 +93,7 @@ init_repo() {
 echo "=== Scenario A: MERGE_HEAD + unmerged paths ==="
 REPO_A="$(mktemp -d)"
 init_repo "$REPO_A"
-(
-    cd "$REPO_A"
-    git symbolic-ref HEAD refs/heads/main
-    printf 'services:\n  backend:\n    image: v1\n  frontend:\n    image: fe1\n' > docker-compose.selfhost.yml
-    git add -A && git commit -qm base
-    git checkout -q -b feat
-    printf 'services:\n  backend:\n    image: v2-feat\n  frontend:\n    image: fe1\n' > docker-compose.selfhost.yml
-    git commit -qam feat
-    git checkout -q main
-    printf 'services:\n  backend:\n    image: v3-main\n  frontend:\n    image: fe1\n' > docker-compose.selfhost.yml
-    git commit -qam mainchange
-    git merge feat >/dev/null 2>&1 || true
-)
+build_merge_conflict_repo "$REPO_A" $'  frontend:\n    image: fe1\n'
 before_mh=$(test -f "$REPO_A/.git/MERGE_HEAD" && echo Y || echo N)
 echo "Before: MERGE_HEAD=$before_mh"
 ( cd "$REPO_A" && run_recovery_block 1 ) > "$OUT_DIR/A.out" 2>&1
@@ -176,19 +182,7 @@ echo ""
 echo "=== Scenario D: recovery then normal flow readiness ==="
 REPO_D="$(mktemp -d)"
 init_repo "$REPO_D"
-(
-    cd "$REPO_D"
-    git symbolic-ref HEAD refs/heads/main
-    printf 'services:\n  backend:\n    image: v1\n' > docker-compose.selfhost.yml
-    git add -A && git commit -qm base
-    git checkout -q -b feat
-    printf 'services:\n  backend:\n    image: v2-feat\n' > docker-compose.selfhost.yml
-    git commit -qam feat
-    git checkout -q main
-    printf 'services:\n  backend:\n    image: v3-main\n' > docker-compose.selfhost.yml
-    git commit -qam mainchange
-    git merge feat >/dev/null 2>&1 || true
-)
+build_merge_conflict_repo "$REPO_D" ""
 ( cd "$REPO_D" && run_recovery_block 1 ) > "$OUT_DIR/D.out" 2>&1
 exit_d=$?
 d_status=$(git -C "$REPO_D" status --short | wc -l)
