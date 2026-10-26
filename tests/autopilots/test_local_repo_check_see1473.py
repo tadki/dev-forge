@@ -16,8 +16,11 @@ Defect B (§SPEC-002): agent/* branch listing painted git position markers
 (``+`` for branches checked out in a linked worktree) that survived the old
 ``lstrip("* ")`` and made every worktree-attached branch look orphaned
 (production: 44 false orphans, cleanup permanently 0). Pinned here with a
-real bare-repo sandbox: one attached branch + one true orphan, asserted in
-dry-run (list only) and non-dry-run (list + cleaned == 1).
+real bare-repo sandbox: one attached branch, one detached-HEAD worktree
+(production reality — it must neither pollute nor protect any branch) and
+one true orphan, asserted in dry-run (list only) and non-dry-run (list +
+cleaned == 1); plus the empty-agent-branch no-op contract (cleaned == 0)
+and the `*` current-branch-marker hygiene at the helper level.
 
 Safety: every git write happens inside pytest tmp_path sandboxes; the script
 is invoked with MULTICA_WORKSPACE_ID stripped and MULTICA_BARE_REPOS_ROOT
@@ -27,6 +30,7 @@ stays inside the sandbox — no production repo can ever be resolved.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -89,10 +93,18 @@ class TestWorkspaceRootResolution:
 
     def test_hollow_legacy_dir_does_not_short_circuit(self):
         """A candidate that merely exists (no task slots at all) must not
-        short-circuit resolution — rule 2 gets its chance instead."""
+        short-circuit resolution — rule 2 gets its chance instead. Pinned as
+        a zero-influence equivalence: resolution with the hollow legacy dir
+        present must be identical to resolution with it absent. Pre-fix code
+        returned the hollow dir here; a resolution that collapses to ""
+        instead must also fail this equivalence (it differs from the
+        legacy-absent walk-up result)."""
         (self.legacy / "junk").mkdir(parents=True)
-        resolved = _import_lrc()._default_workspace_root()
-        assert resolved != str(self.legacy)
+        with_hollow = _import_lrc()._default_workspace_root()
+        shutil.rmtree(self.legacy)
+        without_legacy = _import_lrc()._default_workspace_root()
+        assert with_hollow == without_legacy
+        assert with_hollow != str(self.legacy)
 
     def test_rule1_still_accepts_candidate_with_task_slots(self):
         """Non-regression: a legacy-layout candidate with real slots remains
@@ -101,16 +113,37 @@ class TestWorkspaceRootResolution:
         resolved = _import_lrc()._default_workspace_root()
         assert resolved == str(self.legacy)
 
-    def test_rule2_walkup_accepts_workdir_marker(self):
-        """Rule 2 must honor the documented workdir/ slot marker. Live-machine
-        evidence (this checkout lives in <seed-root>/<slot>/workdir/<repo>):
-        with rule 1 hollowed out, walk-up still finds the real seed root."""
-        real_seed = os.path.expanduser("~/multica_workspaces/seed-478690824e46")
-        if not os.path.isdir(real_seed):
-            pytest.skip("real seed workspace root not available")
-        self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", "/nonexistent-root")
+    def test_hollow_seed_candidate_does_not_shadow_slot_backed_legacy(self):
+        """Slot validation applies to the preferred seed-layout candidate
+        too: a seed-named dir that merely exists (no slots) must not shadow
+        a legacy candidate that really holds task slots. Guards the
+        name-preference order against regressing into "seed name always
+        wins" without the task-slot check."""
+        (self.current / "junk").mkdir(parents=True)
+        _make_slot(self.legacy, "slot1")
         resolved = _import_lrc()._default_workspace_root()
-        assert resolved == real_seed
+        assert resolved == str(self.legacy)
+
+    def test_rule2_walkup_accepts_workdir_marker(self, tmp_path):
+        """Rule 2 must honor the documented workdir/ slot marker. Pure-sandbox
+        mirror of the real slot chain (<seed-root>/<slot>/workdir/<repo>): a
+        slot carrying ONLY workdir/ (no .gc_meta.json — the state of any
+        running slot) must still resolve, independent of where this checkout
+        lives. Pre-fix walk-up only accepted .gc_meta.json and returned ""
+        here (SEE-1473 defect A, rule-2 half)."""
+        slot = tmp_path / "fake-seed-root" / "slot-1"
+        slot.mkdir(parents=True)
+        (slot / "workdir").mkdir()
+        (slot / "workdir" / "repo").mkdir()
+        fake_script = (
+            slot / "workdir" / "repo" / "autopilots" / "local_repo_check.py"
+        )
+        self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", "/nonexistent-root")
+        self.monkeypatch.setattr(
+            _import_lrc(), "__file__", str(fake_script)
+        )
+        resolved = _import_lrc()._default_workspace_root()
+        assert resolved == str(tmp_path / "fake-seed-root")
 
     def test_rule3_returns_empty_when_nothing_matches(self, tmp_path, monkeypatch):
         """Script deployed outside any slot chain (e.g. a bare main clone):
@@ -179,9 +212,11 @@ def _bare_branches(bare):
 
 def _build_orphan_sandbox(tmp_path):
     """Bare-repo sandbox where agent/test/attached is checked out in a linked
-    worktree (git paints it '+') and agent/test/orphan is a true orphan.
-    Returns (sandbox_dir, bare, ws_root); ws_root is empty so the scan phase
-    has nothing to delete and Phase 2 goes down the silent path."""
+    worktree (git paints it '+'), a detached-HEAD worktree exists (production
+    reality: running slots hold detached worktrees), and agent/test/orphan is
+    a true orphan. Returns (sandbox_dir, bare, ws_root); ws_root is empty so
+    the scan phase has nothing to delete and Phase 2 goes down the silent
+    path."""
     sandbox_dir = tmp_path / "see1473"
     bare_root = sandbox_dir / "bareroot" / "wsbox"
     bare_root.mkdir(parents=True)
@@ -192,12 +227,15 @@ def _build_orphan_sandbox(tmp_path):
     _git("init", "-q", seed)
     _git("remote", "add", "origin", str(bare), cwd=seed)
     _git("commit", "--allow-empty", "-q", "-m", "init", cwd=seed)
+    init_sha = _git("rev-parse", "HEAD", cwd=seed).stdout.strip()
     _git("branch", "agent/test/attached", cwd=seed)
     _git("push", "-q", "origin", "agent/test/attached", cwd=seed)
     _git("branch", "agent/test/orphan", cwd=seed)
     _git("push", "-q", "origin", "agent/test/orphan", cwd=seed)
     _git("worktree", "add", str(sandbox_dir / "wt-attached"),
          "agent/test/attached", cwd=bare)
+    _git("worktree", "add", "--detach", str(sandbox_dir / "wt-detached"),
+         init_sha, cwd=bare)
 
     ws_root = sandbox_dir / "wsbox"
     ws_root.mkdir()
@@ -222,6 +260,12 @@ class TestOrphanBranchPlusMarker:
         env["MULTICA_BARE_REPOS_ROOT"] = str(
             os.path.join(os.path.dirname(sandbox["ws_root"]), "bareroot")
         )
+        # SEE-956 WorkspaceMutex lives at $MULTICA_HOME/autopilot_workspace.lock
+        # (global): a concurrent patrol instance elsewhere on this machine
+        # would stall these subprocess runs into their 60s timeout (false
+        # failures). Pin MULTICA_HOME inside the sandbox so the lock — and
+        # any other multica state the run touches — stays sandbox-local.
+        env["MULTICA_HOME"] = os.path.join(sandbox["dir"], "multica-home")
         env["EXECUTION_ISSUE_ID"] = ""
         env["PYTHONPATH"] = os.path.dirname(SCRIPT)
         return subprocess.run(
@@ -234,9 +278,13 @@ class TestOrphanBranchPlusMarker:
         result = self._run(sandbox, "--dry-run")
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout)
-        assert data["bare_repo"], "bare repo must resolve inside the sandbox"
-        assert data["bare_repo"].startswith(sandbox["dir"]), data["bare_repo"]
-        # The '+'-painted attached branch must NOT be misjudged as orphan.
+        # Safety rail: exact containment — bare repo resolved inside the
+        # sandbox, never a production repo (no sibling-prefix false pass).
+        assert data["bare_repo"].startswith(sandbox["dir"] + os.sep), \
+            data["bare_repo"]
+        # The '+'-painted attached branch must NOT be misjudged as orphan;
+        # the detached-HEAD worktree must neither pollute nor protect any
+        # agent branch (it contributes no active branch name).
         assert data["orphan_branches_list"] == ["agent/test/orphan"]
         # Dry-run suppressed indicator contract (SEE-1224 #4) preserved.
         assert data["orphan_branches_cleaned"] == -1
@@ -249,7 +297,8 @@ class TestOrphanBranchPlusMarker:
         result = self._run(sandbox, "--kill-switch", "false")
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout)
-        assert data["bare_repo"].startswith(sandbox["dir"]), data["bare_repo"]
+        assert data["bare_repo"].startswith(sandbox["dir"] + os.sep), \
+            data["bare_repo"]
         assert data["orphan_branches_list"] == ["agent/test/orphan"]
         assert data["orphan_branches_cleaned"] == 1
         # The true orphan is gone; the worktree-attached branch survives.
@@ -257,6 +306,30 @@ class TestOrphanBranchPlusMarker:
         assert "agent/test/attached" in _bare_branches(sandbox["bare"])
         wt_attached = os.path.join(sandbox["dir"], "wt-attached")
         assert os.path.isdir(wt_attached), "attached worktree must be untouched"
+        wt_detached = os.path.join(sandbox["dir"], "wt-detached")
+        assert os.path.isdir(wt_detached), \
+            "detached-HEAD worktree must be untouched by orphan cleanup"
+
+    def test_no_agent_branches_is_a_clean_noop(self, tmp_path):
+        """Boundary: a bare repo whose branches are all non-agent must yield
+        an empty orphan list and a cleaned == 0 no-op in non-dry-run (-1 is
+        reserved for suppressed runs), with the ordinary branch untouched."""
+        sandbox_dir, bare, ws_root = _build_orphan_sandbox(tmp_path)
+        _git("branch", "main", "agent/test/orphan", cwd=bare)
+        _git("worktree", "remove", str(sandbox_dir / "wt-attached"), cwd=bare)
+        _git("branch", "-D", "agent/test/attached", cwd=bare)
+        _git("branch", "-D", "agent/test/orphan", cwd=bare)
+        sandbox = {"dir": str(sandbox_dir), "bare": str(bare),
+                   "ws_root": str(ws_root)}
+        result = self._run(sandbox, "--kill-switch", "false")
+        assert result.returncode == 0, result.stderr
+        data = json.loads(result.stdout)
+        assert data["orphan_branches_list"] == []
+        assert data["orphan_branches_cleaned"] == 0
+        all_branches = set(
+            _git("branch", "--format=%(refname:short)", cwd=bare).stdout.split()
+        )
+        assert all_branches == {"main"}
 
 
 @pytest.mark.skipif(
@@ -276,3 +349,14 @@ class TestListAgentBranchesInProcess:
         bare = tmp_path / "empty.git"
         _git("init", "-q", "--bare", bare)
         assert _import_lrc()._list_agent_branches(str(bare)) == []
+
+    def test_bare_head_on_agent_branch_yields_marker_free_names(self, tmp_path):
+        """Boundary: bare-repo HEAD pointing at an agent/* branch is exactly
+        the state where plain `git branch` paints the `*` current-branch
+        marker — the --format listing must stay marker-free there too."""
+        _, bare, _ = _build_orphan_sandbox(tmp_path)
+        _git("symbolic-ref", "HEAD", "refs/heads/agent/test/attached",
+             cwd=bare)
+        assert _import_lrc()._list_agent_branches(str(bare)) == [
+            "agent/test/attached", "agent/test/orphan",
+        ]
