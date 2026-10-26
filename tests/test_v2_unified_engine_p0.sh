@@ -42,6 +42,11 @@ trap cleanup_fixtures EXIT
 feed_stdin() {
     printf '%s' "$1" > "$FIXTURE/stdin.json"
 }
+# repo 定位走 PROJECT_ROOT 通道（unified-hook.sh:79 透传 → engine.js 候选链
+# 首位）：PWD 是 bash 保留变量，子 bash 启动时会把它重置为实际调用目录，
+# `PWD=<伪目录>` 前缀注入对 bash 入口无效——曾致 3l branch 断言只在仓内
+# 调用时碰巧通过、从非 git 目录（issue workdir 根）调用必红（SEE-1470
+# §SPEC-013）。与 grepai 系套件 `PWD= + PROJECT_ROOT=` 双通道惯例一致。
 run_entry() {
     local INPUT="$1"
     cleanup
@@ -54,7 +59,7 @@ run_entry() {
         MULTICA_TASK_ID="${V2_TASK_ID:-}" \
         HOOK_SCOPE_ID="${V2_SCOPE_ID:-}" \
         CLAUDE_CODE_SESSION_ID="${V2_SESSION:-}" \
-        PWD="${V2_PWD:-$REPO_ROOT}" \
+        PROJECT_ROOT="${V2_PWD:-$REPO_ROOT}" \
         UNIFIED_ENGINE_JS="${V2_ENGINE:-}" \
         bash "$ENTRY" < "$FIXTURE/stdin.json" 2>/dev/null)
     HOOK_EXIT=$?
@@ -73,14 +78,15 @@ run_entry_keep() {
         MULTICA_TASK_ID="${V2_TASK_ID:-}" \
         HOOK_SCOPE_ID="${V2_SCOPE_ID:-}" \
         CLAUDE_CODE_SESSION_ID="${V2_SESSION:-}" \
-        PWD="${V2_PWD:-$REPO_ROOT}" \
+        PROJECT_ROOT="${V2_PWD:-$REPO_ROOT}" \
         UNIFIED_ENGINE_JS="${V2_ENGINE:-}" \
         bash "$ENTRY" < "$FIXTURE/stdin.json" 2>/dev/null)
     HOOK_EXIT=$?
     V2_AGENT=""; V2_TASK_ID=""; V2_SCOPE_ID=""; V2_SESSION=""; V2_PWD=""; V2_ENGINE=""
 }
 
-# 直接调引擎（绕过入口，测引擎自身 fail-open 语义）
+# 直接调引擎（绕过入口，测引擎自身 fail-open 语义）。node 不重置 PWD，
+# PWD 注入对 node 路径有效；仍并传 PROJECT_ROOT 保持双通道一致性。
 run_engine() {
     local INPUT="$1"
     cleanup
@@ -94,6 +100,7 @@ run_engine() {
         HOOK_SCOPE_ID="${V2_SCOPE_ID:-}" \
         CLAUDE_CODE_SESSION_ID="${V2_SESSION:-}" \
         PWD="${V2_PWD:-$REPO_ROOT}" \
+        PROJECT_ROOT="${V2_PWD:-$REPO_ROOT}" \
         node "$ENGINE" < "$FIXTURE/stdin.json" 2>/dev/null)
     HOOK_EXIT=$?
     V2_AGENT=""; V2_TASK_ID=""; V2_SCOPE_ID=""; V2_SESSION=""; V2_PWD=""
