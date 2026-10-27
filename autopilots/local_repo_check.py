@@ -102,6 +102,11 @@ def _env_injected_workspace_root() -> str:
     Accepted only when it sits strictly under
     ``$MULTICA_TASK_WORKSPACES_ROOT``: a missing, stale, or foreign value
     falls through to the derived chain instead of hijacking resolution.
+
+    The ``<workspace-root>/<slot>/multica-config`` shape is the daemon's
+    injection interface contract, not a layout this script derives: if the
+    platform ever changes that shape, review this helper — never re-introduce
+    platform-layout guessing in code (SEE-1473 LOW-2).
     """
     config_root = os.environ.get("MULTICA_TASK_CONFIG_ROOT", "")
     ws_base = os.environ.get("MULTICA_TASK_WORKSPACES_ROOT", "")
