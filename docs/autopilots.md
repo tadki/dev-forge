@@ -142,7 +142,18 @@ bash autopilots/architecture_sweep.sh \
 ### 执行步骤
 
 1. 检出 `master`：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`
-2. 经 wrapper 执行只读静态巡检（命令见「执行方式」）。wrapper 在调用 Python 脚本前，按巡逻 config（默认 `autopilots/configs/kol.json` 的 `repo_name`，`ARCH_SWEEP_CONFIG` 可覆盖）定位 KOL worktree，自动执行 `git submodule update --init --recursive` 物化红线 gitlink 并后置校验非空；物化失败（config 缺失 / repo_name 缺失 / worktree 定位失败 / update 失败 / 物化后红线目录仍空）一律非零退出 + 显式 JSON 错误，严禁静默降级（SEE-1460）
+2. 经 wrapper 执行只读静态巡检（命令见「执行方式」）。wrapper 在调用 Python 脚本前，按巡逻 config（默认 `autopilots/configs/kol.json` 的 `repo_name`，`ARCH_SWEEP_CONFIG` 可覆盖）定位 KOL worktree，自动执行 `git submodule update --init --recursive` 物化红线 gitlink 并后置校验非空；物化失败（config 缺失 / repo_name 缺失 / worktree 定位失败 / update 失败 / 物化后红线目录仍空）一律非零退出 + 显式 JSON 错误，严禁静默降级（SEE-1460）。直连 GitHub 失败时 wrapper 自动回退平台镜像缓存重试一次（见「物化取件依赖」）；直连与回退均失败才整体非零退出（SEE-1482）
+
+### 物化取件依赖（SEE-1482）
+
+agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP 正常、ServerHello 前被掐断），物化依赖的 GitHub 取件路径不可达。wrapper 对此的持久化处置：
+
+- 直连 `git submodule update --init --recursive` 失败时，按 `.gitmodules` 中红线 submodule 的 URL 推导平台镜像目录名（`https://github.com/tadki/godot-mcp.git` → `github.com+tadki+godot-mcp.git`），在平台镜像缓存 `<root>/<workspace-id>/<镜像名>` 定位 bare 镜像重试一次。
+- 镜像 root 依次解析：`ARCH_SWEEP_MIRROR_ROOT`（显式覆盖，测试/运维用）→ `$MULTICA_TASK_WORKSPACES_ROOT/.repos`（daemon 实际布局）→ `~/.multica/workspaces/.repos`（文档备选布局）。
+- 重试仅以**单次 git 调用作用域**的 `-c url.<镜像>.insteadOf=<URL>` 重写（另加 `-c protocol.file.allow=always`：镜像为本地 bare 仓，git ≥ 2.38.1 默认拒绝间接 submodule clone 走 file 传输）；**不写全局 git 配置、不改 `.gitmodules`**。
+- checkout 仍由 pinned gitlink 内容寻址校验：镜像缺 pinned commit 时 `git submodule update` 自身失败，内容不符不可能判成功；「红线目录非空」后置校验对直连与回退两条路径同样生效。
+- 直连与回退均无法物化时整体显式非零退出，Python 巡检层不感知此回退（保持只读，SEE-1460 契约不变）。
+- 物化成功后 submodule gitdir 保留在本地（或 mirror worktree 存储），后续重跑无需再走网络。
 
 ### 参数说明
 
@@ -157,7 +168,7 @@ bash autopilots/architecture_sweep.sh \
 | `--l1` | 无 | 强制开启 L1 周检（默认周一 UTC，脚本内部判定基准，自动开启） |
 | `--execution-issue-id` | 空 | 本执行 Issue ID |
 
-环境变量： `DRY_RUN=true`、`ARCH_SWEEP_L1=true`、`MULTICA_WORKTREE_HASH=<hash>`（wrapper 用）；`ARCH_SWEEP_CONFIG=<path>`（wrapper 物化步用的巡逻 config 覆盖）。
+环境变量： `DRY_RUN=true`、`ARCH_SWEEP_L1=true`、`MULTICA_WORKTREE_HASH=<hash>`（wrapper 用）；`ARCH_SWEEP_CONFIG=<path>`（wrapper 物化步用的巡逻 config 覆盖）；`ARCH_SWEEP_MIRROR_ROOT=<path>`（wrapper 物化回退的平台镜像根覆盖，默认按 daemon 布局解析，见「物化取件依赖」）。
 
 ### 检查维度
 
