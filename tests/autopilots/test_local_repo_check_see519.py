@@ -265,12 +265,19 @@ class TestFindBareRepoPath:
         assert result == ""
 
     def test_real_workspace_finds_bare_repo(self):
-        """Verify find_bare_repo_path works on the actual Multica workspace."""
-        ws = "/home/jerry/multica_workspaces/1a011680-a476-4553-929d-478690824e46"
-        if not os.path.isdir(ws):
-            pytest.skip("Real workspace not available")
+        """Live smoke: bare-repo discovery works on the REAL workspace root.
 
-        from local_repo_check import find_bare_repo_path
+        SEE-1473 R2 rewrite: the root comes from the product resolver
+        (``_default_workspace_root()`` — Tier-0 env, interface-derived) instead
+        of the hardcoded legacy-layout path this test used before, which the
+        §SPEC-010 cleanup deleted and turned this test into a permanent skip.
+        Skips when no live root is resolvable (plain CI checkout). Read-only.
+        """
+        from local_repo_check import _default_workspace_root, find_bare_repo_path
+
+        ws = _default_workspace_root()
+        if not ws or not os.path.isdir(ws):
+            pytest.skip("No live workspace root resolvable in this environment")
 
         result = find_bare_repo_path(ws)
         assert result != "", "Should find bare repo on real workspace"
@@ -376,44 +383,13 @@ class TestDryRunIntegration:
 
 
 # =============================================================================
-# Regression: verify the script still runs without errors on real workspace
+# NOTE (SEE-1473 R2): the former TestRealWorkspaceDryRun /
+# test_real_workspace_dry_run_no_crash live test was retired with the
+# §SPEC-010 cleanup that deleted the legacy workspace root it hardcoded.
+# Its real-machine full-scan role is owned by the QA-stage §SPEC-005/011
+# criteria (deliberate dry-run acceptance, not a unit-suite citizen — a live
+# full scan takes minutes and contends on the SEE-956 WorkspaceMutex, so a
+# concurrent run makes it time out). Its crash/JSON-contract discrimination
+# stays covered by the sandbox dry-run tests above and the SEE-1473 orphan
+# sandbox suite.
 # =============================================================================
-
-class TestRealWorkspaceDryRun:
-    """Run dry-run against the actual Multica workspace to verify no crash."""
-
-    def test_real_workspace_dry_run_no_crash(self):
-        ws = "/home/jerry/multica_workspaces/1a011680-a476-4553-929d-478690824e46"
-        if not os.path.isdir(ws):
-            pytest.skip("Real workspace not available in this environment")
-
-        script = os.path.join(
-            os.path.dirname(__file__), "..", "..", "autopilots", "local_repo_check.py"
-        )
-
-        env = os.environ.copy()
-        env["EXECUTION_ISSUE_ID"] = ""
-
-        result = subprocess.run(
-            [sys.executable, str(script), "--dry-run", "--workspace-root", ws],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=120,
-        )
-
-        assert result.returncode == 0, f"Script crashed on real workspace: {result.stderr}"
-
-        output = json.loads(result.stdout)
-
-        # Sanity checks on output structure
-        assert "total_worktrees" in output
-        assert "deleted_worktrees" in output
-        assert "bare_repo" in output
-        assert "worktree_pruned" in output
-        assert "orphan_branches_list" in output
-        assert "orphan_branches_cleaned" in output
-
-        # dry-run indicators
-        assert output["worktree_pruned"] is None
-        assert output["orphan_branches_cleaned"] == -1
