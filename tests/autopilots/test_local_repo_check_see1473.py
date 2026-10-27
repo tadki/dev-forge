@@ -21,10 +21,16 @@ Defect B (§SPEC-002): agent/* branch listing painted git position markers
 ``lstrip("* ")`` and made every worktree-attached branch look orphaned
 (production: 44 false orphans, cleanup permanently 0). Pinned here with a
 real bare-repo sandbox: one attached branch, one detached-HEAD worktree
-(production reality — it must neither pollute nor protect any branch) and
-one true orphan, asserted in dry-run (list only) and non-dry-run (list +
-cleaned == 1); plus the empty-agent-branch no-op contract (cleaned == 0)
-and the `*` current-branch-marker hygiene at the helper level.
+(production reality — it must neither pollute nor protect any branch), one
+true pushed orphan and one never-pushed orphan, asserted in dry-run (list
+only) and non-dry-run (list + cleaned == 1); plus the empty-agent-branch
+no-op contract (cleaned == 0) and the `*` current-branch-marker hygiene at
+the helper level.
+
+§SPEC-012: orphan cleanup triages by remote reachability — a never-pushed
+orphan (no same-name remote ref, tip contained in no remote branch) is
+retained and reported in ``orphan_branches_never_pushed`` instead of being
+``branch -D``'d; pushed orphans clean as before.
 
 Safety: every git write happens inside pytest tmp_path sandboxes; the script
 is invoked with MULTICA_WORKSPACE_ID stripped and MULTICA_BARE_REPOS_ROOT
@@ -265,10 +271,11 @@ def _bare_branches(bare):
 def _build_orphan_sandbox(tmp_path):
     """Bare-repo sandbox where agent/test/attached is checked out in a linked
     worktree (git paints it '+'), a detached-HEAD worktree exists (production
-    reality: running slots hold detached worktrees), and agent/test/orphan is
-    a true orphan. Returns (sandbox_dir, bare, ws_root); ws_root is empty so
-    the scan phase has nothing to delete and Phase 2 goes down the silent
-    path."""
+    reality: running slots hold detached worktrees), agent/test/orphan is a
+    true pushed orphan, and agent/test/never-pushed is a never-pushed orphan
+    (its tip is reachable from no remote ref — §SPEC-012 guard subject).
+    Returns (sandbox_dir, bare, ws_root); ws_root is empty so the scan phase
+    has nothing to delete and Phase 2 goes down the silent path."""
     sandbox_dir = tmp_path / "see1473"
     bare_root = sandbox_dir / "bareroot" / "wsbox"
     bare_root.mkdir(parents=True)
@@ -288,6 +295,19 @@ def _build_orphan_sandbox(tmp_path):
          "agent/test/attached", cwd=bare)
     _git("worktree", "add", "--detach", str(sandbox_dir / "wt-detached"),
          init_sha, cwd=bare)
+    # Mirror pushed heads into refs/remotes/origin — a production bare
+    # carries remote-tracking refs from its own upstream fetches, and the
+    # §SPEC-012 triage reads exactly those. Must precede the never-pushed
+    # plant so the mirror stays clean of it.
+    _git("fetch", ".", "+refs/heads/*:refs/remotes/origin/*", cwd=bare)
+    # Never-pushed orphan: a commit forged directly inside the bare via
+    # commit-tree (so the object exists there) that no remote-tracking ref
+    # can reach — branch -D on it would orphan the commit (§SPEC-012 hazard).
+    init_tree = _git("rev-parse", "agent/test/orphan^{tree}", cwd=bare
+                     ).stdout.strip()
+    np_sha = _git("commit-tree", init_tree, "-p", init_sha, "-m", "local only",
+                  cwd=bare).stdout.strip()
+    _git("update-ref", "refs/heads/agent/test/never-pushed", np_sha, cwd=bare)
 
     ws_root = sandbox_dir / "wsbox"
     ws_root.mkdir()
@@ -337,12 +357,16 @@ class TestOrphanBranchPlusMarker:
         # The '+'-painted attached branch must NOT be misjudged as orphan;
         # the detached-HEAD worktree must neither pollute nor protect any
         # agent branch (it contributes no active branch name).
-        assert data["orphan_branches_list"] == ["agent/test/orphan"]
+        assert data["orphan_branches_list"] == [
+            "agent/test/never-pushed", "agent/test/orphan",
+        ]
+        # §SPEC-012: the never-pushed orphan is reported in its own field.
+        assert data["orphan_branches_never_pushed"] == ["agent/test/never-pushed"]
         # Dry-run suppressed indicator contract (SEE-1224 #4) preserved.
         assert data["orphan_branches_cleaned"] == -1
         # Dry-run must not touch any branch.
         assert _bare_branches(sandbox["bare"]) == {
-            "agent/test/attached", "agent/test/orphan",
+            "agent/test/attached", "agent/test/orphan", "agent/test/never-pushed",
         }
 
     def test_non_dry_run_cleans_only_true_orphan(self, sandbox):
@@ -351,10 +375,16 @@ class TestOrphanBranchPlusMarker:
         data = json.loads(result.stdout)
         assert data["bare_repo"].startswith(sandbox["dir"] + os.sep), \
             data["bare_repo"]
-        assert data["orphan_branches_list"] == ["agent/test/orphan"]
+        assert data["orphan_branches_list"] == [
+            "agent/test/never-pushed", "agent/test/orphan",
+        ]
+        # §SPEC-012 two-state contract: the pushed orphan is cleaned…
         assert data["orphan_branches_cleaned"] == 1
-        # The true orphan is gone; the worktree-attached branch survives.
         assert "agent/test/orphan" not in _bare_branches(sandbox["bare"])
+        # …while the never-pushed orphan is retained and reported.
+        assert data["orphan_branches_never_pushed"] == ["agent/test/never-pushed"]
+        assert "agent/test/never-pushed" in _bare_branches(sandbox["bare"])
+        # The worktree-attached branch survives.
         assert "agent/test/attached" in _bare_branches(sandbox["bare"])
         wt_attached = os.path.join(sandbox["dir"], "wt-attached")
         assert os.path.isdir(wt_attached), "attached worktree must be untouched"
@@ -371,12 +401,14 @@ class TestOrphanBranchPlusMarker:
         _git("worktree", "remove", str(sandbox_dir / "wt-attached"), cwd=bare)
         _git("branch", "-D", "agent/test/attached", cwd=bare)
         _git("branch", "-D", "agent/test/orphan", cwd=bare)
+        _git("branch", "-D", "agent/test/never-pushed", cwd=bare)
         sandbox = {"dir": str(sandbox_dir), "bare": str(bare),
                    "ws_root": str(ws_root)}
         result = self._run(sandbox, "--kill-switch", "false")
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout)
         assert data["orphan_branches_list"] == []
+        assert data["orphan_branches_never_pushed"] == []
         assert data["orphan_branches_cleaned"] == 0
         all_branches = set(
             _git("branch", "--format=%(refname:short)", cwd=bare).stdout.split()
@@ -395,7 +427,9 @@ class TestListAgentBranchesInProcess:
     def test_returns_clean_short_names_for_attached_and_orphan(self, tmp_path):
         _, bare, _ = _build_orphan_sandbox(tmp_path)
         branches = _import_lrc()._list_agent_branches(str(bare))
-        assert branches == ["agent/test/attached", "agent/test/orphan"]
+        assert branches == [
+            "agent/test/attached", "agent/test/never-pushed", "agent/test/orphan",
+        ]
 
     def test_empty_bare_repo_returns_empty_list(self, tmp_path):
         bare = tmp_path / "empty.git"
@@ -410,5 +444,37 @@ class TestListAgentBranchesInProcess:
         _git("symbolic-ref", "HEAD", "refs/heads/agent/test/attached",
              cwd=bare)
         assert _import_lrc()._list_agent_branches(str(bare)) == [
-            "agent/test/attached", "agent/test/orphan",
+            "agent/test/attached", "agent/test/never-pushed", "agent/test/orphan",
         ]
+
+
+@pytest.mark.skipif(
+    not hasattr(_import_lrc(), "_orphan_remote_reachable"),
+    reason="_orphan_remote_reachable helper introduced with §SPEC-012",
+)
+class TestOrphanRemoteReachable:
+    """In-process coverage of the §SPEC-012 triage: an orphan is deletable
+    only when its work has reached the remote (same-name ref, or tip contained
+    in some remote branch); a never-pushed tip must classify as not reachable
+    so the guard retains the branch."""
+
+    def test_same_name_remote_ref_is_reachable(self, tmp_path):
+        _, bare, _ = _build_orphan_sandbox(tmp_path)
+        assert _import_lrc()._orphan_remote_reachable(
+            str(bare), "agent/test/orphan") is True
+
+    def test_tip_contained_in_remote_branch_is_reachable(self, tmp_path):
+        # Merged-under-another-name shape (the agent/fronti/6f33d6adbe40
+        # production case): branch at a commit that origin already carries.
+        _, bare, _ = _build_orphan_sandbox(tmp_path)
+        init_sha = _git("rev-parse", "refs/heads/agent/test/orphan",
+                        cwd=bare).stdout.strip()
+        _git("update-ref", "refs/heads/agent/test/merged-shape", init_sha,
+             cwd=bare)
+        assert _import_lrc()._orphan_remote_reachable(
+            str(bare), "agent/test/merged-shape") is True
+
+    def test_never_pushed_tip_is_not_reachable(self, tmp_path):
+        _, bare, _ = _build_orphan_sandbox(tmp_path)
+        assert _import_lrc()._orphan_remote_reachable(
+            str(bare), "agent/test/never-pushed") is False

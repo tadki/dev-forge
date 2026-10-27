@@ -389,6 +389,41 @@ def _list_agent_branches(bare_repo: str) -> list:
     ]
 
 
+def _orphan_remote_reachable(bare_repo: str, branch: str) -> bool:
+    """True when the orphan branch's work has reached the remote, so a
+    ``branch -D`` loses nothing: either ``origin/<branch>`` exists, or the
+    tip is already contained in some remote branch (work merged/pushed
+    under another name — the agent/fronti/6f33d6adbe40 shape). SEE-1473
+    §SPEC-012, aligning B3 with the SEE-956 H6 philosophy: never-pushed
+    work must not be auto-deleted; any lookup failure conservatively
+    classifies the branch as not reachable."""
+    same_name_ok, _ = run_ok(
+        f'git -C "{bare_repo}" rev-parse --verify --quiet '
+        f'"refs/remotes/origin/{branch}"',
+        timeout=15,
+    )
+    if same_name_ok:
+        return True
+    remote_hits = run(
+        f'git -C "{bare_repo}" branch -r --contains "{branch}" '
+        f"--format=%(refname:short)",
+        timeout=15,
+    )
+    return bool(remote_hits.strip())
+
+
+def _split_orphans_by_remote(bare_repo: str, orphans: list) -> tuple:
+    """Triage orphans into (deletable, never_pushed) by remote reachability."""
+    deletable = []
+    never_pushed = []
+    for branch in orphans:
+        if _orphan_remote_reachable(bare_repo, branch):
+            deletable.append(branch)
+        else:
+            never_pushed.append(branch)
+    return deletable, never_pushed
+
+
 # --- Phase 2 state ---
 
 # Populated during main execution
@@ -890,6 +925,7 @@ if __name__ == "__main__":
     # --- B3: Batch cleanup orphan agent/* branches ---
     orphan_branches_cleaned = 0
     orphan_branches_list = []
+    orphan_branches_never_pushed = []
     if bare_repo:
         # Get active worktree branches (normalized to short names)
         wt_list = run(
@@ -907,8 +943,15 @@ if __name__ == "__main__":
         orphans = [b for b in agent_branches if b not in active_branches]
         orphan_branches_list = orphans
 
+        # §SPEC-012: only orphans whose work has reached the remote may be
+        # deleted; never-pushed orphans are retained and reported for a
+        # human decision (branch -D would orphan their commits).
+        deletable_orphans, orphan_branches_never_pushed = _split_orphans_by_remote(
+            bare_repo, orphans
+        )
+
         if not dry_run and not kill_switch:
-            for branch_name in orphans:
+            for branch_name in deletable_orphans:
                 ok, _ = run_ok(
                     f'git -C "{bare_repo}" branch -D "{branch_name}"', timeout=15
                 )
@@ -928,6 +971,7 @@ if __name__ == "__main__":
         "bare_repo": bare_repo,
         "worktree_pruned": bare_repo_pruned,
         "orphan_branches_list": orphan_branches_list,
+        "orphan_branches_never_pushed": orphan_branches_never_pushed,
         "orphan_branches_cleaned": orphan_branches_cleaned,
         "kill_switch": kill_switch,
     }
