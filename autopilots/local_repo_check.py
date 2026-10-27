@@ -95,10 +95,39 @@ def _workspace_root_candidates(ws_id: str) -> list:
     return candidates
 
 
+def _env_injected_workspace_root() -> str:
+    """Tier-0: workspace root from the daemon-injected task env.
+
+    The multica daemon injects ``MULTICA_TASK_CONFIG_ROOT`` into every run it
+    launches (agent runs and autopilot patrols alike); it points at
+    ``<workspace-root>/<slot>/multica-config``, so two levels up is the live
+    workspace root — authoritative and independent of any naming convention
+    (SEE-1473 R2 §SPEC-009; per jerry: 与 multica 解耦、不硬编码，env 即接口).
+    Accepted only when it sits strictly under
+    ``$MULTICA_TASK_WORKSPACES_ROOT``: a missing, stale, or foreign value
+    falls through to the derived chain instead of hijacking resolution.
+    """
+    config_root = os.environ.get("MULTICA_TASK_CONFIG_ROOT", "")
+    ws_base = os.environ.get("MULTICA_TASK_WORKSPACES_ROOT", "")
+    if not config_root or not ws_base:
+        return ""
+    candidate = os.path.dirname(os.path.dirname(os.path.abspath(config_root)))
+    base = os.path.abspath(ws_base)
+    # Strict containment (base itself never qualifies): a sibling-prefix dir
+    # like <base>_evil must not pass the check.
+    if not candidate.startswith(base.rstrip(os.sep) + os.sep):
+        return ""
+    return candidate if os.path.isdir(candidate) else ""
+
+
 def _default_workspace_root() -> str:
     """Derive the Multica workspace root without hardcoding.
 
     Resolution order:
+      0. Daemon-injected env (``MULTICA_TASK_CONFIG_ROOT`` two levels up,
+         validated by ``MULTICA_TASK_WORKSPACES_ROOT`` containment) — covers
+         every real invocation path (agent run / autopilot patrol); missing
+         or foreign values fall through to the derived chain.
       1. Task-slot-backed candidate under $MULTICA_WORKSPACES_ROOT
          (or its default ~/multica_workspaces), current platform layout
          (``seed-<ws_id last 12>``) before legacy ``<ws_id>`` — and only
@@ -109,6 +138,10 @@ def _default_workspace_root() -> str:
          workspace root.
       3. Empty string — caller must fail fast and ask for --workspace-root.
     """
+    env_root = _env_injected_workspace_root()
+    if env_root:
+        return env_root
+
     ws_id = os.environ.get("MULTICA_WORKSPACE_ID", "")
     if ws_id:
         for candidate in _workspace_root_candidates(ws_id):
