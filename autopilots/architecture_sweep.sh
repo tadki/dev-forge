@@ -186,8 +186,52 @@ sweep_locate_repo() {
   return 1
 }
 
+# Derive the Multica platform mirror-cache directory name for a repo URL
+# (SEE-1482): scheme/user stripped, ':' and '/' folded to '+', e.g.
+#   https://github.com/tadki/godot-mcp.git -> github.com+tadki+godot-mcp.git
+# Local path URLs map by the same rule and simply will not exist in the
+# cache, which fails loudly in sweep_find_mirror instead of guessing.
+sweep_mirror_name() {
+  printf '%s\n' "$1" |
+    sed -E -e 's#^(https?|ssh|git|file)://##' -e 's#^[^@/]+@##' -e 's#:#+#g' -e 's#/#+#g'
+}
+
+# Locate a bare mirror of the given URL inside the platform mirror cache,
+# layout <root>/<workspace-id>/<mirror-name>. ARCH_SWEEP_MIRROR_ROOT
+# overrides the root (tests/ops); the defaults are the daemon layout
+# ($MULTICA_TASK_WORKSPACES_ROOT/.repos) first, the documented alternate
+# (~/.multica/workspaces/.repos) second. Prints the path; non-zero when none.
+sweep_find_mirror() {
+  local url="$1" name root cand
+  local -a roots=()
+  name="$(sweep_mirror_name "$url")"
+  if [ -z "$name" ]; then
+    return 1
+  fi
+  if [ -n "${ARCH_SWEEP_MIRROR_ROOT:-}" ]; then
+    roots+=("$ARCH_SWEEP_MIRROR_ROOT")
+  else
+    roots+=("${MULTICA_TASK_WORKSPACES_ROOT:-$HOME/multica_workspaces}/.repos" "$HOME/.multica/workspaces/.repos")
+  fi
+  for root in "${roots[@]}"; do
+    if [ -n "${MULTICA_WORKSPACE_ID:-}" ]; then
+      cand="$root/$MULTICA_WORKSPACE_ID/$name"
+      if [ -d "$cand" ]; then
+        printf '%s\n' "$cand"
+        return 0
+      fi
+    fi
+    cand="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "$name" -print -quit 2>/dev/null)"
+    if [ -n "$cand" ]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
 sweep_materialize() {
-  local repo_name redline_dir kol_repo
+  local repo_name redline_dir kol_repo sub_url mirror
   local config_file="${ARCH_SWEEP_CONFIG:-$SCRIPT_DIR/configs/kol.json}"
   if [ ! -f "$config_file" ]; then
     echo "{\"error\": \"arch-sweep wrapper: patrol config not found: $config_file (cannot resolve repo_name for submodule materialization)\"}" >&2
@@ -198,18 +242,41 @@ sweep_materialize() {
     echo "{\"error\": \"arch-sweep wrapper: repo_name missing/unreadable in $config_file (cannot locate patrol repo for submodule materialization)\"}" >&2
     return 1
   fi
+  redline_dir="$(sweep_config_value "redline_dir" "$config_file")"
   kol_repo="$(sweep_locate_repo "$repo_name" "$WORKSPACE_ROOT" "$CURRENT_HASH")" || {
     echo "{\"error\": \"arch-sweep wrapper: cannot locate $repo_name worktree for submodule materialization (searched workspace root, CWD walk-up, slot scan); refusing a redline sweep with an unmaterialized gitlink\"}" >&2
     return 1
   }
-  if ! git -C "$kol_repo" submodule update --init --recursive; then
-    echo "{\"error\": \"arch-sweep wrapper: git submodule update --init --recursive failed in $kol_repo; failing explicitly instead of silently skipping redline coverage (SEE-1460)\"}" >&2
-    return 1
+  if git -C "$kol_repo" submodule update --init --recursive; then
+    :
+  else
+    # SEE-1482: agent shells can cut direct git-over-HTTPS at the TLS egress
+    # layer (gnutls_handshake failure with TCP fine), so retry ONCE through
+    # the platform mirror cache. The insteadOf rewrite is scoped to THIS git
+    # invocation (never global config, never .gitmodules), and the checkout
+    # stays content-addressed to the pinned gitlink — a mirror missing the
+    # pinned commit fails the update rather than passing.
+    sub_url="$(git -C "$kol_repo" config -f .gitmodules --get "submodule.$redline_dir.url" || true)"
+    if ! mirror="$(sweep_find_mirror "${sub_url:-}")"; then
+      mirror=""
+    fi
+    if [ -z "$mirror" ]; then
+      echo "{\"error\": \"arch-sweep wrapper: direct git submodule update failed in $kol_repo and no platform mirror fallback was found for the redline submodule; refusing a redline sweep with an unmaterialized gitlink (SEE-1482)\"}" >&2
+      return 1
+    fi
+    # protocol.file.allow: the mirror is a daemon-owned LOCAL bare repo, and
+    # git >= 2.38.1 default-denies file transport for (indirect) submodule
+    # clones — without this scoped override the fallback dies on any machine
+    # whose global config doesn't relax it. Scoped to THIS invocation only.
+    if ! git -C "$kol_repo" -c "url.$mirror.insteadOf=$sub_url" -c protocol.file.allow=always submodule update --init --recursive; then
+      echo "{\"error\": \"arch-sweep wrapper: git submodule update --init --recursive failed in $kol_repo (direct and platform-mirror fallback both failed); failing explicitly instead of silently skipping redline coverage (SEE-1460)\"}" >&2
+      return 1
+    fi
   fi
   # Post-check mirrors the Python guard's materialized criterion (and the
   # manifest's `.git` exclusion, SEE-1289 HIGH-1): the redline dir must hold
   # content beyond the gitdir pointer, so a no-op "success" can never pass.
-  redline_dir="$(sweep_config_value "redline_dir" "$config_file")"
+  # Runs on BOTH the direct and the mirror-fallback path (SEE-1482).
   if [ -n "$redline_dir" ] && [ -z "$(find "$kol_repo/$redline_dir" -mindepth 1 -maxdepth 1 -not -name .git -print -quit 2>/dev/null)" ]; then
     echo "{\"error\": \"arch-sweep wrapper: submodule update succeeded but $redline_dir is still empty in $kol_repo (gitlink materialized nothing); refusing a zero-coverage sweep\"}" >&2
     return 1
