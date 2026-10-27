@@ -1,6 +1,7 @@
 """Shared constants and helpers for Multica workspace scripts.
 
-Used by local_repo_check.py.
+Used by the autopilot scripts (agent_watchdog, architecture_sweep,
+issue_status_check, push_comment_sender, version_check, watchdog_report).
 """
 
 import json

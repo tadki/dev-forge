@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # autopilots/lib/common_env.sh — wrapper env→flag 单源（SEE-1440 / fingerprint ee57f95b522c）
 #
-# 四个 autopilot wrapper（version_check / issue_status_check / local_repo_check /
+# 三个 autopilot wrapper（version_check / issue_status_check /
 # architecture_sweep）共享的样板收敛于此：
 #   - Python 解释器探测（PYTHON_CMD）
 #   - Kill Switch 环境变量透传默认值（KILL_SWITCH）
