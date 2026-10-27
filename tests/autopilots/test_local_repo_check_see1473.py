@@ -196,28 +196,54 @@ class TestEnvInjectedTier0Resolution:
         assert resolved == str(ws_id_dir)
 
     def test_tier0_foreign_value_rejected_falls_back_to_chain(self):
-        # Foreign absolute value outside the base: rejected, the derived
-        # chain (rule 1) decides — resolution must never return the foreign
-        # root even though the env pointed there.
+        # Foreign absolute value outside the base: rejected, and the derived
+        # chain must then decide ALONE. With no rule-1 candidate (no ws_id)
+        # and a walk-up that finds no slot, the exact outcome is "" — a
+        # foreign value may never leak through in any form (the lax form
+        # `!= foreign` would also pass a resolution leaking the base or a
+        # truncated foreign prefix).
         self.monkeypatch.setenv(
             "MULTICA_TASK_CONFIG_ROOT", "/outside-domain/multica-config"
         )
         self.monkeypatch.delenv("MULTICA_WORKSPACE_ID", raising=False)
-        self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", str(self.base))
+        self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", "/nonexistent-root")
         self.monkeypatch.setattr(_import_lrc(), "__file__", "/x/autopilots/lrc.py")
-        resolved = _import_lrc()._default_workspace_root()
-        assert resolved != "/outside-domain"
+        assert _import_lrc()._default_workspace_root() == ""
 
     def test_tier0_sibling_prefix_base_rejected(self, tmp_path):
         # Containment boundary: a candidate under a sibling base sharing the
-        # path prefix (<base>_evil) must NOT pass the containment check —
-        # resolution falls through to the derived chain instead.
-        evil_root = tmp_path / "workspaces_evil" / "seed-evil0000001"
-        evil_config = evil_root / "slot" / "multica-config"
+        # path prefix (<base>_evil) must NOT pass the containment check. With
+        # the derived chain stripped down too, the exact outcome is "" — the
+        # evil base must not leak in any form (its base dir, the evil root,
+        # or the config's own parent).
+        evil_base = tmp_path / "workspaces_evil"
+        evil_config = evil_base / "seed-evil0000001" / "slot" / "multica-config"
         evil_config.mkdir(parents=True)
         self.monkeypatch.setenv("MULTICA_TASK_CONFIG_ROOT", str(evil_config))
-        resolved = _import_lrc()._default_workspace_root()
-        assert resolved != str(evil_root)
+        self.monkeypatch.delenv("MULTICA_WORKSPACE_ID", raising=False)
+        self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", "/nonexistent-root")
+        self.monkeypatch.setattr(_import_lrc(), "__file__", "/x/autopilots/lrc.py")
+        assert _import_lrc()._default_workspace_root() == ""
+
+
+@pytest.mark.skipif(
+    not hasattr(_import_lrc(), "_workspace_root_candidates"),
+    reason="_workspace_root_candidates helper introduced with the SEE-1473 fix",
+)
+class TestRule1CandidatesDecoupled:
+    """Seed-retirement guard (R2 §SPEC-009 修订): rule-1 candidates must be
+    exactly the $MULTICA_WORKSPACES_ROOT × $MULTICA_WORKSPACE_ID interface
+    composition — re-introducing any platform name-derivation (e.g. the
+    retired seed-<last-12>) violates the decoupling directive and is caught
+    here (this test is RED against the R1 code, whose rule 1 still carried
+    the seed- candidate)."""
+
+    def test_candidates_are_interface_composition_only(self, monkeypatch, tmp_path):
+        base = tmp_path / "workspaces"
+        base.mkdir()
+        monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", str(base))
+        ws_id = "dead0000-0000-0000-0000-123456789abc"
+        assert _import_lrc()._workspace_root_candidates(ws_id) == [str(base / ws_id)]
 
 
 @pytest.mark.skipif(
@@ -392,6 +418,23 @@ class TestOrphanBranchPlusMarker:
         assert os.path.isdir(wt_detached), \
             "detached-HEAD worktree must be untouched by orphan cleanup"
 
+    def test_kill_switch_suppressed_reports_never_pushed(self, sandbox):
+        """§SPEC-012 suppressed-state contract: with the kill switch on,
+        cleanup is suppressed (cleaned == -1, nothing deleted) while the
+        triage still reports — never-pushed orphans stay in their own field
+        and the all-orphans list is unchanged."""
+        result = self._run(sandbox, "--kill-switch", "true")
+        assert result.returncode == 0, result.stderr
+        data = json.loads(result.stdout)
+        assert data["orphan_branches_list"] == [
+            "agent/test/never-pushed", "agent/test/orphan",
+        ]
+        assert data["orphan_branches_never_pushed"] == ["agent/test/never-pushed"]
+        assert data["orphan_branches_cleaned"] == -1
+        assert _bare_branches(sandbox["bare"]) == {
+            "agent/test/attached", "agent/test/orphan", "agent/test/never-pushed",
+        }
+
     def test_no_agent_branches_is_a_clean_noop(self, tmp_path):
         """Boundary: a bare repo whose branches are all non-agent must yield
         an empty orphan list and a cleaned == 0 no-op in non-dry-run (-1 is
@@ -478,3 +521,16 @@ class TestOrphanRemoteReachable:
         _, bare, _ = _build_orphan_sandbox(tmp_path)
         assert _import_lrc()._orphan_remote_reachable(
             str(bare), "agent/test/never-pushed") is False
+
+    def test_lookup_failure_classifies_conservative(self, tmp_path, monkeypatch):
+        """Failure-direction contract: when the git lookups fail (non-ok rc /
+        empty output), classification must fall on the KEEP side — even a
+        genuinely reachable branch then reports not-reachable, so a broken
+        git invocation can never cause a delete (§SPEC-012 conservative
+        triage, SEE-956 H6 alignment)."""
+        _, bare, _ = _build_orphan_sandbox(tmp_path)
+        lrc = _import_lrc()
+        monkeypatch.setattr(lrc, "run", lambda *a, **k: "")
+        monkeypatch.setattr(lrc, "run_ok", lambda *a, **k: (False, ""))
+        assert lrc._orphan_remote_reachable(
+            str(bare), "agent/test/orphan") is False
