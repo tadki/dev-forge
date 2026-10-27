@@ -109,48 +109,9 @@ python autopilots/issue_status_check.py \
 
 ---
 
-## 3. 本地仓库巡检
+## 3. 本地仓库巡检（已退役，SEE-1473 R3）
 
-- **Autopilot ID**: `d655880c-d256-454e-898f-1cae6f71deea`
-- **脚本路径**: `autopilots/local_repo_check.py`
-- **执行方式**:
-
-```bash
-python autopilots/local_repo_check.py \
-  --execution-issue-id <本执行IssueID>
-```
-
-### 参数说明
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--workspace-root` | 当前 workspace 根目录 | 巡检的 workspace 根目录 |
-| `--current-hash` | 自动检测 | 当前 worktree hash，用于跳过自身 |
-| `--dry-run` | 无 | 仅预览，不执行删除等破坏性操作 |
-| `--execution-issue-id` | 空 | 执行 Issue ID，用于报告与状态更新 |
-
-### 行为说明
-
-1. 扫描所有 worktree 目录。
-2. 检查每个 worktree 的 git 状态。
-3. 自动删除已 push 且 git 干净的 worktree（issue 状态为 `done/cancelled`）。
-4. 如有需要决策的仓库：创建汇总 issue、添加标签、@mention 相关 agent。
-5. 在 `--execution-issue-id` 中汇报结果并标记为 `done`。
-6. 所有仓库正常时静默结束并标记 `done`。
-
-> 默认 `DRY_RUN=false`（实际执行）；如需预览，加 `--dry-run`。
-
-### 输出 JSON 字段速查
-
-- `summary`: 总 worktree 数、已删除数、需决策数、异常数。
-- `deleted`: 已删除的 worktree 列表。
-- `need_decision`: 需要决策的 worktree 列表。
-- `errors`: 异常列表。
-
-### 故障排查
-
-- **执行 Issue 未标记 done**: 检查 `--execution-issue-id` 是否正确；脚本失败时不会标记 done，下次巡检会重新执行。
-- **worktree 未被删除**: 确认 issue 状态为 `done` 或 `cancelled`，且本地无未提交改动。
+> 本链已随 SEE-1473 R3 整链退役（2026-10-27 Owner 裁决）：`autopilots/local_repo_check.py`/`.sh` 与其测试套件删除，autopilot `d655880c` 置 paused（保留历史可审计）。删除面已由平台 daemon gc 覆盖，本地巡检清理不再需要。本节仅留退役说明，历史行为文档见 git 历史。
 
 ---
 

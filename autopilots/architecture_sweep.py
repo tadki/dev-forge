@@ -178,9 +178,9 @@ GUT_PARTIAL_RUN_TOLERANCE = 0.95
 def _default_workspace_root() -> str:
     """Auto-detect the Multica workspace root (D8: no hardcoded machine path).
 
-    Strategy, mirroring local_repo_check.find_bare_repo_path's multi-level
-    fallback: a workspace root is a directory whose children look like
-    ``<hash>/workdir/<repo>/`` slots. Walk up from CWD to the highest ancestor
+    Strategy: a workspace root is a directory whose children look like
+    ``<hash>/workdir/<repo>/`` slots. (Multi-level fallback originally
+    mirrored the local_repo_check chain retired in SEE-1473 R3.) Walk up from CWD to the highest ancestor
     that contains at least one such slot, falling back to
     ``MULTICA_WORKSPACE_ROOT`` then ``~/.multica/workspaces``.
     """
@@ -207,7 +207,7 @@ def _default_workspace_root() -> str:
     env_root = os.environ.get("MULTICA_WORKSPACE_ROOT", "")
     if env_root and os.path.isdir(env_root):
         return env_root
-    # Fallback 2: standard Multica workspace parent (matches local_repo_check).
+    # Fallback 2: standard Multica workspace parent (retained from the local_repo_check chain retired in SEE-1473 R3).
     home_ws = os.path.expanduser("~/.multica/workspaces")
     if os.path.isdir(home_ws):
         return home_ws
