@@ -76,6 +76,11 @@ class TestWorkspaceRootResolution:
         self.fake_root.mkdir()
         self.legacy = self.fake_root / WS_ID
         self.current = self.fake_root / SEED_ROOT_NAME
+        # R2 Tier-0 isolation: this class pins the derived-chain behavior, so
+        # the daemon-injected env (present in every agent run) must not
+        # pre-empt resolution before the chain under test is reached.
+        monkeypatch.delenv("MULTICA_TASK_CONFIG_ROOT", raising=False)
+        monkeypatch.delenv("MULTICA_TASK_WORKSPACES_ROOT", raising=False)
         monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", str(self.fake_root))
         monkeypatch.setenv("MULTICA_WORKSPACE_ID", WS_ID)
         self.monkeypatch = monkeypatch
@@ -160,6 +165,68 @@ class TestWorkspaceRootResolution:
         monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", "/nonexistent-root")
         monkeypatch.setattr(_import_lrc(), "__file__", "/x/autopilots/lrc.py")
         assert _import_lrc()._default_workspace_root() == ""
+
+
+class TestEnvInjectedTier0Resolution:
+    """R2 §SPEC-009 three-state contract for the Tier-0 injected env:
+
+    - hit: $MULTICA_TASK_CONFIG_ROOT two levels up wins, validated by
+      $MULTICA_TASK_WORKSPACES_ROOT containment — even when the slot carries
+      no derivation markers, so ONLY the env can resolve this root (this is
+      the case that must fail RED against the R1 code at b4d443a);
+    - missing: falls back to the existing derived chain, unchanged;
+    - foreign: a value outside the workspaces base (including the
+      sibling-prefix trick) is rejected and the chain decides instead."""
+
+    @pytest.fixture(autouse=True)
+    def _tier0_env(self, monkeypatch, tmp_path):
+        self.base = tmp_path / "workspaces"
+        self.base.mkdir()
+        self.seed_root = self.base / "seed-cafe12345678"
+        self.config = self.seed_root / "see-0001" / "multica-config"
+        self.config.mkdir(parents=True)
+        monkeypatch.setenv("MULTICA_TASK_WORKSPACES_ROOT", str(self.base))
+        monkeypatch.setenv("MULTICA_TASK_CONFIG_ROOT", str(self.config))
+        self.monkeypatch = monkeypatch
+
+    def test_tier0_env_hit_resolves_two_levels_up(self):
+        # Slot carries ONLY multica-config (no .gc_meta.json / workdir/), so
+        # the derived chain cannot claim this root — Tier-0 must resolve it.
+        resolved = _import_lrc()._default_workspace_root()
+        assert resolved == str(self.seed_root)
+
+    def test_tier0_env_missing_falls_back_to_derived_chain(self):
+        self.monkeypatch.delenv("MULTICA_TASK_CONFIG_ROOT", raising=False)
+        self.monkeypatch.delenv("MULTICA_TASK_WORKSPACES_ROOT", raising=False)
+        self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", str(self.base))
+        self.monkeypatch.setenv("MULTICA_WORKSPACE_ID", "deadbeefcafe12345678")
+        _make_slot(self.seed_root, "slot2")  # give the derived chain a real root
+        resolved = _import_lrc()._default_workspace_root()
+        assert resolved == str(self.seed_root)
+
+    def test_tier0_foreign_value_rejected_falls_back_to_chain(self):
+        # Foreign absolute value outside the base: rejected, the derived
+        # chain (rule 1) decides — resolution must never return the foreign
+        # root even though the env pointed there.
+        self.monkeypatch.setenv(
+            "MULTICA_TASK_CONFIG_ROOT", "/outside-domain/multica-config"
+        )
+        self.monkeypatch.delenv("MULTICA_WORKSPACE_ID", raising=False)
+        self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", str(self.base))
+        self.monkeypatch.setattr(_import_lrc(), "__file__", "/x/autopilots/lrc.py")
+        resolved = _import_lrc()._default_workspace_root()
+        assert resolved != "/outside-domain"
+
+    def test_tier0_sibling_prefix_base_rejected(self, tmp_path):
+        # Containment boundary: a candidate under a sibling base sharing the
+        # path prefix (<base>_evil) must NOT pass the containment check —
+        # resolution falls through to the derived chain instead.
+        evil_root = tmp_path / "workspaces_evil" / "seed-evil0000001"
+        evil_config = evil_root / "slot" / "multica-config"
+        evil_config.mkdir(parents=True)
+        self.monkeypatch.setenv("MULTICA_TASK_CONFIG_ROOT", str(evil_config))
+        resolved = _import_lrc()._default_workspace_root()
+        assert resolved != str(evil_root)
 
 
 @pytest.mark.skipif(
