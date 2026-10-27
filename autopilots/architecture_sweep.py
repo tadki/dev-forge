@@ -207,7 +207,8 @@ def _default_workspace_root() -> str:
     env_root = os.environ.get("MULTICA_WORKSPACE_ROOT", "")
     if env_root and os.path.isdir(env_root):
         return env_root
-    # Fallback 2: standard Multica workspace parent (retained from the local_repo_check chain retired in SEE-1473 R3).
+    # Fallback 2: standard Multica workspace parent (this script's own
+    # last-resort default).
     home_ws = os.path.expanduser("~/.multica/workspaces")
     if os.path.isdir(home_ws):
         return home_ws
