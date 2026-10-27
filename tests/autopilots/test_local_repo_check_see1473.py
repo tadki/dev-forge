@@ -3,14 +3,18 @@ resolution collapse + orphan-branch '+' marker pollution.
 
 Defect A (§SPEC-001): _default_workspace_root() rule 1 accepted any existing
 $MULTICA_WORKSPACES_ROOT/<ws_id> directory, so the legacy leftover directory
-short-circuited resolution even though the live platform root is the migrated
-``seed-<last-12-of-ws_id>`` layout (SEE-1472 forensics: 71 real worktrees
-scanned as 1). Pinned here:
-  - a legacy-layout candidate must never outrank the current seed layout,
-    even when it holds stale slot markers;
+short-circuited resolution while the live platform root held 71 real worktrees
+scanned as 1 (SEE-1472 forensics). Pinned here:
   - a hollow candidate (no task slots) must not short-circuit resolution;
   - rule 1 still accepts a candidate that really holds task slots;
   - the rule-2 walk-up honors the documented ``workdir/`` slot marker.
+
+R2 (§SPEC-009): resolution now prefers the daemon-injected env (Tier-0,
+``MULTICA_TASK_CONFIG_ROOT`` two levels up under strict
+``MULTICA_TASK_WORKSPACES_ROOT`` containment); the fallback chain keeps the
+``$MULTICA_WORKSPACES_ROOT × $MULTICA_WORKSPACE_ID`` composition + walk-up,
+and the R1 ``seed-<last-12>`` name-derivation candidate is retired (decoupling
+directive: no hardcoded platform layout knowledge).
 
 Defect B (§SPEC-002): agent/* branch listing painted git position markers
 (``+`` for branches checked out in a linked worktree) that survived the old
@@ -42,9 +46,8 @@ SCRIPT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "autopilots", "local_repo_check.py"
 ))
 
-# id-shaped ws_id whose last 12 chars ("123456789abc") drive the seed- name
+# id-shaped ws_id for the interface-composition fallback candidate
 WS_ID = "dead0000-0000-0000-0000-123456789abc"
-SEED_ROOT_NAME = "seed-123456789abc"
 
 
 def _import_lrc():
@@ -75,7 +78,6 @@ class TestWorkspaceRootResolution:
         self.fake_root = tmp_path / "workspaces"
         self.fake_root.mkdir()
         self.legacy = self.fake_root / WS_ID
-        self.current = self.fake_root / SEED_ROOT_NAME
         # R2 Tier-0 isolation: this class pins the derived-chain behavior, so
         # the daemon-injected env (present in every agent run) must not
         # pre-empt resolution before the chain under test is reached.
@@ -84,17 +86,6 @@ class TestWorkspaceRootResolution:
         monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", str(self.fake_root))
         monkeypatch.setenv("MULTICA_WORKSPACE_ID", WS_ID)
         self.monkeypatch = monkeypatch
-
-    def test_legacy_layout_never_outranks_current_seed_layout(self):
-        """Mirror of the real machine state (SEE-1472): the legacy <ws_id>
-        directory still exists and even holds a stale slot with full markers,
-        while live slots live under the seed-<last12> root. The legacy
-        leftover must not win; resolution must hit the current layout."""
-        _make_slot(self.legacy, "5d621003")
-        _make_slot(self.current, "see-0001")
-        resolved = _import_lrc()._default_workspace_root()
-        assert resolved == str(self.current)
-        assert resolved != str(self.legacy)
 
     def test_hollow_legacy_dir_does_not_short_circuit(self):
         """A candidate that merely exists (no task slots at all) must not
@@ -112,19 +103,10 @@ class TestWorkspaceRootResolution:
         assert with_hollow != str(self.legacy)
 
     def test_rule1_still_accepts_candidate_with_task_slots(self):
-        """Non-regression: a legacy-layout candidate with real slots remains
-        valid when no current-layout root exists."""
-        _make_slot(self.legacy, "slot1")
-        resolved = _import_lrc()._default_workspace_root()
-        assert resolved == str(self.legacy)
-
-    def test_hollow_seed_candidate_does_not_shadow_slot_backed_legacy(self):
-        """Slot validation applies to the preferred seed-layout candidate
-        too: a seed-named dir that merely exists (no slots) must not shadow
-        a legacy candidate that really holds task slots. Guards the
-        name-preference order against regressing into "seed name always
-        wins" without the task-slot check."""
-        (self.current / "junk").mkdir(parents=True)
+        """Non-regression: the $MULTICA_WORKSPACES_ROOT × $MULTICA_WORKSPACE_ID
+        interface-composition candidate stays valid when it really holds task
+        slots (the only rule-1 candidate since R2 retired the seed- name
+        derivation)."""
         _make_slot(self.legacy, "slot1")
         resolved = _import_lrc()._default_workspace_root()
         assert resolved == str(self.legacy)
@@ -199,10 +181,13 @@ class TestEnvInjectedTier0Resolution:
         self.monkeypatch.delenv("MULTICA_TASK_CONFIG_ROOT", raising=False)
         self.monkeypatch.delenv("MULTICA_TASK_WORKSPACES_ROOT", raising=False)
         self.monkeypatch.setenv("MULTICA_WORKSPACES_ROOT", str(self.base))
+        # R2: the fallback candidate is the plain $WORKSPACES_ROOT × $WS_ID
+        # interface composition — no seed- name derivation.
+        ws_id_dir = self.base / "deadbeefcafe12345678"
+        _make_slot(ws_id_dir, "slot2")
         self.monkeypatch.setenv("MULTICA_WORKSPACE_ID", "deadbeefcafe12345678")
-        _make_slot(self.seed_root, "slot2")  # give the derived chain a real root
         resolved = _import_lrc()._default_workspace_root()
-        assert resolved == str(self.seed_root)
+        assert resolved == str(ws_id_dir)
 
     def test_tier0_foreign_value_rejected_falls_back_to_chain(self):
         # Foreign absolute value outside the base: rejected, the derived

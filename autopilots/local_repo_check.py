@@ -74,25 +74,21 @@ def _has_task_slots(candidate: str) -> bool:
 
 
 def _workspace_root_candidates(ws_id: str) -> list:
-    """Rule-1 candidate roots for ws_id, current platform layout first.
+    """Rule-1 fallback candidates for ws_id: env interface composition only.
 
-    The platform migrated from ``<root>/<ws_id>`` to
-    ``<root>/seed-<last-12-of-ws_id>`` (see ~/multica_workspaces/.task_roots
-    index entries, e.g. ``relative_path: "seed-478690824e46/see-…"``). The legacy
-    ``<ws_id>`` directory often still exists as a stale leftover — SEE-1473
-    defect A — so the current-layout candidate is tried first; a leftover
-    must never outrank the live root it was migrated away from.
+    Sole candidate is ``$MULTICA_WORKSPACES_ROOT × $MULTICA_WORKSPACE_ID``.
+    R2 (§SPEC-009 修订) retired the ``seed-<last-12-of-ws_id>`` name-derivation
+    candidate: hardcoding the platform's internal layout naming is exactly the
+    coupling jerry's decoupling directive forbids; the legacy root it defended
+    against is gone (§SPEC-010) and Tier-0 env injection covers every real
+    invocation path. Slot validation still applies — a directory that merely
+    exists must not short-circuit resolution (SEE-1473 defect A).
     """
     root_base = os.environ.get(
         "MULTICA_WORKSPACES_ROOT",
         os.path.expanduser("~/multica_workspaces"),
     )
-    candidates = []
-    suffix = ws_id.replace("-", "")[-12:]
-    if suffix:
-        candidates.append(os.path.join(root_base, f"seed-{suffix}"))
-    candidates.append(os.path.join(root_base, ws_id))
-    return candidates
+    return [os.path.join(root_base, ws_id)]
 
 
 def _env_injected_workspace_root() -> str:
@@ -128,11 +124,10 @@ def _default_workspace_root() -> str:
          validated by ``MULTICA_TASK_WORKSPACES_ROOT`` containment) — covers
          every real invocation path (agent run / autopilot patrol); missing
          or foreign values fall through to the derived chain.
-      1. Task-slot-backed candidate under $MULTICA_WORKSPACES_ROOT
-         (or its default ~/multica_workspaces), current platform layout
-         (``seed-<ws_id last 12>``) before legacy ``<ws_id>`` — and only
-         when the candidate actually holds task slots (SEE-1473 defect A:
-         a leftover/hollow directory must not short-circuit resolution).
+      1. Task-slot-backed ``$MULTICA_WORKSPACES_ROOT × $MULTICA_WORKSPACE_ID``
+         candidate (or its default ~/multica_workspaces) — and only when the
+         candidate actually holds task slots (SEE-1473 defect A: a
+         leftover/hollow directory must not short-circuit resolution).
       2. Walk up from this script looking for a task slot (a directory
          containing ``.gc_meta.json`` or ``workdir/``); its parent is the
          workspace root.
