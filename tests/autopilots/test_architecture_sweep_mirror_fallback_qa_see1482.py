@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -7,6 +8,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LEGACY_WRAPPER_SRC = REPO_ROOT / "tests" / "autopilots" / "fixtures" / (
+    "architecture_sweep.pre-see1482.sh"
+)
+LEGACY_WRAPPER_SHA256 = "06f5c83babbdeee5164cf98e2733b36663482e952ffcde49beab991bdf0cedbc"
+WRAPPER_SRC = REPO_ROOT / "autopilots" / "architecture_sweep.sh"
+COMMON_ENV_SRC = REPO_ROOT / "autopilots" / "lib" / "common_env.sh"
 REPO_NAME = "Acme-KOL"
 REDLINE_DIR = "addons/godot_mcp"
 DIRECT_URL = "https://127.0.0.1:1/nonexistent-see1482/subrepo.git"
@@ -73,19 +80,13 @@ def _seed_mirror(root, source, workspace="revy-ws"):
     return mirror
 
 
-def _install_wrapper(base, ref="e34a70c"):
+def _install_wrapper(base, variant="after"):
     script_dir = Path(base) / "script_dir"
     (script_dir / "lib").mkdir(parents=True, exist_ok=True)
     (script_dir / "configs").mkdir(exist_ok=True)
-    for relative in ("autopilots/architecture_sweep.sh", "autopilots/lib/common_env.sh"):
-        content = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "show", f"{ref}:{relative}"],
-            check=True,
-            capture_output=True,
-        ).stdout
-        target = script_dir / Path(relative).relative_to("autopilots")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+    wrapper_src = LEGACY_WRAPPER_SRC if variant == "before" else WRAPPER_SRC
+    shutil.copyfile(wrapper_src, script_dir / "architecture_sweep.sh")
+    shutil.copyfile(COMMON_ENV_SRC, script_dir / "lib" / "common_env.sh")
     _write(
         script_dir / "configs" / "kol.json",
         json.dumps({"target": "kol", "repo_name": REPO_NAME, "redline_dir": REDLINE_DIR}),
@@ -154,6 +155,14 @@ def _assert_no_config_leak(parent, global_config, original_global, gitmodules):
         assert "protocol.file.allow" not in content
 
 
+def test_pre1482_wrapper_fixture_is_pinned():
+    content = LEGACY_WRAPPER_SRC.read_bytes()
+    assert hashlib.sha256(content).hexdigest() == LEGACY_WRAPPER_SHA256
+    text = content.decode("utf-8")
+    assert "SEE-1482" not in text
+    assert "sweep_find_mirror" not in text
+
+
 def test_ab_direct_failure_mirror_fallback_before_after(tmp_path):
     base = tmp_path / "fixture with spaces"
     original_parent, pinned = _seed_parent(base)
@@ -161,23 +170,23 @@ def test_ab_direct_failure_mirror_fallback_before_after(tmp_path):
     _seed_mirror(mirror_root, base / "subrepo")
     results = {}
 
-    for ref in ("cb6e47a", "e34a70c"):
-        workspace = tmp_path / f"{ref} workspace with spaces"
+    for variant, label in (("before", "cb6e47a"), ("after", "e34a70c")):
+        workspace = tmp_path / f"{label} workspace with spaces"
         workspace.mkdir()
         parent = workspace / REPO_NAME
         shutil.copytree(original_parent, parent)
-        script_dir = _install_wrapper(tmp_path / ref, ref=ref)
-        stub = _make_stub(tmp_path / f"{ref}-stub")
-        global_config = _global_config(tmp_path / f"{ref}-gitconfig")
+        script_dir = _install_wrapper(tmp_path / variant, variant=variant)
+        stub = _make_stub(tmp_path / f"{variant}-stub")
+        global_config = _global_config(tmp_path / f"{variant}-gitconfig")
         proc = _run_wrapper(
             script_dir, workspace, stub, tmp_path, mirror_root, global_config
         )
-        results[ref] = {
+        results[label] = {
             "returncode": proc.returncode,
             "stderr_tail": proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "",
             "python_invoked": stub[1].exists(),
         }
-        if ref == "cb6e47a":
+        if variant == "before":
             assert proc.returncode != 0
             assert not stub[1].exists()
         else:
