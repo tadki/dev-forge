@@ -3,15 +3,16 @@
 
 Replaces the local coding-agents plugin's stdio MCP entry. Claude Code (or any
 MCP host) launches this process per agent; the memory bank is selected by the
-HINDSIGHT_BANK_ID environment variable the platform injects — the same
-mechanism the plugin used, so every agent keeps an identical MCP config:
+HINDSIGHT_BANK_ID environment variable the platform injects — sent as the
+X-Hindsight-Bank header on every request, so every agent keeps an identical
+MCP config:
 
     {"type": "stdio", "command": "python3",
      "args": ["<path-to-this-file>/hindsight-mcp-remote.py"]}
 
-Startup derives the endpoint (<HINDSIGHT_MCP_URL>/mcp/<bank>/) and stamps
-X-Hindsight-Project / X-Hindsight-Workspace on every request so the bridge can
-scope initiative pages and retain stamps to this repository.
+X-Hindsight-Project / X-Hindsight-Workspace are derived once from the local
+git worktree so the bridge can scope initiative pages and retain stamps to
+this repository.
 
 Pure standard library: no pip/npm dependencies, no network calls at startup.
 """
@@ -25,6 +26,7 @@ import urllib.error
 import urllib.request
 
 DEFAULT_MCP_URL = "http://192.168.1.210:4894"
+DEFAULT_MCP_PATH = "/hindsight"
 REQUEST_TIMEOUT_S = 360.0   # bridge reflect allows up to 330s upstream
 NOTIFY_TIMEOUT_S = 30.0
 BANK_RE = re.compile(r"[a-z0-9_-]+")
@@ -43,7 +45,8 @@ if not BANK_RE.fullmatch(BANK):
     die(f"HINDSIGHT_BANK_ID {BANK!r} is not a valid bank id (expected [a-z0-9_-]+) — "
         "refusing to start. Check the agent's env injection for typos or uppercase names.")
 
-BASE_URL = (os.environ.get("HINDSIGHT_MCP_URL") or DEFAULT_MCP_URL).rstrip("/") + f"/mcp/{BANK}/"
+BASE_URL = ((os.environ.get("HINDSIGHT_MCP_URL") or DEFAULT_MCP_URL).rstrip("/")
+            + os.environ.get("HINDSIGHT_MCP_PATH", DEFAULT_MCP_PATH))
 
 
 def _git_toplevel() -> str | None:
@@ -62,6 +65,7 @@ WORKSPACE = os.getcwd()
 BASE_HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
+    "X-Hindsight-Bank": BANK,
     "X-Hindsight-Workspace": WORKSPACE,
 }
 if PROJECT:
