@@ -29,7 +29,7 @@ DEFAULT_MCP_URL = "http://192.168.1.210:4894"
 DEFAULT_MCP_PATH = "/hindsight"
 REQUEST_TIMEOUT_S = 360.0   # bridge reflect allows up to 330s upstream
 NOTIFY_TIMEOUT_S = 30.0
-BANK_RE = re.compile(r"[a-z0-9_-]+")
+BANK_RE = re.compile(r"[A-Za-z0-9_-]+")  # mixed case is valid: Harti is a real bank id
 
 
 def die(message: str) -> None:
@@ -42,8 +42,8 @@ if not BANK:
     die("HINDSIGHT_BANK_ID is not set — refusing to start. Without it writes would "
         "silently land in the wrong bank; fix the agent's env injection first.")
 if not BANK_RE.fullmatch(BANK):
-    die(f"HINDSIGHT_BANK_ID {BANK!r} is not a valid bank id (expected [a-z0-9_-]+) — "
-        "refusing to start. Check the agent's env injection for typos or uppercase names.")
+    die(f"HINDSIGHT_BANK_ID {BANK!r} is not a valid bank id (expected [A-Za-z0-9_-]+) — "
+        "refusing to start. Check the agent's env injection for typos.")
 
 BASE_URL = ((os.environ.get("HINDSIGHT_MCP_URL") or DEFAULT_MCP_URL).rstrip("/")
             + os.environ.get("HINDSIGHT_MCP_PATH", DEFAULT_MCP_PATH))
