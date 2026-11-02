@@ -28,8 +28,6 @@ mkdir -p ~/.config/forge-console
 printf 'FORGE_CONSOLE_TOKEN=%s\nFORGE_CONSOLE_PORT=7310\nFORGE_CONSOLE_BIND=0.0.0.0\n' "$(openssl rand -hex 24)" > ~/.config/forge-console/env
 chmod 600 ~/.config/forge-console/env
 
-# 运行时需在独立 worktree（主检出被 repo-sync 守护管理）：
-#   git -C ~/tools/dev-forge worktree add ~/tools/forge-console feat/console
 cp deploy/forge-console.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now forge-console
 ```

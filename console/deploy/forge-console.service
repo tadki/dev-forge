@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/tools/forge-console/console
+WorkingDirectory=%h/tools/dev-forge/console
 EnvironmentFile=%h/.config/forge-console/env
-ExecStart=/usr/bin/node %h/tools/forge-console/console/packages/server/dist/index.js
+ExecStart=/usr/bin/node %h/tools/dev-forge/console/packages/server/dist/index.js
 Restart=on-failure
 RestartSec=3
 
