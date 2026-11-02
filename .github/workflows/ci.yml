@@ -77,12 +77,15 @@ jobs:
       - name: install
         working-directory: console
         run: pnpm install --frozen-lockfile
+      - name: build packages（测试依赖 dist：collectors 测试引用 @forge/schema 产物）
+        working-directory: console
+        run: pnpm -r --filter './packages/*' build
       - name: unit + api tests
         working-directory: console
         run: pnpm -r --filter './packages/*' test
-      - name: build
+      - name: build web
         working-directory: console
-        run: pnpm -r --filter './packages/*' build && pnpm --filter web build
+        run: pnpm --filter web build
       - name: e2e (fixtures)
         working-directory: console/e2e
         run: npx playwright install --with-deps chromium && npx playwright test
