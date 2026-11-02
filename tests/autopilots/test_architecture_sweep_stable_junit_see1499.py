@@ -20,8 +20,13 @@ Priority semantics under test (§SPEC-B1):
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
+from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilots"))
 
@@ -297,3 +302,295 @@ class TestConfigSurfaces:
         monkeypatch.setattr(sys, "argv", ["architecture_sweep.py"])
         args = sweep.parse_args()
         assert args.junit_stable_path == ""
+
+
+# =============================================================================
+# §SPEC-B1 护栏 5 — shared 7-day window: boundary verdicts + helper consultation
+# (ages are LITERAL days, never derived from JUNIT_MAX_AGE_DAYS, so the
+# window's VALUE is pinned behaviourally against silent drift; the helper is
+# patched so the boundary is deterministic — no microsecond clock race)
+# =============================================================================
+
+
+class TestSharedWindowBoundary:
+    def _resolve_with_patched_age(self, monkeypatch, tmp_path, patched_age):
+        repo = _make_repo(tmp_path)
+        stable = _stable_junit(str(tmp_path / "stable" / "kol_junit_report.xml"),
+                               400, age_seconds=0.0)
+        calls = []
+
+        def _fake_age(mtime_epoch):
+            calls.append(mtime_epoch)
+            return patched_age
+
+        monkeypatch.setattr(sweep, "_junit_age_days", _fake_age)
+        path, source = sweep._resolve_junit_source(
+            str(repo), GUTCONFIG, "", 3, stable_path=stable
+        )
+        return stable, path, source, calls
+
+    def test_age_6_5_days_is_fresh(self, monkeypatch, tmp_path):
+        stable, path, source, _ = self._resolve_with_patched_age(
+            monkeypatch, tmp_path, 6.5)
+        assert path == stable
+        assert source == f"stable:{stable}"
+
+    def test_age_exactly_7_days_is_fresh(self, monkeypatch, tmp_path):
+        # Boundary: the shared comparison is `age > JUNIT_MAX_AGE_DAYS` (stale),
+        # so age == window is fresh. Pins `>` against a `>=` regression.
+        stable, path, source, _ = self._resolve_with_patched_age(
+            monkeypatch, tmp_path, 7.0)
+        assert path == stable
+        assert source == f"stable:{stable}"
+
+    def test_age_7_5_days_is_stale(self, monkeypatch, tmp_path):
+        # A window enlarged past 7 (e.g. 8) would call 7.5 days fresh — the
+        # stale verdict at a literal 7.5 pins the window's documented value.
+        stable, path, source, _ = self._resolve_with_patched_age(
+            monkeypatch, tmp_path, 7.5)
+        assert path == ""
+        assert source == f"stable:{stable}"
+
+    def test_stale_verdict_comes_from_shared_helper(self, monkeypatch, tmp_path):
+        # A patched helper returning a stale age must decide the verdict even
+        # though the artifact is fresh on disk: the stable tier consults the
+        # shared arithmetic and never re-derives its own.
+        stable, path, source, calls = self._resolve_with_patched_age(
+            monkeypatch, tmp_path, 100.0)
+        assert calls, "stable tier must consult _junit_age_days"
+        assert path == ""
+        assert source == f"stable:{stable}"
+
+
+# =============================================================================
+# §SPEC-B1 护栏 6 — CLI/env > config composition wired through main()
+# =============================================================================
+
+
+class _StubLock:
+    """Drop-in for PidFileLock / WorkspaceMutex: acquires, releases, no I/O."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def acquire(self):
+        return True
+
+    def release(self):
+        pass
+
+
+class TestMainCliEnvOverConfig:
+    @pytest.fixture(autouse=True)
+    def _restore_module_globals(self):
+        saved_limit = sweep.MAX_FILE_LINES
+        saved_fields = list(sweep.GAMESTATE_MIRROR_FIELDS)
+        saved_stable = sweep.JUNIT_STABLE_PATH
+        saved_errors = sweep._phase_error_count
+        yield
+        sweep.MAX_FILE_LINES = saved_limit
+        sweep.GAMESTATE_MIRROR_FIELDS[:] = saved_fields
+        sweep.JUNIT_STABLE_PATH = saved_stable
+        sweep._phase_error_count = saved_errors
+
+    def _run_main(self, monkeypatch, tmp_path, cfg, cli_flag=None, env_val=None):
+        """Run the real main() with the process boundary mocked out; capture
+        the junit_stable_path that reaches _run_l1_checks. No filesystem or
+        state writes outside tmp_path (locks, baseline, heartbeat all stubbed).
+        """
+        captured = {}
+        cfg_path = tmp_path / "cfg.json"
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        monkeypatch.setattr(sweep, "PidFileLock", _StubLock)
+        monkeypatch.setattr(sweep, "WorkspaceMutex", _StubLock)
+        monkeypatch.setattr(
+            sweep, "_sweep_context",
+            lambda _args: (str(tmp_path / "ws"), "cafe", True, False, True, False))
+        monkeypatch.setattr(sweep, "_locate_repo_root",
+                            lambda _ws, _h: str(repo))
+        monkeypatch.setattr(sweep, "find_gd_files", lambda *_a, **_k: [])
+        monkeypatch.setattr(sweep, "_run_l0_checks", lambda *_a, **_k: (0, []))
+
+        def _fake_l1(repo_root, workspace_root, run_l1, fast_mode, findings,
+                     metrics, junit_stable_path=""):
+            captured["junit_stable_path"] = junit_stable_path
+
+        monkeypatch.setattr(sweep, "_run_l1_checks", _fake_l1)
+        monkeypatch.setattr(sweep, "load_known_findings", lambda: set())
+        monkeypatch.setattr(sweep, "ensure_dir", lambda *_a, **_k: None)
+        monkeypatch.setattr(sweep, "write_baseline", lambda *_a, **_k: None)
+        monkeypatch.setattr(sweep, "write_heartbeat", lambda *_a, **_k: None)
+        monkeypatch.setattr(sweep, "build_report", lambda *_a, **_k: {})
+        monkeypatch.setattr(sweep, "print_report", lambda *_a, **_k: None)
+        monkeypatch.setattr(sweep, "_write_report_file", lambda *_a, **_k: None)
+        monkeypatch.setattr(sweep, "_phase_error_count", 0)
+
+        argv = ["architecture_sweep.py", "--config", str(cfg_path)]
+        # parse_args evaluates the --workspace-root default eagerly (env var
+        # first, then a CWD walk-up that logs an error when nothing matches).
+        # Pin the env branch so the walk-up never runs: hermetic in /tmp, and
+        # independent of whatever slots happen to exist on the host.
+        monkeypatch.setenv("MULTICA_WORKSPACE_ROOT", str(tmp_path / "ws"))
+        if cli_flag is not None:
+            argv += ["--junit-stable-path", cli_flag]
+        if env_val is not None:
+            monkeypatch.setenv("ARCH_SWEEP_JUNIT_STABLE_PATH", env_val)
+        else:
+            monkeypatch.delenv("ARCH_SWEEP_JUNIT_STABLE_PATH", raising=False)
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(SystemExit) as exc:
+            sweep.main()
+        return exc.value.code, captured
+
+    def test_cli_flag_wins_over_config(self, monkeypatch, tmp_path):
+        code, captured = self._run_main(
+            monkeypatch, tmp_path,
+            cfg={"junit_stable_path": "/cfg/from-config.xml"},
+            cli_flag="/cli/flag.xml")
+        assert code == 0
+        assert captured["junit_stable_path"] == "/cli/flag.xml"
+
+    def test_config_value_used_when_no_cli(self, monkeypatch, tmp_path):
+        code, captured = self._run_main(
+            monkeypatch, tmp_path,
+            cfg={"junit_stable_path": "/cfg/from-config.xml"})
+        assert code == 0
+        assert captured["junit_stable_path"] == "/cfg/from-config.xml"
+
+    def test_cli_flag_wins_over_env(self, monkeypatch, tmp_path):
+        code, captured = self._run_main(
+            monkeypatch, tmp_path, cfg={},
+            cli_flag="/cli/flag.xml", env_val="/env/from-env.xml")
+        assert code == 0
+        assert captured["junit_stable_path"] == "/cli/flag.xml"
+
+    def test_cli_flag_used_when_config_unset(self, monkeypatch, tmp_path):
+        # CLI must survive an empty config (an `and` composition would yield
+        # "" here and silently drop an explicitly requested stable source).
+        code, captured = self._run_main(
+            monkeypatch, tmp_path, cfg={}, cli_flag="/cli/flag.xml")
+        assert code == 0
+        assert captured["junit_stable_path"] == "/cli/flag.xml"
+
+
+# =============================================================================
+# §SPEC-B1 护栏 7 — L1 wiring forwards the stable path to the GUT check
+# =============================================================================
+
+
+class TestL1WiringPassthrough:
+    def test_run_l1_forwards_junit_stable_path(self, monkeypatch, tmp_path):
+        captured = {}
+
+        def _fake_gut(repo_root, workspace_root, junit_stable_path=""):
+            captured["junit_stable_path"] = junit_stable_path
+            return [], {}
+
+        monkeypatch.setattr(sweep, "check_gut_silent_skip", _fake_gut)
+        monkeypatch.setattr(sweep, "check_test_to_code_ratio", lambda _repo: {})
+        sweep._run_l1_checks(str(tmp_path), "", True, False, [], {},
+                             junit_stable_path="/pinned.xml")
+        assert captured["junit_stable_path"] == "/pinned.xml"
+
+
+# =============================================================================
+# §SPEC-B1 护栏 8 — wrapper layer forwards --junit-stable-path (space + equals
+# forms), and OMITS the flag entirely when unset (an empty forward would
+# override the sweep config and silently disable a configured stable source).
+# Judged via a stub python3 that logs its argv (see1460 pattern); the wrapper
+# is copied into a scratch script_dir so the repo's own config is untouched.
+# =============================================================================
+
+_WRAPPER_SRC = Path(__file__).resolve().parents[2] / "autopilots" / "architecture_sweep.sh"
+_COMMON_ENV_SRC = Path(__file__).resolve().parents[2] / "autopilots" / "lib" / "common_env.sh"
+
+
+def _seed_plain_repo(path):
+    """Minimal git repo satisfying sweep_materialize: repo_name dir present,
+    `git submodule update --init --recursive` trivially succeeds (no
+    gitmodules), redline dir committed and non-empty."""
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(path)],
+                   check=True, capture_output=True)
+    for args in (("config", "user.email", "t@t.dev"), ("config", "user.name", "t")):
+        subprocess.run(["git", "-C", str(path)] + list(args),
+                       check=True, capture_output=True)
+    (path / "addons" / "godot_mcp").mkdir(parents=True)
+    (path / "addons" / "godot_mcp" / "placeholder.txt").write_text("stub\n",
+                                                                   encoding="utf-8")
+    (path / "README.md").write_text("# fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "-A"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "seed"],
+                   check=True, capture_output=True)
+    return path
+
+
+def _run_wrapper_capture(tmp_path, extra_args):
+    """Copy the real wrapper into a scratch script_dir, stub python3 first on
+    PATH, run the wrapper with extra_args + workspace_root; return (proc, log
+    text of the python3 invocation)."""
+    script_dir = tmp_path / "script_dir"
+    (script_dir / "lib").mkdir(parents=True)
+    (script_dir / "configs").mkdir()
+    shutil.copy(_WRAPPER_SRC, script_dir / "architecture_sweep.sh")
+    shutil.copy(_COMMON_ENV_SRC, script_dir / "lib" / "common_env.sh")
+    (script_dir / "configs" / "kol.json").write_text(
+        json.dumps({"target": "kol", "repo_name": "KingOfLikes-Godot",
+                    "redline_dir": "addons/godot_mcp"}),
+        encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    _seed_plain_repo(ws / "KingOfLikes-Godot")
+
+    bin_dir = tmp_path / "stubbin"
+    bin_dir.mkdir()
+    log = tmp_path / "stub_calls.log"
+    stub = bin_dir / "python3"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$STUB_LOG\"\n"
+        "exit 0\n",
+        encoding="utf-8")
+    stub.chmod(0o755)
+
+    env = os.environ.copy()
+    env.pop("KILL_SWITCH", None)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["STUB_LOG"] = str(log)
+    proc = subprocess.run(
+        ["bash", str(script_dir / "architecture_sweep.sh"), *extra_args, str(ws)],
+        capture_output=True, text=True, cwd=str(tmp_path), env=env, timeout=120)
+    log_text = log.read_text(encoding="utf-8") if log.is_file() else ""
+    return proc, log_text
+
+
+class TestWrapperJunitStablePathForwarding:
+    def test_space_form_forwarded(self, tmp_path):
+        proc, log_text = _run_wrapper_capture(tmp_path, [
+            "--dry-run", "--execution-issue-id", "X",
+            "--junit-stable-path", "/p/a.xml"])
+        assert proc.returncode == 0, proc.stderr
+        assert "--junit-stable-path /p/a.xml" in log_text
+
+    def test_equals_form_forwarded(self, tmp_path):
+        proc, log_text = _run_wrapper_capture(tmp_path, [
+            "--dry-run", "--execution-issue-id", "X",
+            "--junit-stable-path=/p/b.xml"])
+        assert proc.returncode == 0, proc.stderr
+        assert "--junit-stable-path /p/b.xml" in log_text
+
+    def test_flag_absent_omitted_entirely(self, tmp_path):
+        proc, log_text = _run_wrapper_capture(tmp_path, [
+            "--dry-run", "--execution-issue-id", "X"])
+        assert proc.returncode == 0, proc.stderr
+        assert "--junit-stable-path" not in log_text
+
+    def test_empty_equals_form_not_forwarded(self, tmp_path):
+        proc, log_text = _run_wrapper_capture(tmp_path, [
+            "--dry-run", "--execution-issue-id", "X", "--junit-stable-path="])
+        assert proc.returncode == 0, proc.stderr
+        assert "--junit-stable-path" not in log_text
