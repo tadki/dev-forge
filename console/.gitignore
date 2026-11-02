@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tsbuildinfo
+registry.snapshot.json
+test-results/
+playwright-report/
+.env

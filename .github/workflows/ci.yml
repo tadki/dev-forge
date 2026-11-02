@@ -60,3 +60,29 @@ jobs:
         run: python3 -m pytest tests/ -q
       - name: run_all shell suites
         run: bash tests/run_all.sh
+  console:
+    # forge-console（console/）：单元 + 构建 + E2E（fixture 模式，确定性数据）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - name: install
+        working-directory: console
+        run: pnpm install --frozen-lockfile
+      - name: unit + api tests
+        working-directory: console
+        run: pnpm -r --filter './packages/*' test
+      - name: build
+        working-directory: console
+        run: pnpm -r --filter './packages/*' build && pnpm --filter web build
+      - name: e2e (fixtures)
+        working-directory: console/e2e
+        run: npx playwright install --with-deps chromium && npx playwright test

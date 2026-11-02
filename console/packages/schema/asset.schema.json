@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "collector": {
+      "type": "string"
+    },
+    "collectedAt": {
+      "type": "string"
+    },
+    "assets": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 3
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "instruction",
+              "skill",
+              "hook-registration",
+              "hook-rule",
+              "hook-script",
+              "service",
+              "autopilot",
+              "adapter",
+              "mcp-endpoint",
+              "project",
+              "report",
+              "env",
+              "custom"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "default": "",
+            "type": "string"
+          },
+          "attach": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "workspace",
+                  "project",
+                  "agent",
+                  "platform"
+                ]
+              },
+              "ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "level"
+            ],
+            "additionalProperties": false
+          },
+          "applies": {
+            "type": "object",
+            "properties": {
+              "workspaces": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "agents": {
+                "type": "object",
+                "properties": {
+                  "include": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "except": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "native",
+                  "overlay"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "enforcement": {
+            "type": "string",
+            "enum": [
+              "enforced",
+              "advisory",
+              "derived"
+            ]
+          },
+          "platforms": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "first-party",
+              "third-party"
+            ]
+          },
+          "tags": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "owner": {
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "collector": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "locator": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "mtime": {
+                "type": "string"
+              },
+              "git": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "rev": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "repo",
+                  "rev"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "collector",
+              "path"
+            ],
+            "additionalProperties": false
+          },
+          "payload": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "summary",
+          "attach",
+          "enforcement",
+          "platforms",
+          "provenance",
+          "tags",
+          "enabled",
+          "source",
+          "payload"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "relations": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "mounts",
+              "references",
+              "schedules",
+              "runs-as",
+              "derived-from",
+              "gates"
+            ]
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "diagnostics": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warn",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "collector",
+    "collectedAt",
+    "assets",
+    "relations",
+    "diagnostics"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,20 @@
+# E2E 固定数据模式：只跑 fixture 采集器（fixtures/*.json），确定性断言
+home: /home/jerry
+devforge: /home/jerry/tools/dev-forge
+fixturesDir: FIXTURES_DIR_PLACEHOLDER
+workspaces:
+  - id: kol
+    name: King of Likes
+    projects:
+      - /e2e/king-of-likes
+    residents: [Fronti, Revy]
+scanRoots: []
+multica:
+  enabled: false
+hindsight:
+  probe: false
+  configPath: /e2e/none.json
+  apiBase: http://127.0.0.1:1
+reports:
+  toolchainLatest: /e2e/none-latest.json
+  archPatrol: /e2e/none-arch.json

@@ -6,3 +6,11 @@ node_modules/
 # grepai: project config is tracked; runtime artifacts (locks, gob caches, logs) are not
 .grepai/*
 !.grepai/config.yaml
+
+# forge-console (console/): 构建产物与运行态
+console/**/dist/
+console/**/node_modules/
+*.tsbuildinfo
+console/registry.snapshot.json
+console/e2e/test-results/
+console/e2e/playwright-report/

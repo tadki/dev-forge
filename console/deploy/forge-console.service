@@ -1,0 +1,25 @@
+[Unit]
+Description=forge-console · dev-forge harness 监控台（只读采集 + Web UI）
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tools/dev-forge/console
+EnvironmentFile=%h/.config/forge-console/env
+ExecStart=/usr/bin/node %h/tools/dev-forge/console/packages/server/dist/index.js
+Restart=on-failure
+RestartSec=3
+
+# 安全收敛：只读采集所需的最小权限
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# 允许读：~/.claude、dev-forge、~/.multica、~/.hindsight、/mnt/d、/mnt/c 桥文件
+# （ProtectHome=read-only 满足全部采集读取；console 自身无需写 home）
+ReadWritePaths=
+StateDirectory=forge-console
+LogsDirectory=forge-console
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,53 @@
+/* forge-console 设计 tokens — 方案 E「紫调夜幕」（KOL SEE-1220 D2 定稿 + 效果图采样验证）
+   形制：Neo-Brutalism × 打字机档案风。圆角恒 0。禁散值 hex：一切色值只在此文件出现。 */
+:root {
+  /* 色板 */
+  --paper: #edeaf2;
+  --paper-warm: #f8f6fc;
+  --ink: #191422;
+  --accent: #6c3fb8;
+  --mint: #e29bc0;
+  --amber: #e8b93a;
+  --khaki: #d6d0de;
+  --gray: #837c90;
+  --cream: #efe7f0;
+  --text-sub: #443d52;
+  --text-on-dark: #f8f6fc;
+  --text-disabled: #837c90;
+
+  /* 字号阶梯（紧凑高密度版：整体比 KOL 阶梯再压一档） */
+  --fs-label: 9px;   /* 小标签 mono 全大写 */
+  --fs-l1: 11px;     /* 表格/mono 正文 */
+  --fs-l2: 12px;     /* 正文 */
+  --fs-l3: 14px;     /* 强调/输入 */
+  --fs-l4: 18px;     /* 面板标题 */
+  --fs-d1: 24px;     /* StatTile 大数字 */
+  --fs-d2: 40px;     /* 展示 */
+
+  /* 间距（8px 栅格，紧凑档） */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  /* 边框 */
+  --bw-thin: 2px;
+  --bw-main: 3px;
+
+  /* 硬阴影（紫影三档 + 墨影分隔档；右下、零模糊） */
+  --shadow-panel: 6px 6px 0 var(--accent);
+  --shadow-widget: 4px 4px 0 var(--accent);
+  --shadow-divider: 2px 2px 0 var(--ink);
+  --shadow-panel-hover: 3px 3px 0 var(--accent);
+  --shadow-widget-hover: 2px 2px 0 var(--accent);
+
+  /* 字体 */
+  --font-mono: "Courier New", "Courier Prime", ui-monospace, "Cascadia Mono", monospace;
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+
+  /* 布局 */
+  --topbar-h: 44px;
+  --nav-w: 176px;
+}

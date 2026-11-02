@@ -1,0 +1,52 @@
+# forge-console 主配置（可提交；token 走 ~/.config/forge-console/env，不进 git）
+home: /home/jerry
+devforge: /home/jerry/tools/dev-forge
+
+# Workspace 注册表（产品域）：multica 平台 workspace_id 为锚点之一，此处为 console 侧权威
+workspaces:
+  - id: kol
+    name: King of Likes
+    projects:
+      - /mnt/d/GodotProjects/king-of-likes
+      - /home/jerry/s5recheck-worktree
+      - /mnt/d/GodotProjects/see1089-qa
+    residents: [Atlas, Archi, Bachi, Fronti, Revy, Harti, Refacty, Chekky]
+    services: [grepai-watch]
+  - id: devforge
+    name: dev-forge 工具链
+    projects:
+      - /home/jerry/tools/dev-forge
+    residents: [Atlas, Refacty, Archi]
+  - id: grepai
+    name: grepai 语义搜索
+    projects:
+      - /home/jerry/tools/grepai
+    residents: []
+  - id: gqt
+    name: godot-qa-toolkit
+    projects:
+      - /home/jerry/tools/godot-qa-toolkit
+    residents: []
+
+scanRoots:
+  - path: /mnt/d/GodotProjects
+    depth: 3
+  - path: /home/jerry/tools
+    depth: 3
+  - path: /home/jerry
+    depth: 2
+
+multica:
+  cli: multica
+  timeoutMs: 15000
+  maxTasksPerAgent: 5
+  enabled: true
+
+hindsight:
+  configPath: ~/.hindsight/coding-agent.json
+  apiBase: http://192.168.1.210:13581
+  probe: true
+
+reports:
+  toolchainLatest: ~/.multica/toolchain-reports/latest.json
+  archPatrol: ~/.multica/arch-patrol/last_report.json
