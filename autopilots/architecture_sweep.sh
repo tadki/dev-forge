@@ -24,6 +24,7 @@ L1_ARG=""
 SKIP_NEXT=""
 SKIP_TARGET=""
 EXECUTION_ISSUE_ID=""
+JUNIT_STABLE_PATH_ARG=""
 for ARG in "$@"; do
   if [ -n "$SKIP_NEXT" ]; then
     SKIP_NEXT=""
@@ -39,6 +40,9 @@ for ARG in "$@"; do
         ;;
       execution-issue-id)
         EXECUTION_ISSUE_ID="$ARG"
+        ;;
+      junit-stable-path)
+        JUNIT_STABLE_PATH_ARG="$ARG"
         ;;
     esac
     SKIP_TARGET=""
@@ -80,6 +84,17 @@ for ARG in "$@"; do
           ;;
         --execution-issue-id=*)
           EXECUTION_ISSUE_ID="${ARG#--execution-issue-id=}"
+          ;;
+      esac
+      ;;
+    --junit-stable-path|--junit-stable-path=*)
+      case "$ARG" in
+        --junit-stable-path)
+          SKIP_NEXT=1
+          SKIP_TARGET=junit-stable-path
+          ;;
+        --junit-stable-path=*)
+          JUNIT_STABLE_PATH_ARG="${ARG#--junit-stable-path=}"
           ;;
       esac
       ;;
@@ -295,6 +310,11 @@ if [ -n "$CURRENT_HASH" ]; then
   PY_ARGS+=(--current-hash "$CURRENT_HASH")
 fi
 PY_ARGS+=(${FAST_ARG:-} ${DRY_RUN_ARG:-} ${L1_ARG:-} --execution-issue-id "$EXECUTION_ISSUE_ID")
+# SEE-1499: forward the explicit stable junit source when provided (an unset
+# flag omits it so the Python layer resolves config/env defaults itself).
+if [ -n "$JUNIT_STABLE_PATH_ARG" ]; then
+  PY_ARGS+=(--junit-stable-path "$JUNIT_STABLE_PATH_ARG")
+fi
 if [ "$KILL_SWITCH_FROM_ENV" = "1" ]; then
   PY_ARGS+=(--kill-switch "$KILL_SWITCH")
 fi

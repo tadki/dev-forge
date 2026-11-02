@@ -140,10 +140,11 @@ def apply_config(path: str) -> None:
     """Override the red-line constants from a target config (best-effort).
 
     Only two surfaces are wired (per SEE-1430c O1): `max_file_lines` and
-    `forbidden_identifiers`. Any read/parse failure leaves the built-in
-    defaults untouched (behaviour-compatible).
+    `forbidden_identifiers`. SEE-1499 adds the third: `junit_stable_path`.
+    Any read/parse failure leaves the built-in defaults untouched
+    (behaviour-compatible).
     """
-    global MAX_FILE_LINES, GAMESTATE_MIRROR_FIELDS
+    global MAX_FILE_LINES, GAMESTATE_MIRROR_FIELDS, JUNIT_STABLE_PATH
     try:
         with open(path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
@@ -157,11 +158,26 @@ def apply_config(path: str) -> None:
     forbidden = cfg.get("forbidden_identifiers")
     if isinstance(forbidden, list) and all(isinstance(x, str) for x in forbidden):
         GAMESTATE_MIRROR_FIELDS = list(forbidden)
+    stable = cfg.get("junit_stable_path")
+    if isinstance(stable, str):
+        JUNIT_STABLE_PATH = stable
 
 
 # S1 (SEE-1226): cross-slot junit aggregation freshness window, aligned with
 # the weekly L1 cadence.
 JUNIT_MAX_AGE_DAYS = 7
+
+# SEE-1499 (§SPEC-B1): explicit stable junit source. Sibling-slot artifacts
+# are GC-volatile (the platform reclaims done-issue slots regardless of any
+# retention note), which orphaned the SEE-1476 §5 verification window's
+# product. When configured (sweep config key `junit_stable_path`, env
+# ARCH_SWEEP_JUNIT_STABLE_PATH, or --junit-stable-path), the GUT dimension
+# reads the report from this operator-designated path ONLY: on a hit it wins
+# over the local read and the slot scan; on a miss or a stale file it fails
+# loudly instead of silently falling back to a possibly-wrong source
+# (SEE-1128). Empty = feature off; the legacy local → cross-slot chain is
+# untouched.
+JUNIT_STABLE_PATH = ""
 
 # Tolerance applied to the expected/actual comparison. Expected counts
 # `func test_*` declarations while actual counts executed junit <testcase>
@@ -305,6 +321,13 @@ def parse_args():
         help="Patrol target config JSON (default: configs/kol.json next to the script). "
              "Missing/unreadable config falls back to the built-in defaults "
              "(behaviour-compatible).",
+    )
+    parser.add_argument(
+        "--junit-stable-path",
+        default=os.environ.get("ARCH_SWEEP_JUNIT_STABLE_PATH", ""),
+        help="Explicit stable (non-GC-volatile) junit report path for the GUT "
+             "dimension (SEE-1499). When set it wins over the sweep config's "
+             "junit_stable_path; empty keeps the legacy local→cross-slot chain.",
     )
     return parser.parse_args()
 
@@ -1409,7 +1432,31 @@ def _gut_load_config(repo_root: str) -> tuple:
 
 
 def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
-                          expected: int) -> tuple:
+                          expected: int, stable_path: str = "") -> tuple:
+    # SEE-1499 tier 0: an explicitly configured stable path is the operator's
+    # designated source and is deterministic — when configured it is the ONLY
+    # candidate consulted. On a hit (readable file, fresh within
+    # JUNIT_MAX_AGE_DAYS) it wins over both the local read and the slot scan;
+    # on a miss or stale file the sweep fails loudly (log_error → error
+    # heartbeat → exit 2, plus the "no junit report found" GUT finding) and
+    # NEVER falls back to local/slot artifacts, which could silently report a
+    # different HEAD's run as authoritative (SEE-1128: a loud unresolved
+    # source beats a quietly wrong one).
+    if stable_path:
+        if not os.path.isfile(stable_path):
+            log_error(f"Configured stable junit source not found: {stable_path}")
+            return "", f"stable:{stable_path}"
+        age_days = (
+            datetime.now(timezone.utc).timestamp() - os.path.getmtime(stable_path)
+        ) / 86400.0
+        if age_days > JUNIT_MAX_AGE_DAYS:
+            log_error(
+                f"Configured stable junit source is stale (> {JUNIT_MAX_AGE_DAYS} "
+                f"days): {stable_path}"
+            )
+            return "", f"stable:{stable_path}"
+        return stable_path, f"stable:{stable_path}"
+
     # Resolve the junit report location (local first).
     candidates = _junit_candidates(repo_root, gutconfig)
     junit_rel = gutconfig.get("junit_xml_file", "res://tests/reports/junit_report.xml")
@@ -1535,7 +1582,8 @@ def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
     return findings
 
 
-def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict]:
+def check_gut_silent_skip(repo_root: str, workspace_root: str = "",
+                          junit_stable_path: str = "") -> list[dict]:
     """Compare .gutconfig.json expected test count vs junit actual count.
 
     D2: the junit path is read from the `junit_xml_file` config key (falling
@@ -1550,6 +1598,13 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict
     (within JUNIT_MAX_AGE_DAYS). expected counts `func test_*` declarations,
     same unit as junit <testcase> entries; a 5% tolerance absorbs junit-older-
     than-HEAD skew without masking a genuinely partial run.
+
+    SEE-1499 (§SPEC-B1): when `junit_stable_path` is configured (CLI/env/
+    sweep config), the resolution is pinned to that operator-designated
+    stable path — a fresh hit wins over local and slot artifacts; a missing
+    or stale file surfaces as an error finding with NO fallback (junit_source
+    then reports ``stable:<path>`` with an empty path, so the broken source
+    is visible instead of silently swapped for a GC-volatile slot artifact).
     """
     findings = []
     metrics = {
@@ -1566,7 +1621,7 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "") -> list[dict
     expected = sum(expected_by_dir.values())
 
     junit_path, junit_source_slot = _resolve_junit_source(
-        repo_root, gutconfig, workspace_root, expected
+        repo_root, gutconfig, workspace_root, expected, stable_path=junit_stable_path
     )
     actual, actual_by_dir, junit_mtime = _read_junit_actuals(junit_path, expected_by_dir)
 
@@ -1802,11 +1857,14 @@ def _run_l0_checks(repo_root: str, prod_gd, fast_mode: bool, dry_run: bool,
 
 
 def _run_l1_checks(repo_root: str, workspace_root: str, run_l1: bool, fast_mode: bool,
-                   all_findings: list, metrics: dict) -> None:
+                   all_findings: list, metrics: dict,
+                   junit_stable_path: str = "") -> None:
     # L1 checks (weekly or forced)
     if run_l1 and not fast_mode:
-        # GUT silent skip (S1: cross-slot junit aggregation)
-        gut_result = check_gut_silent_skip(repo_root, workspace_root)
+        # GUT silent skip (S1: cross-slot junit aggregation; SEE-1499 adds
+        # the explicit stable-path source tier)
+        gut_result = check_gut_silent_skip(repo_root, workspace_root,
+                                           junit_stable_path=junit_stable_path)
         if isinstance(gut_result, tuple):
             gut_findings, gut_metrics = gut_result
         else:
@@ -1844,6 +1902,8 @@ def main() -> int:
     # SEE-1430c O1: wire the patrol target config (falls back to the built-in
     # constants when the file is absent/unreadable — behaviour-compatible).
     apply_config(args.config)
+    # SEE-1499: the CLI/env flag wins over the sweep config's junit_stable_path.
+    junit_stable_path = args.junit_stable_path or JUNIT_STABLE_PATH
 
     # Locks: PID (per-script) + workspace mutex (cross-autopilot).
     _pid_lock = PidFileLock(os.path.join(tempfile.gettempdir(), "architecture_sweep.pid"))
@@ -1876,7 +1936,8 @@ def main() -> int:
 
     redline_skipped, gdlint_warnings = _run_l0_checks(
         repo_root, prod_gd, fast_mode, dry_run, all_findings, metrics)
-    _run_l1_checks(repo_root, workspace_root, run_l1, fast_mode, all_findings, metrics)
+    _run_l1_checks(repo_root, workspace_root, run_l1, fast_mode, all_findings, metrics,
+                   junit_stable_path=junit_stable_path)
 
     known_keys = load_known_findings()
     current_keys, new_findings = _dedup_findings(all_findings, known_keys)
