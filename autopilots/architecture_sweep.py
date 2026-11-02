@@ -1431,6 +1431,15 @@ def _gut_load_config(repo_root: str) -> tuple:
         return False, None
 
 
+def _junit_age_days(mtime_epoch: float) -> float:
+    """Age of a junit artifact in days, as input to the shared
+    JUNIT_MAX_AGE_DAYS staleness comparison. Single source for the arithmetic
+    used by both the S1 cross-slot tier (SEE-1226) and the SEE-1499
+    stable-path tier.
+    """
+    return (datetime.now(timezone.utc).timestamp() - mtime_epoch) / 86400.0
+
+
 def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
                           expected: int, stable_path: str = "") -> tuple:
     # SEE-1499 tier 0: an explicitly configured stable path is the operator's
@@ -1446,9 +1455,7 @@ def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
         if not os.path.isfile(stable_path):
             log_error(f"Configured stable junit source not found: {stable_path}")
             return "", f"stable:{stable_path}"
-        age_days = (
-            datetime.now(timezone.utc).timestamp() - os.path.getmtime(stable_path)
-        ) / 86400.0
+        age_days = _junit_age_days(os.path.getmtime(stable_path))
         if age_days > JUNIT_MAX_AGE_DAYS:
             log_error(
                 f"Configured stable junit source is stale (> {JUNIT_MAX_AGE_DAYS} "
@@ -1476,7 +1483,7 @@ def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
             workspace_root, junit_rel, expected
         )
         if cross_path:
-            age_days = (datetime.now(timezone.utc).timestamp() - cross_mtime) / 86400.0
+            age_days = _junit_age_days(cross_mtime)
             if age_days <= JUNIT_MAX_AGE_DAYS:
                 junit_path = cross_path
                 slot_top = os.path.relpath(
@@ -1583,7 +1590,7 @@ def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
 
 
 def check_gut_silent_skip(repo_root: str, workspace_root: str = "",
-                          junit_stable_path: str = "") -> list[dict]:
+                          junit_stable_path: str = "") -> tuple:
     """Compare .gutconfig.json expected test count vs junit actual count.
 
     D2: the junit path is read from the `junit_xml_file` config key (falling
