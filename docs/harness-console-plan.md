@@ -464,7 +464,7 @@ Vite + React + TypeScript；路由按页面域拆分；状态：服务端状态�
 
 ---
 
-## 实施状态（2026-11-03，feat/console 分支）
+## 实施状态（2026-11-03，feat/console 分支 · PR #41）
 
 **M0+M1 已全部落地并上线**：
 
@@ -473,7 +473,8 @@ Vite + React + TypeScript；路由按页面域拆分；状态：服务端状态�
 - 作用域 lattice / provenance 依赖架 / hook 条件投影（§4.2）/ Effective Harness 解析 / 迁移 dry-run（覆盖矩阵 + instructions 物化 diff + 导出脚本）均已实现
 - 漂移检测实证：KOL 家族 CLAUDE.md 漂移组（144 行主检出 vs 157 行 worktree）
 - **测试**：单元+API 54（schema 13 / collectors 28 / server 13）、Playwright E2E 16（fixture 确定性数据，真后端真浏览器）；既有设施回归：validator 237/237、`tests/run_all.sh` ALL GREEN、pytest 812 passed
-- **上线**：`systemctl --user` 常驻 `forge-console.service`（token 在 `~/.config/forge-console/env`，0600）；LAN 经 Windows portproxy+防火墙放行 `http://192.168.1.105:7310`
+- **上线**：`systemctl --user` 常驻 `forge-console.service`；LAN 经 Windows portproxy+防火墙放行 `http://192.168.1.105:7310`（token 在 `~/.config/forge-console/env`，0600）
+- **运行时位置（重要）**：服务跑在独立 worktree `~/tools/forge-console`（feat/console 分支）——dev-forge 主检出由 repo-sync 守护管理（强制 main），不得在此直接 checkout 分支，否则源码目录会被守护清理、pnpm workspace 链接全断（已实证）。PR 合并后可将服务切回主检出。
 - CI：新增独立 `console` job（engine-tests 零改动）
 - 未做（按计划属 M2/M3）：SQLite 资产历史、写操作类 API、Windows 侧 harness 采集、`.forge.yaml` 声明式接入
 
