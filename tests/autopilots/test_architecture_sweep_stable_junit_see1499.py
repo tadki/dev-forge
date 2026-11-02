@@ -23,8 +23,6 @@ import os
 import sys
 import time
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilots"))
 
 import architecture_sweep as sweep
@@ -45,10 +43,10 @@ def _write(path, content):
         f.write(content)
 
 
-def _make_repo(tmp_path, expected_funcs=3):
+def _make_repo(tmp_path):
     repo = tmp_path / "repo" / "KingOfLikes-Godot"
     _write(str(repo / ".gutconfig.json"), json.dumps(GUTCONFIG))
-    for i in range(expected_funcs):
+    for i in range(3):
         _write(str(repo / "tests" / "unit" / f"test_a{i}.gd"),
                "func test_one() -> void:\n\tpass\n")
     return repo
@@ -209,10 +207,8 @@ class TestStablePathFailureLoud:
         ws.mkdir()
         _slot_junit(str(ws), "seed-5555-eeee", 500)
         missing = str(tmp_path / "stable" / "kol_junit_report.xml")
-        (findings, metrics), _delta = _error_delta(
-            lambda: sweep.check_gut_silent_skip(str(repo), str(ws),
-                                                junit_stable_path=missing)
-        )
+        findings, metrics = sweep.check_gut_silent_skip(str(repo), str(ws),
+                                                        junit_stable_path=missing)
         assert metrics["actual_tests"] == 0
         assert metrics["junit_source"] == f"stable:{missing}"
         gut_errors = [f for f in findings
