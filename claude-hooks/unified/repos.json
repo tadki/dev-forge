@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "description": "devforge 仓库注册表（Owner 定案 2026-11-03：hook 仓库门控的可选范围 = 本表注册仓库，凭 origin git URL 判定）。引擎 when op 'repo' 按此表匹配：解析会话/目标仓库 origin，URL 归一化（大小写/协议/.git 后缀/scp 形态）后与本表 git 字段比对。id 供规则 {op:'repo',in:[...]} 引用；git 支持字符串或数组（多远端形态）。HOOK_REPO_REGISTRY 可覆写路径（测试注入）。表缺失/损坏 → repo op 恒 false + WARN 审计（fail-closed：门禁作用域不命中、豁免不生效）。",
+  "repos": [
+    {
+      "id": "devforge",
+      "git": "https://github.com/tadki/dev-forge.git",
+      "notes": "hooks 部署位自身；push-guard 对其全量豁免（直推 main 工作流）"
+    },
+    {
+      "id": "kol",
+      "git": "https://github.com/tadki/KingOfLikes-Godot.git",
+      "notes": "KingOfLikes host worktree（/mnt/d/GodotProjects/king-of-likes）"
+    },
+    {
+      "id": "gqt",
+      "git": "https://github.com/tadki/godot-qa-toolkit.git",
+      "notes": "godot-qa-toolkit canonical checkout（~/tools/godot-qa-toolkit）"
+    }
+  ]
+}

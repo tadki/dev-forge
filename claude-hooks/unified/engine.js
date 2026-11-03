@@ -330,6 +330,10 @@ function main() {
     cwd: process.env.PWD || '',
     projectRoot: process.env.PROJECT_ROOT || process.env.CLAUDE_PROJECT_DIR || '',
     taskId: process.env.MULTICA_TASK_ID || '',
+    // repo op 注册表：engine.js 与 repos.json 同目录部署（runtime_artifacts 同源），
+    // __dirname 锚定对任何 configFile 位置都正确；HOOK_REPO_REGISTRY 供测试注入
+    registryPath: process.env.HOOK_REPO_REGISTRY || path.join(__dirname, 'repos.json'),
+    warn: (msg) => firelog(logFile, '[unified-hook] WARN ' + msg),
   });
 
   const firedNames = [];
