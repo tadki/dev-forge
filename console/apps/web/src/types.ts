@@ -11,6 +11,16 @@ export interface AssetLite {
   tags: string[];
   enabled: boolean;
   owner?: string;
+  meta?: {
+    owner?: string;
+    category?: string;
+    lifecycle?: string;
+    criticality?: string;
+    runtime?: string;
+    docs?: string;
+    since?: string;
+    notes?: string;
+  };
   source: { collector: string; path: string; locator?: string; sha256?: string };
   // API 边界：payload 结构随 kind 变化，页面侧自行窄化
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

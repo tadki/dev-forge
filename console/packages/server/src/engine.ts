@@ -1,6 +1,8 @@
 import type { Asset, Collection } from '@forge/schema';
 import {
+  applyRegistryOverlay,
   builtinCollectors,
+  loadRegistryEntries,
   computeDriftGroups,
   loadConfig,
   makeContext,
@@ -99,7 +101,9 @@ export class Engine {
     this.running = true;
     try {
       const ctx = makeContext(this.config);
-      const state = await runCollectors(ctx, this.collectors);
+      let state = await runCollectors(ctx, this.collectors);
+      const registryDir = this.config.registryDir ?? join(this.config.devforge, 'console', 'registry.d');
+      state = applyRegistryOverlay(state, await loadRegistryEntries(registryDir));
       // 保留 push 型自定义资产
       const pushed = this.state.assets.filter((a) => a.source.collector === 'push');
       if (pushed.length > 0) {
