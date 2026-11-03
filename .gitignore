@@ -14,3 +14,6 @@ console/**/node_modules/
 console/registry.snapshot.json
 console/e2e/test-results/
 console/e2e/playwright-report/
+
+# claude 本地运行态（hook-fire 日志、push-guard 审计、settings.local.json）
+.claude/
