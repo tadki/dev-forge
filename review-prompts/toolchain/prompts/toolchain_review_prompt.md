@@ -59,6 +59,7 @@ python3 dev-forge/review-prompts/toolchain/build_review_prompt.py --output ./rev
   - 上一期半周检台账：`{{ledger_path}}`（用于趋势线比对与条目去重）；
   - 按主题用 hindsight recall 检索过往工具链决策与教训。
 - 评审完成后把本期条目追加到台账 `{{ledger_path}}`，供下期去重与趋势比对。
+- 台账落 main（8e0c896702d2 可执行形态）：本期台账以独立 PR 合入 main（含 `review-state.json` 期次计数器）；PR 滞留 open 时**不 @ 任何人**（§2.2 不变），仅在汇报与台账中如实标注 open 台账 PR——滞留由日检机器核对承接（F 维：台账最大期号==nth 核对 + open 台账 PR warn，附滞留天数），裁决走 `docs/autopilots.md` 既有「滚动台账 → Atlas 周会裁决 → Atlas @ 责任人」单一决策链，禁止搁置。
 - 评审过程中遇到结构看不懂、上下文不足以支撑判断的情况时，先用 `/recall` 召回相关记忆（历史决策、既有教训）再下结论，不要靠猜。
 - 遇到已拍板裁决的违反项直接提报，不需重新论证：单 WS slot 独占（SEE-1148）；registry 只是加速层、lease sidecar 是真相源；remote branch 巡检停用 / deleteBranchOnMerge（SEE-1179）。
 - 遇到 CRITICAL 级问题按红线升级通道处理（见 §3.4）。
@@ -179,6 +180,7 @@ multica issue comment add <本执行IssueID> \
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v2.5 | 2026-11-04 | Owner 指令（SEE-1516 §SPEC-004，fingerprint 8e0c896702d2）：§2.1 新增台账落 main 可执行条款——平台 description「须立即升级 @Atlas」与「不 @ 任何人」自相矛盾不可执行，改三分支形态：正常期开 PR 落 main；滞留期不 @ 只如实标注（日检 F6/F7 warn 机器承接）；裁决走「滚动台账 → Atlas 周会裁决」单链 |
 | v2.4 | 2026-10-14 | Owner 指令（SEE-1408）：主题重组——原 A hooks 与 B autopilots 合并为「hooks 与 autopilots 编排」；godot-mcp 链路表述随 SEE-1273 重构布局更新（控制面迁 fork + `addons/godot_mcp/` submodule）；原 D 工具链测试有效性前移为 C，并增补「重复代码清理/合并」核心方向；新增 D「GQT 库架构」主题；§2.1 工具链域清单去旧挂载退役路径、反映 submodule 与两库独立仓现状 |
 | v2.3 | 2026-08-28 | Owner 指令（SEE-1191 第八轮）：补 refactor 覆盖缺口——架构侧主题 C 加「重复实现提取共用模块」、主题 D 反模式枚举加「无人调用的函数/过期实现」；工具链侧主题 B（autopilots 编排）加同向关切（双份脚本）（与 architecture v2.3 同步） |
 | v2.2 | 2026-08-28 | Owner 指令（SEE-1191 第五轮）：§2.1 要做的事新增一条——评审中遇到结构看不懂或上下文不足时，必须先用 /recall 召回相关记忆再下结论（与 architecture v2.2 同步） |
