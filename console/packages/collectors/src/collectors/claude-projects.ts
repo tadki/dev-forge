@@ -2,47 +2,64 @@ import type { Asset, Relation } from '@forge/schema';
 import { join } from 'node:path';
 import { exists, guessLang, headings, listDir, readJson, readText, sha256 } from '../util.js';
 import { asset, type CollectContext, type Collector } from '../types.js';
-import { workspaceOf } from '../config.js';
+import type { WorkspaceDef } from '../config.js';
 
-async function scanProjects(ctx: CollectContext): Promise<string[]> {
-  const found: string[] = [];
-  const seen = new Set<string>();
-  const excluded = (p: string) =>
-    ctx.config.excludeNames.some((ex) => p.includes(ex)) || p.includes('/.') && !p.endsWith('/.claude');
+interface RegisteredProject {
+  path: string;
+  ws: WorkspaceDef;
+}
 
-  async function walk(dir: string, depth: number) {
-    if (depth < 0 || seen.has(dir)) return;
-    seen.add(dir);
-    const hasHarness =
-      (await exists(join(dir, 'CLAUDE.md'))) || (await exists(join(dir, '.claude')));
-    if (hasHarness && !excluded(dir)) found.push(dir);
-    if (depth === 0) return;
-    for (const name of await listDir(dir)) {
-      if (name.startsWith('.') || name === 'multica_workspaces') continue;
-      const sub = join(dir, name);
-      const st = await import('node:fs/promises').then((m) => m.stat(sub).catch(() => null));
-      if (st?.isDirectory()) await walk(sub, depth - 1);
+function registeredProjects(ctx: CollectContext): RegisteredProject[] {
+  const out: RegisteredProject[] = [];
+  const ownerOf = new Map<string, string>();
+  for (const ws of ctx.config.workspaces) {
+    for (const p of ws.projects ?? []) {
+      const norm = p.replace(/\/+$/, '') || '/';
+      const firstWs = ownerOf.get(norm);
+      if (firstWs) {
+        ctx.diagnostics.push({ level: 'warn', message: `[claude-projects] 路径重复注册（归属 ${firstWs}，${ws.id} 跳过）：${norm}` });
+        continue;
+      }
+      ownerOf.set(norm, ws.id);
+      out.push({ path: norm, ws });
     }
   }
-
-  for (const root of ctx.config.scanRoots) await walk(root.path, root.depth);
-  return found;
+  return out;
 }
 
 export const claudeProjectsCollector: Collector = {
   name: 'claude-projects',
   mode: 'watch',
-  watchPaths: (ctx) => ctx.config.scanRoots.map((r) => r.path),
+  watchPaths: (ctx) => [...new Set(registeredProjects({ ...ctx, diagnostics: [] }).map((r) => r.path))],
   async collect(ctx: CollectContext) {
     const assets: Asset[] = [];
     const relations: Relation[] = [];
-    const projects = await scanProjects(ctx);
 
-    for (const dir of projects) {
+    for (const { path: dir, ws } of registeredProjects(ctx)) {
       const name = dir.split('/').filter(Boolean).pop() ?? dir;
-      const ws = workspaceOf(ctx.config, dir);
-      const projectId = `project:${name}`;
+      const st = await import('node:fs/promises').then((m) => m.stat(dir).catch(() => null));
 
+      if (!st?.isDirectory()) {
+        ctx.diagnostics.push({ level: 'warn', message: `[claude-projects] 注册的项目路径不存在或不是目录：${dir}（workspace ${ws.id}）` });
+        assets.push(
+          asset({
+            id: `project:${name}`,
+            kind: 'project',
+            name,
+            summary: `${ws.name} · 路径不存在`,
+            attach: { level: 'project', ref: dir },
+            applies: { workspaces: [ws.id], origin: 'native' },
+            enforcement: 'derived',
+            platforms: ['claude-code'],
+            source: { collector: 'claude-projects', path: dir },
+            payload: { path: dir, workspace: ws.id, workspaceName: ws.name, missing: true },
+            tags: [ws.id],
+          })
+        );
+        continue;
+      }
+
+      const projectId = `project:${name}`;
       const claudeMd = await readText(join(dir, 'CLAUDE.md'));
       const dotClaude = join(dir, '.claude');
       const hasSettings = await exists(join(dotClaude, 'settings.json'));
@@ -62,16 +79,16 @@ export const claudeProjectsCollector: Collector = {
           id: projectId,
           kind: 'project',
           name: name,
-          summary: `${ws ? ws.name : '未分组'} · CLAUDE.md ${claudeMd ? claudeMd.split('\n').length + ' 行' : '无'} · hooks ${hooksScripts.length}`,
+          summary: `${ws.name} · CLAUDE.md ${claudeMd ? claudeMd.split('\n').length + ' 行' : '无'} · hooks ${hooksScripts.length}`,
           attach: { level: 'project', ref: dir },
-          applies: ws ? { workspaces: [ws.id], origin: 'native' } : undefined,
+          applies: { workspaces: [ws.id], origin: 'native' },
           enforcement: 'derived',
           platforms: ['claude-code'],
           source: { collector: 'claude-projects', path: dir },
           payload: {
             path: dir,
-            workspace: ws?.id,
-            workspaceName: ws?.name,
+            workspace: ws.id,
+            workspaceName: ws.name,
             hasClaudeMd: claudeMd !== null,
             claudeMdLines: claudeMd ? claudeMd.split('\n').length : 0,
             claudeMdHash: claudeMd ? sha256(claudeMd) : undefined,
@@ -81,7 +98,7 @@ export const claudeProjectsCollector: Collector = {
             agents: agentFiles,
             mcpServers: mcpJson?.mcpServers ? Object.keys(mcpJson.mcpServers) : [],
           },
-          tags: ws ? [ws.id] : ['unassigned'],
+          tags: [ws.id],
         })
       );
 
@@ -93,7 +110,7 @@ export const claudeProjectsCollector: Collector = {
             name: `${name}/CLAUDE.md`,
             summary: (headings(claudeMd)[0]?.text ?? '').slice(0, 80),
             attach: { level: 'project', ref: dir },
-            applies: ws ? { workspaces: [ws.id], origin: 'native' } : undefined,
+            applies: { workspaces: [ws.id], origin: 'native' },
             enforcement: 'derived',
             source: {
               collector: 'claude-projects',
@@ -109,7 +126,7 @@ export const claudeProjectsCollector: Collector = {
               contentHash: sha256(claudeMd),
               projectName: name,
             },
-            tags: ['claude-md', ...(ws ? [ws.id] : [])],
+            tags: ['claude-md', ws.id],
           })
         );
       }
@@ -123,7 +140,7 @@ export const claudeProjectsCollector: Collector = {
             name: s,
             summary: md.match(/^description:\s*(.+)$/m)?.[1]?.slice(0, 100) ?? '',
             attach: { level: 'project', ref: dir },
-            applies: ws ? { workspaces: [ws.id], origin: 'native' } : undefined,
+            applies: { workspaces: [ws.id], origin: 'native' },
             enforcement: 'advisory',
             payload: { lines: md.split('\n').length },
             source: { collector: 'claude-projects', path: join(dotClaude, 'skills', s, 'SKILL.md'), sha256: md ? sha256(md) : undefined },
@@ -143,7 +160,7 @@ export const claudeProjectsCollector: Collector = {
             name: fmName,
             summary: desc.slice(0, 100),
             attach: { level: 'project', ref: dir },
-            applies: ws ? { workspaces: [ws.id], origin: 'native' } : undefined,
+            applies: { workspaces: [ws.id], origin: 'native' },
             enforcement: 'advisory',
             payload: { subagent: true, frontmatter: md.split('---')[1]?.trim() ?? '', bodyLines: md.split('\n').length },
             source: { collector: 'claude-projects', path: join(dotClaude, 'agents', a), sha256: sha256(md) },
@@ -165,7 +182,7 @@ export const claudeProjectsCollector: Collector = {
             enforcement: 'enforced',
             payload: { lines: (md ?? '').split('\n').length },
             source: { collector: 'claude-projects', path: p, sha256: md ? sha256(md) : undefined },
-            tags: ['project-hook', ...(ws ? [ws.id] : [])],
+            tags: ['project-hook', ws.id],
           })
         );
       }
@@ -178,11 +195,11 @@ export const claudeProjectsCollector: Collector = {
             name: mcpName,
             summary: `stdio ${def.command ?? ''}`.slice(0, 100),
             attach: { level: 'project', ref: dir },
-            applies: ws ? { workspaces: [ws.id], origin: 'native' } : undefined,
+            applies: { workspaces: [ws.id], origin: 'native' },
             enforcement: 'enforced',
             payload: { transport: 'stdio', command: def.command, args: def.args },
             source: { collector: 'claude-projects', path: join(dir, '.mcp.json'), locator: `$.mcpServers.${mcpName}` },
-            tags: ['mcp', ...(ws ? [ws.id] : [])],
+            tags: ['mcp', ws.id],
           })
         );
       }

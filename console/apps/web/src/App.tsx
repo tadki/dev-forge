@@ -23,8 +23,6 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 15_000, refetchOnWindowFocus: false } },
 });
 
-const WORKSPACES = ['kol', 'devforge', 'grepai', 'gqt'];
-
 function Shell() {
   const [workspace, setWorkspace] = useState('');
   const [query, setQuery] = useState('');
@@ -34,6 +32,11 @@ function Shell() {
     queryFn: () => apiGet<Overview>('/api/overview'),
     refetchInterval: 30_000,
   });
+  const workspaces = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => apiGet<{ workspaces: Array<{ id: string }> }>('/api/workspaces'),
+  });
+  const wsIds = workspaces.data?.workspaces.map((w) => w.id) ?? [];
 
   // 鉴权状态机：缓存里的旧 401（token 设置前的请求）先静默重试；仅当带 token 重试仍 401 才回门
   const errStatus = overview.isError ? (overview.error as { status?: number })?.status : undefined;
@@ -72,7 +75,7 @@ function Shell() {
   return (
     <div className="app">
       <TopBar
-        workspaces={WORKSPACES}
+        workspaces={wsIds}
         workspace={workspace}
         onWorkspace={setWorkspace}
         query={query}

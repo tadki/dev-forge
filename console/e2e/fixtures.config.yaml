@@ -8,7 +8,6 @@ workspaces:
     projects:
       - /e2e/king-of-likes
     residents: [Fronti, Revy]
-scanRoots: []
 multica:
   enabled: false
 hindsight:
