@@ -78,6 +78,12 @@ LAUNCHER_LOG_DIRS = (MULTICA_HOME, GODOT_MCP_NEUTRAL_HOME)
 LAUNCHER_LOG_PREFIX = "godot-mcp-launcher-"
 LAUNCHER_LOG_SUFFIX = ".log"
 
+# SEE-1516 §SPEC-001/002 (fingerprint 8e0c896702d2): 台账期次不变量机检。
+# 台账 PR 滞留 open 时 main 的 review-state nth 与台账期号脱节 → 下期拼装
+# 重号（PR #40/#42 事故形态），仅靠 description 人肉条款无机器防线。
+LEDGER_DIR_REL = os.path.join("review-prompts", "toolchain", "ledger")
+LEDGER_PERIOD_RE = re.compile(r"第\s*(\d+)\s*期")
+
 # repo 相对路径 (相对脚本所在仓库)
 # SEE-1408: 旧 .dev/godot-mcp/launch 已随 SEE-1273 M3 退役, 控制面现挂载为
 # addons/godot_mcp (vendored submodule, 只读)。日检仅读路径探测, 不写 addon。
@@ -508,6 +514,101 @@ def git_out(repo_path, args):
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def origin_repo_slug_from_url(url):
+    """git remote origin URL → 'owner/repo' 或 None（仅 github，当前日检只审计 dev-forge）。
+
+    SEE-1516 §SPEC-002：open 台账 PR 查询不得猜仓库名；解析不出 github slug
+    即视为扫描不可用（调用方降 info）。
+    """
+    if not url:
+        return None
+    s = url.strip()
+    m = re.match(r"(?:https?://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                 r"([^/]+)/([^/]+?)(?:\.git)?$", s)
+    if not m:
+        return None
+    return "%s/%s" % (m.group(1), m.group(2).rstrip("/"))
+
+
+def origin_repo_slug(repo_root_path):
+    """git -C <root> remote get-url origin → 'owner/repo' 或 None。"""
+    url = git_out(repo_root_path, ["remote", "get-url", "origin"])
+    return origin_repo_slug_from_url(url) if url else None
+
+
+def ledger_max_period(ledger_dir):
+    """滚动台账目录内所有 YYYY-MM.md 的最大期号；无期号条目返回 0。
+
+    「第 N 期」/「第 N 期（重跑）」均匹配；目录缺失/空返回 0（调用方据此
+    走 missing_input）。
+    """
+    max_period = 0
+    if not os.path.isdir(ledger_dir):
+        return 0
+    try:
+        names = os.listdir(ledger_dir)
+    except OSError:
+        return 0
+    for name in names:
+        if not (name.startswith("20") and name.endswith(".md")):
+            continue
+        text = safe_read(os.path.join(ledger_dir, name))
+        if not text:
+            continue
+        for m in LEDGER_PERIOD_RE.finditer(text):
+            try:
+                p = int(m.group(1))
+            except ValueError:
+                continue
+            if p > max_period:
+                max_period = p
+    return max_period
+
+
+def open_ledger_prs(repo_slug, now=None):
+    """gh PR list <slug> 抓 open PR，筛台账标题（含「台账」关键字）。
+
+    返回 [(number, title, 滞留天数)]（滞留天数用 PR createdAt~now），
+    查询失败/gh 缺失返回 None（调用方降 info 不 warn）。
+    """
+    if not repo_slug:
+        return None
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "list", "--repo", repo_slug,
+             "--state", "open", "--limit", "30",
+             "--json", "number,title,createdAt"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    if r.returncode != 0 or not r.stdout:
+        return None
+    try:
+        prs = json.loads(r.stdout)
+    except ValueError:
+        return None
+    now = now if now is not None else datetime.now(timezone.utc)
+    out = []
+    for p in prs:
+        title = p.get("title") or ""
+        if "台账" not in title:
+            continue
+        age = None
+        created = p.get("createdAt")
+        if created:
+            try:
+                created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                age = (now - created_at).days
+            except ValueError:
+                age = None
+        out.append((p.get("number"), title, age))
+    out.sort(key=lambda t: t[0])
+    return out
 
 
 def is_launcher_log_name(name):
@@ -1218,8 +1319,60 @@ class DailyCheck:
         # F5 (SEE-1440 / fingerprint ba5ed5893ad9)：Kill Switch 单源一致性。
         self._check_kill_switch_single_source(dim, issues)
 
+        # F6/F7 (SEE-1516 §SPEC-001/002 / fingerprint 8e0c896702d2)：台账期次
+        # 不变量机检 — main 上 nth 与台账最大期号脱节、台账 PR 滞留 open 均
+        # 意味着下期拼装撞号（PR #40/#42 事故形态）。
+        self._check_f6_ledger_nth(dim, issues)
+        self._check_f7_open_ledger_pr(dim, issues)
+
         status = "warn" if issues else "ok"
         self.section(dim, status, issues)
+
+    def _check_f6_ledger_nth(self, dim, issues):
+        """F6：台账最大期号 == review-state nth（不一致即 warn 附双数值）。"""
+        ledger_dir = os.path.join(self.root, LEDGER_DIR_REL)
+        max_period = ledger_max_period(ledger_dir)
+        if max_period == 0:
+            self.missing_input(ledger_dir, dim, "台账目录缺失或无期号条目")
+            return
+        state = read_json(os.path.join(ledger_dir, "review-state.json"))
+        nth = state.get("nth") if isinstance(state, dict) else None
+        if not isinstance(nth, int):
+            self.missing_input(os.path.join(ledger_dir, "review-state.json"),
+                               dim, "review-state.json 缺失或无 nth")
+            return
+        if max_period != nth:
+            # 台账含 open PR 未落账的条目时 main 侧两者天然不等 —— 滞留
+            # 形态由 F7 承接定位，此处只报脱节事实。
+            issues.append("F6 台账最大期号(%d) != review-state nth(%d)"
+                          % (max_period, nth))
+            self.warn(dim, "ledger_nth_mismatch",
+                      "台账最大期号=%d != review-state nth=%d（期次漂移，"
+                      "下期拼装撞号风险）" % (max_period, nth))
+        else:
+            self.ok(dim, "f6", "台账最大期号=%d == review-state nth" % max_period)
+
+    def _check_f7_open_ledger_pr(self, dim, issues):
+        """F7：dev-forge 存在 open 台账 PR 即 warn（附 PR 号与滞留天数）。"""
+        slug = origin_repo_slug(self.root)
+        prs = open_ledger_prs(slug) if slug else None
+        if prs is None:
+            # gh 缺失/未认证/查询失败降 info：环境性缺失不应每天 warn
+            # （恒真告警家族 413bc48b32da/ae4dac961ce9 的教训）。
+            self.info(dim, "ledger_pr_scan_unavailable",
+                      "open 台账 PR 扫描不可用（gh 缺失/未认证/查询失败或 "
+                      "origin 无法解析），本项跳过")
+            return
+        if prs:
+            details = "; ".join(
+                "#%d「%s」滞留 %d 天" % (n, (title or "")[:40], age if age is not None else -1)
+                for n, title, age in prs)
+            issues.append("F7 存在 open 台账 PR: %s" % details)
+            self.warn(dim, "open_ledger_pr",
+                      "dev-forge 存在 open 台账 PR（台账未落 main，去重基线断链）: %s"
+                      % details)
+        else:
+            self.ok(dim, "f7", "无 open 台账 PR")
 
     def _check_registrations(self, dim, issues):
         """F3 daemon 存活 + F4 服务检出==注册分支（只读）。"""
