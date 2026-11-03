@@ -29,7 +29,8 @@ HARD SAFETY: 本脚本完全不产生任何写操作 —— 无 spawn、无 brid
   python3 toolchain/toolchain_daily_check.py --no-net   # 跳过 tcp 端口探测
   python3 toolchain/toolchain_daily_check.py --json     # 机器可读 stdout (供 1b autopilot 复用)
 
-Exit code: 0 = GREEN (无红线), 2 = REDLINE (port_override 污染 / 未知根因新失败 / 2σ 越界),
+Exit code: 0 = GREEN (无红线), 2 = REDLINE (port_override 污染 / 未知根因新失败 / 2σ 越界 /
+          systemd unit 非 active / 宿主机 repo-sync 守护停摆, SEE-1519 §SPEC-003/004),
           1 = 脚本自身无法完成检查 (输入缺失)。
 """
 
