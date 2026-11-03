@@ -3,12 +3,10 @@
 # Trigger: Bash tool (matcher: Bash)
 # Logic: write mark_b=true + task_issue_id to state file if command contains 'multica issue create', mark_a exists
 
-# WSL-safe stdin read (3s timeout)
-INPUT=""
-while IFS= read -r -t 3 line || [ -n "$line" ]; do
-    INPUT="${INPUT}${line}"$'\n'
-done
-INPUT="${INPUT%$'\n'}"
+# WSL-safe stdin read (3s timeout) — SEE-1516 F3 单源：scripts/lib/read-stdin.lib.sh
+_RS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/read-stdin.lib.sh"
+# shellcheck source=scripts/lib/read-stdin.lib.sh
+[ -f "$_RS_LIB" ] && . "$_RS_LIB" && hook_read_stdin
 
 # Only for Atlas agent
 if [ "${MULTICA_AGENT_NAME:-}" != "Atlas" ]; then
@@ -24,17 +22,8 @@ if ! grep -q "^mark_a=true" "$STATE_FILE"; then
     exit 0
 fi
 
-# Extract command from stdin JSON
-COMMAND=$(printf '%s' "$INPUT" | node -e "
-  let d = '';
-  process.stdin.on('data', c => d += c);
-  process.stdin.on('end', () => {
-    try {
-      const i = JSON.parse(d);
-      process.stdout.write(i.tool_input?.command || '');
-    } catch(e) { process.stdout.write(''); }
-  });
-" 2>/dev/null)
+# Extract command from stdin JSON (SEE-1516 F3 单源：hook_json_field)
+COMMAND=$(printf '%s' "$INPUT" | hook_json_field tool_input.command)
 
 # Only trigger for multica issue create commands (at least one space between words)
 if ! echo "$COMMAND" | grep -q "multica[[:space:]][[:space:]]*issue[[:space:]][[:space:]]*create"; then
