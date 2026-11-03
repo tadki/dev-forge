@@ -27,6 +27,10 @@ fail(){ echo -e "  \033[0;31m[FAIL]\033[0m $1"; FAIL=$((FAIL+1)); }
 
 WORKTREE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK_SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/push-guard.sh"
+# dev-forge 豁免（Owner 指令 2026-11-03）后 push-guard 按 PWD 解析目标仓库；
+# 本套件只断言 force 分类语义（与仓库策略无关），从中性非 git 目录执行，
+# 使仓库豁免与 Phase-3 仓库判定不参与结果（see526 G6 同型隔离）。
+NEUTRAL_DIR="$(mktemp -d /tmp/pgf-neutral.XXXXXX)"
 
 echo "=== SEE-954 LOW-1: push-guard force-push detection hardening ==="
 
@@ -48,6 +52,8 @@ run_hook() {
   stdout_file=$(mktemp /tmp/pgf-out.XXXXXX)
   stderr_file=$(mktemp /tmp/pgf-err.XXXXXX)
   (
+    cd "$NEUTRAL_DIR" || exit 99
+    unset PROJECT_ROOT TARGET_REPO_ROOT GIT_ROOT
     export MULTICA_AGENT_NAME="Bachi"
     export MULTICA_TASK_ID=""
     echo "$input" | bash "$HOOK_SCRIPT" > "$stdout_file" 2> "$stderr_file"
@@ -87,6 +93,7 @@ run_hook "git push -n origin HEAD:refs/heads/feature/x" 0 "N2: -n dry-run only (
 run_hook "git push origin HEAD:refs/heads/feature/x" 0 "N3: plain safe push"
 run_hook "git status" 0 "N4: not a push (passthrough)"
 
+rm -rf "$NEUTRAL_DIR"
 echo ""
 echo "=== RESULTS: PASS=$PASS FAIL=$FAIL ==="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

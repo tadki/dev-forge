@@ -171,35 +171,10 @@ esac
 # Delete push: no code involved, bypass Phase 2 & 3
 [ "$PUSH_RESULT" = "DELETE_PUSH" ] && { echo "$INPUT"; exit 0; }
 
-# Force push (C3/SC5): blocked for agents by default. The §B auto-rebase in
-# repo-checkout (SessionStart) uses --force-with-lease but does not pass through
-# push-guard, so any agent-typed --force / --force-with-lease / -f is a mistake
-# that would overwrite another agent's commits on the shared branch.
-# SEE-1069: Atlas (Leader agent) is whitelisted by agent_id so it can force-push
-# to reconcile squash-merge divergence on a shared branch. Every whitelisted
-# force-push is appended to an audit log for traceability. Non-force pushes are
-# unaffected — this only short-circuits the force-push block below.
-if [ "$PUSH_RESULT" = "FORCE_PUSH" ]; then
-  ATLAS_AGENT_ID="fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
-  if [ "${MULTICA_AGENT_ID:-}" = "$ATLAS_AGENT_ID" ]; then
-    AUDIT_LOG="${PROJECT_ROOT:-.}/.claude/push-guard-force-audit.log"
-    FORCED_CMD=$(printf '%s' "$INPUT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{process.stdout.write((JSON.parse(d).tool_input?.command||'').trim())}catch(e){}})" 2>/dev/null || true)
-    # Best-effort audit: a logging failure (missing dir, read-only fs) must never
-    # break the authorized push decision, hence mkdir -p + `|| true`.
-    mkdir -p "$(dirname "$AUDIT_LOG")" 2>/dev/null || true
-    { echo "$(date -Iseconds) agent=${MULTICA_AGENT_ID:-unknown} name=${MULTICA_AGENT_NAME:-unknown} cmd=${FORCED_CMD}"; } >> "$AUDIT_LOG" 2>/dev/null || true
-    echo "[push-guard] Atlas whitelist: force-push allowed, audit logged to ${AUDIT_LOG}" >&2
-    echo "$INPUT"; exit 0
-  fi
-  echo "[push-guard] 错误：禁止 force-push（--force / --force-with-lease / -f）" >&2
-  echo "[push-guard] 多 agent 共享分支场景下 force-push 会覆盖他人 commit。" >&2
-  echo "[push-guard] 请改用：git fetch origin && git rebase origin/<working_branch>，然后普通推送。" >&2
-  exit 2
-fi
-
-# Git root resolution — shared by the Phase 2 master guard and Phase 3. Resolved
-# once; later calls are no-ops. Returns 1 if no repo is reachable from the
-# command path, PROJECT_ROOT, CWD, or direct subdirectories.
+# Git root resolution — shared by the dev-forge exemption, the Phase 2 master
+# guard and Phase 3. Resolved once; later calls are no-ops. Returns 1 if no
+# repo is reachable from the command path, PROJECT_ROOT, CWD, or direct
+# subdirectories.
 GIT_ROOT=""
 # Resolve the git repo a push actually targets. SEE-1268 (2-library split): an
 # agent now pushes standalone companion repos (godot-qa-toolkit, the godot-mcp
@@ -256,6 +231,52 @@ resolve_git_root() {
   done < <(find "$PWD" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort)
   return 1
 }
+
+# --- Phase 1b: dev-forge 仓库豁免（Owner 指令 2026-11-03）---
+# dev-forge = 直推 main 工作流，push-guard 全部检查（master 门禁 / force 拦截 /
+# 祖先检查 / NO_REFSPEC 门禁 / 共享分支语义）对其不适用。与 rules.d/
+# push-guard-gates.json 两条声明式门禁的 dev-forge 豁免同口径；本脚本侧锚定
+# 「push 目标仓库」，覆盖命令串不含路径的场景。锚点二选一命中即豁免：
+#   1. 目标仓库根 == 本脚本部署仓库根（hooks 部署位自身 = canonical 检出）；
+#   2. 目标仓库 origin URL 含 dev-forge（覆盖 multica 任务 workdir 里的检出，
+#      其路径/根与部署位不同，但 origin 指向同一远端）。
+# resolve_git_root 失败（无可达仓库）不豁免，交由既有 Phase 3 no-repo 路径处理。
+resolve_git_root || true
+if [ -n "$GIT_ROOT" ]; then
+  SELF_REPO_ROOT="$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd -P)" || SELF_REPO_ROOT=""
+  TARGET_ROOT_ABS="$(cd "$GIT_ROOT" 2>/dev/null && pwd -P)" || TARGET_ROOT_ABS=""
+  TARGET_ORIGIN_URL="$(git -C "$GIT_ROOT" remote get-url origin 2>/dev/null || true)"
+  if { [ -n "$SELF_REPO_ROOT" ] && [ "$TARGET_ROOT_ABS" = "$SELF_REPO_ROOT" ]; } \
+     || [[ "$TARGET_ORIGIN_URL" == *dev-forge* ]]; then
+    echo "$INPUT"; exit 0
+  fi
+fi
+
+# Force push (C3/SC5): blocked for agents by default. The §B auto-rebase in
+# repo-checkout (SessionStart) uses --force-with-lease but does not pass through
+# push-guard, so any agent-typed --force / --force-with-lease / -f is a mistake
+# that would overwrite another agent's commits on the shared branch.
+# SEE-1069: Atlas (Leader agent) is whitelisted by agent_id so it can force-push
+# to reconcile squash-merge divergence on a shared branch. Every whitelisted
+# force-push is appended to an audit log for traceability. Non-force pushes are
+# unaffected — this only short-circuits the force-push block below.
+if [ "$PUSH_RESULT" = "FORCE_PUSH" ]; then
+  ATLAS_AGENT_ID="fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
+  if [ "${MULTICA_AGENT_ID:-}" = "$ATLAS_AGENT_ID" ]; then
+    AUDIT_LOG="${PROJECT_ROOT:-.}/.claude/push-guard-force-audit.log"
+    FORCED_CMD=$(printf '%s' "$INPUT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{process.stdout.write((JSON.parse(d).tool_input?.command||'').trim())}catch(e){}})" 2>/dev/null || true)
+    # Best-effort audit: a logging failure (missing dir, read-only fs) must never
+    # break the authorized push decision, hence mkdir -p + `|| true`.
+    mkdir -p "$(dirname "$AUDIT_LOG")" 2>/dev/null || true
+    { echo "$(date -Iseconds) agent=${MULTICA_AGENT_ID:-unknown} name=${MULTICA_AGENT_NAME:-unknown} cmd=${FORCED_CMD}"; } >> "$AUDIT_LOG" 2>/dev/null || true
+    echo "[push-guard] Atlas whitelist: force-push allowed, audit logged to ${AUDIT_LOG}" >&2
+    echo "$INPUT"; exit 0
+  fi
+  echo "[push-guard] 错误：禁止 force-push（--force / --force-with-lease / -f）" >&2
+  echo "[push-guard] 多 agent 共享分支场景下 force-push 会覆盖他人 commit。" >&2
+  echo "[push-guard] 请改用：git fetch origin && git rebase origin/<working_branch>，然后普通推送。" >&2
+  exit 2
+fi
 
 # SEE-1117 Direction 3 + SEE-1240 WS-8 retirement note: the per-worktree MCP
 # lease lives in a sidecar at <worktree>/.godot/mcp-lease.json (gitignored —

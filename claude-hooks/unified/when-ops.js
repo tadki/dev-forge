@@ -1,9 +1,9 @@
 'use strict';
 // when-ops.js - v2 when op tree evaluator (SEE-1330 P0, plan §3)
-// Word list: 7 atomic ops (event/tool/command/file/content/used_skill/branch)
-// + 3 combinators (all/any/not). Data sources are lazily evaluated and cached
-// per payload (plan §7): zero-I/O ops first, I/O ops (content/run history/
-// branch) only when depended upon.
+// Word list: 9 atomic ops (event/tool/command/file/content/used_skill/branch/
+// payload/cwd) + 3 combinators (all/any/not). Data sources are lazily
+// evaluated and cached per payload (plan §7): zero-I/O ops first, I/O ops
+// (content/run history/branch) only when depended upon.
 
 const fs = require('fs');
 const path = require('path');
@@ -343,6 +343,14 @@ function createEvaluator(payload, opts) {
       case 'used_skill':
         loadTranscript();
         return usedSkills.has(node.skill);
+      case 'cwd': {
+        // 零 I/O 会话 cwd 正则（harness-console-plan §「声明 vs 强制」预留的仓库级
+        // 条件扩展点）。与 branch 的非 git 恒 false 不同：cwd 缺失时恒 false，
+        // 规则作者用 not(cwd...) 做仓库豁免时该保守方向 = 豁免不生效、门禁照常。
+        if (typeof node.pattern !== 'string' || node.pattern === '') return false;
+        const re = safeRegex(node.pattern);
+        return !!(re && re.test(cwd));
+      }
       case 'branch': {
         const b = loadBranch();
         if (!b) return false; // 非 git 目录恒 false（M1 注记）

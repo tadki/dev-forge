@@ -33,6 +33,8 @@ const M1_OP_POINTS = {
   branch: new Set(HOOK_POINTS),
   // P2/S10：payload 判读零 I/O，全时点可用（stop_hook_active 在 Stop 载荷上）
   payload: new Set(HOOK_POINTS),
+  // 会话 cwd 正则，零 I/O（读引擎注入的 PWD），全时点可用
+  cwd: new Set(HOOK_POINTS),
 };
 
 // M2 lookup: action op -> set of hook points where the action is protocol-valid.
@@ -46,7 +48,7 @@ const M2_ACTION_POINTS = {
 };
 
 const ACTION_OPS = ['deny', 'context', 'modify', 'run_script'];
-const ATOMIC_OPS = ['event', 'tool', 'command', 'file', 'content', 'used_skill', 'branch', 'payload'];
+const ATOMIC_OPS = ['event', 'tool', 'command', 'file', 'content', 'used_skill', 'branch', 'payload', 'cwd'];
 const ONE_SHOT_SCOPES = ['run', 'issue', 'session', 'never'];
 // SEE-1333 D4：{id} 直读形态的窗口 id 来源白名单（run/session 合一后仅两源）
 const ONE_SHOT_IDS = ['run', 'issue'];
@@ -314,6 +316,13 @@ function whenNodeIssues(node) {
     // P2/S10：载荷判读 op（stop_hook_active 防循环等）；零 I/O，全时点可用
     if (typeof node.path !== 'string' || node.path === '') {
       return invalid('when.payload', 'payload 需要非空 path（. 分段）');
+    }
+    return null;
+  }
+  if (node.op === 'cwd') {
+    // 会话 cwd 正则（零 I/O）；pattern 语义同 tool.pattern（作者自锚定）
+    if (typeof node.pattern !== 'string' || node.pattern === '') {
+      return invalid('when.cwd', 'cwd 需要非空 pattern');
     }
     return null;
   }
