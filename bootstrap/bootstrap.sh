@@ -38,6 +38,11 @@ fi
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 BAK="$SETTINGS.bak-bootstrap-$TS"
+# 同秒重跑防覆盖：备份名秒级粒度，已有同名备份时追加序号（旧 installer 同类缺陷的回归钉见 tests/test_v2_installer_p0.sh §2c/3b/4c）
+n=1
+while [ -e "$BAK" ]; do
+  BAK="$SETTINGS.bak-bootstrap-$TS-$((n++))"
+done
 cp "$SETTINGS" "$BAK"
 echo "bootstrap: settings backed up → $BAK"
 
