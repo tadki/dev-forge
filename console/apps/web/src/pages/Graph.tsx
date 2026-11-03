@@ -5,10 +5,11 @@ import type { GraphData } from '../types';
 import { Badge, KV, Panel } from '../components/ui';
 import type { PageCtx } from './ctx';
 
-const KIND_ORDER = ['project', 'agent', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'report', 'env', 'custom'];
+const KIND_ORDER = ['project', 'agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'report', 'env', 'custom'];
 const KIND_COLOR: Record<string, string> = {
   project: 'var(--accent)',
   agent: 'var(--mint)',
+  deployment: 'var(--gray)',
   instruction: 'var(--amber)',
   skill: 'var(--mint)',
   'hook-rule': 'var(--accent)',

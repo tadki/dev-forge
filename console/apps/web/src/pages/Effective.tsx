@@ -21,7 +21,7 @@ export function EffectivePage(_props: { ctx: PageCtx }) {
   const [agent, setAgent] = useState('');
 
   const projectList = projects.data?.assets ?? [];
-  const agentList = (agents.data?.assets ?? []).filter((a) => (a.payload as { platformId?: string }).platformId || (a.payload as { subagent?: boolean }).subagent);
+  const agentList = agents.data?.assets ?? [];
   const eff = useQuery({
     queryKey: ['effective', project, agent],
     queryFn: () => apiGet<EffectiveHarness>(`/api/effective?project=${encodeURIComponent(project)}${agent ? `&agent=${encodeURIComponent(agent)}` : ''}`),

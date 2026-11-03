@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 export const ASSET_KINDS = [
   'agent',
+  // 部署实例：agent 本体 × 运行环境（platform/workspace）的绑定。运行时状态（platformId、
+  // workspaceId、status 等）只允许出现在 deployment，agent 本体保持环境无关（Owner 原则 2026-11-03）
+  'deployment',
   'instruction',
   'skill',
   'hook-registration',

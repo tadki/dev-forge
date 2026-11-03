@@ -23,6 +23,7 @@ export function OverviewPage({ ctx }: { ctx: PageCtx }) {
     ['autopilot', '巡逻', 'var(--ink)'],
     ['service', '服务', 'var(--accent)'],
     ['agent', '智能体', 'var(--mint)'],
+    ['deployment', '部署', 'var(--amber)'],
     ['mcp-endpoint', 'MCP', 'var(--amber)'],
     ['hook-script', '钩子脚本', 'var(--ink)'],
   ];

@@ -87,32 +87,35 @@ export const multicaCollector: Collector = {
 
     const agents = await multicaJson<MulticaAgent[]>(ctx, ['agent', 'list'], t);
     const agentById = new Map<string, string>();
+    const seenAgentNames = new Set<string>();
     if (Array.isArray(agents)) {
       for (const a of agents) {
         agentById.set(a.id, a.name);
+        if (seenAgentNames.has(a.name.toLowerCase())) {
+          diagnostics.push({ level: 'warn', message: `[multica] agent 名重复，跳过后出现的：${a.name}` });
+          continue;
+        }
+        seenAgentNames.add(a.name.toLowerCase());
         const instructions = a.instructions ?? '';
+        const agentId = `agent:${a.name.toLowerCase()}`;
+        const deploymentId = `deployment:multica:${a.name.toLowerCase()}`;
         assets.push(
           asset({
-            id: `agent:multica-${a.name.toLowerCase()}`,
+            id: agentId,
             kind: 'agent',
             name: a.name,
-            summary: (a.description ?? '').slice(0, 120) || `multica agent · ${a.model ?? ''}`,
-            attach: { level: 'platform', ref: 'multica' },
+            summary: (a.description ?? '').slice(0, 120) || `agent · ${a.model ?? ''}`,
+            attach: { level: 'user' },
             enforcement: 'enforced',
-            platforms: ['multica', 'claude-code'],
-            enabled: !a.archived_at,
+            platforms: [],
+            enabled: true,
             source: { collector: 'multica', path: 'multica://agents/' + a.id, locator: `$.agents[${a.id}]` },
             payload: {
-              platformId: a.id,
               description: a.description,
               instructions: instructions.length > 60_000 ? instructions.slice(0, 60_000) + '\n…(截断)' : instructions,
               instructionsHash: instructions ? sha256(instructions) : undefined,
               model: a.model,
               thinkingLevel: a.thinking_level,
-              status: a.status,
-              workspaceId: a.workspace_id,
-              maxConcurrentTasks: a.max_concurrent_tasks,
-              runtimeId: a.runtime_id,
               skills: a.skills ?? [],
               disabledRuntimeSkills: a.disabled_runtime_skills ?? [],
               mcp: redactObject(a.mcp_config?.mcpServers ?? {}),
@@ -120,9 +123,33 @@ export const multicaCollector: Collector = {
               customEnvKeyCount: a.custom_env_key_count ?? 0,
               customArgs: a.custom_args ?? [],
             },
+            tags: [],
+          })
+        );
+        assets.push(
+          asset({
+            id: deploymentId,
+            kind: 'deployment',
+            name: `${a.name} @ multica`,
+            summary: `${a.status ?? '?'} · ws ${a.workspace_id?.slice(0, 8) ?? '—'} · 并发 ${a.max_concurrent_tasks ?? '—'}`,
+            attach: { level: 'platform', ref: 'multica' },
+            enforcement: 'enforced',
+            platforms: ['multica'],
+            enabled: !a.archived_at,
+            source: { collector: 'multica', path: 'multica://agents/' + a.id, locator: `$.agents[${a.id}]` },
+            payload: {
+              platform: 'multica',
+              agent: a.name,
+              platformId: a.id,
+              workspaceId: a.workspace_id,
+              status: a.status,
+              maxConcurrentTasks: a.max_concurrent_tasks,
+              runtimeId: a.runtime_id,
+            },
             tags: ['multica', ...(a.status === 'idle' ? ['idle'] : ['working'])],
           })
         );
+        relations.push({ from: agentId, to: deploymentId, type: 'runs-as' });
         for (const [mcpName, def] of Object.entries(a.mcp_config?.mcpServers ?? {})) {
           assets.push(
             asset({

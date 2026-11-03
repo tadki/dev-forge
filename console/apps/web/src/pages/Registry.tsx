@@ -5,7 +5,7 @@ import type { AssetLite } from '../types';
 import { Badge, Chip, DataTable, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
 
-const KIND_ORDER = ['agent', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'project', 'report', 'env', 'custom'];
+const KIND_ORDER = ['agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'project', 'report', 'env', 'custom'];
 
 interface StatRow {
   id: string;
