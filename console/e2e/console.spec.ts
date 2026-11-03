@@ -34,14 +34,12 @@ test('token gate: wrong token rejected, right token enters', async ({ page }) =>
   await expect(page.locator('.topbar')).toBeVisible();
 });
 
-test('overview: health banner, stats, activity, drift', async ({ page }) => {
+test('overview: health banner, stats, activity', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.banner-title').first()).toContainText('GREEN');
   await expect(page.locator('.stat').first()).toBeVisible();
   await expect(page.getByText('最近活动', { exact: false })).toBeVisible();
   await expect(page.getByText('deny', { exact: false }).first()).toBeVisible();
-  await expect(page.getByText('漂移告警', { exact: false }).first()).toBeVisible();
-  await expect(page.getByText('kol / CLAUDE.md')).toBeVisible();
 });
 
 test('nav: all 11 pages render with header', async ({ page }) => {
@@ -66,7 +64,7 @@ test('nav: all 11 pages render with header', async ({ page }) => {
 
 test('agents: anatomy with instructions, gates, mcp', async ({ page }) => {
   await page.goto('/agents');
-  await expect(page.getByText('AGENT 构成')).toBeVisible();
+  await expect(page.getByText('自建 AGENTS')).toBeVisible();
   await expect(page.locator('.card', { hasText: 'Fronti' })).toBeVisible();
   await page.locator('.card', { hasText: 'Fronti' }).click();
   await expect(page.getByText('agent-fronti[1m]').first()).toBeVisible();
@@ -83,22 +81,21 @@ test('agents: revy shows gated rule', async ({ page }) => {
   await expect(page.getByText('revy-testing-skill-check')).toBeVisible();
 });
 
-test('instructions: tree, render, drift diff', async ({ page }) => {
+test('instructions: tree, render, source', async ({ page }) => {
   await page.goto('/instructions');
   await expect(page.getByText('作用域树').first()).toBeVisible();
   await page.locator('.tree-node', { hasText: 'king-of-likes/CLAUDE.md' }).first().click();
   await expect(page.getByText('EffectManager').first()).toBeVisible(); // markdown 渲染
   await page.getByRole('button', { name: '源码' }).click();
   await expect(page.locator('pre.code').first()).toContainText('# 基础规范');
-  // 漂移面板
-  await expect(page.getByText('漂移对比').first()).toBeVisible();
-  await expect(page.getByText('2 变体 / 2 副本', { exact: false })).toBeVisible();
 });
 
 test('hooks: pipeline, rules table, firelog', async ({ page }) => {
   await page.goto('/hooks');
   await expect(page.locator('.pipe-node').first()).toContainText('CC 9 挂载点');
   await expect(page.getByText('revy-testing-skill-check')).toBeVisible();
+  await expect(page.getByText('REPO 门控')).toBeVisible();
+  await expect(page.locator('tr', { hasText: 'revy-testing-skill-check' }).getByText('kol', { exact: true })).toBeVisible();
   await expect(page.getByText('DENY').first()).toBeVisible();
   await expect(page.getByText('FIRE LOG', { exact: false })).toBeVisible();
 });
@@ -128,7 +125,7 @@ test('skills: first-party vs dependencies tabs', async ({ page }) => {
 
 test('projects: single project card, git identity, harness badge, workspace grouping', async ({ page }) => {
   await page.goto('/projects');
-  await expect(page.locator('.panel-title', { hasText: '项目' }).first()).toBeVisible();
+  await expect(page.locator('tr', { hasText: 'king-of-likes' }).first()).toBeVisible();
   await expect(page.getByText('king-of-likes').first()).toBeVisible();
   await expect(page.getByText('godot_mcp').first()).toBeVisible();
   await expect(page.getByText('tadki/KingOfLikes-Godot').first()).toBeVisible();

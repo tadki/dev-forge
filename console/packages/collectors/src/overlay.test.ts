@@ -26,7 +26,7 @@ function mk(id: string, path: string, provenance: 'first-party' | 'third-party' 
 }
 
 function stateOf(assets: Asset[]): RegistryState {
-  return { assets, relations: [], diagnostics: [], driftGroups: [], collectorStatus: [], lastCollectedAt: '' };
+  return { assets, relations: [], diagnostics: [], collectorStatus: [], lastCollectedAt: '' };
 }
 
 const MANIFEST = `entries:
