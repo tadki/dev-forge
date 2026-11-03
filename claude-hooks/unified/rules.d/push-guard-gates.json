@@ -1,9 +1,9 @@
 {
-  "description": "SEE-1430b 声明式 push-guard 规则组（Owner 定案：目标仓库+分支+agent 三要素判定，纯 rules-v2 deny，替代脚本 master 门禁与 force-push 拦截）。KOL/GQT 两库 main|master 禁止直接 push，流程 = checkout → push 非主分支 → PR 合入；--delete 排除；本地分支语义（SC4/SC5）仍由 push-guard.sh 残余薄脚本承担。dev-forge 豁免（Owner 指令 2026-11-03）：该仓库为直推 main 工作流，cwd 位于 dev-forge 检出内、或命令以路径指涉 dev-forge 时，本规则组两条门禁均不适用（push-guard.sh 侧另有同语义仓库豁免早退）。",
+  "description": "SEE-1430b 声明式 push-guard 规则组（Owner 定案：目标仓库+分支+agent 三要素判定，纯 rules-v2 deny，替代脚本 master 门禁与 force-push 拦截）。作用域（Owner 正式方案 2026-11-03）= repos.json 注册表内的 kol/gqt 两库，凭会话仓库 origin git URL 判定（repo op）——注册表外的仓库一律不在本门管辖。两库 main|master 禁止直接 push，流程 = checkout → push 非主分支 → PR 合入；--delete 排除；本地分支语义（SC4/SC5）仍由 push-guard.sh 残余薄脚本承担。dev-forge 不在作用域（直推 main 工作流，原豁免由作用域排除实现），命令串 /dev-forge belt 仅防跨仓 -C 边角。",
   "rules": [
     {
       "name": "push-guard-master-gate",
-      "version_note": "SEE-1430b 声明式 push-guard（Owner 定案：目标仓库+分支+agent 三要素判定，替代脚本 host 检出方案）。规则组 = KOL/GQT 两库 main|master 分支禁止任何人直接 push，必须 checkout → push 到非主分支 → PR 合入。覆盖：显式 refspec（HEAD:refs/heads/master、master、main）、force 变体、heredoc/嵌套 bash 内嵌 push。排除 --delete（删除远端分支不走本门，与旧脚本语义一致）。dev-forge 豁免（Owner 指令 2026-11-03）：cwd 位于 dev-forge 检出内（canonical 或 multica 任务 workdir 检出，路径分量 dev-forge）或命令串含 /dev-forge 路径时不拦截——该仓库直推 main。本地分支语义（SC4/SC5 shared-branch 校验）由 push-guard.sh 残余薄脚本继续承担，本规则组仅接管 master/main 门禁。",
+      "version_note": "SEE-1430b 声明式 push-guard（Owner 定案：目标仓库+分支+agent 三要素判定，替代脚本 host 检出方案）。规则组 = 注册仓库 kol/gqt（repos.json 凭 origin git URL 判定，repo op）main|master 分支禁止任何人直接 push，必须 checkout → push 到非主分支 → PR 合入。覆盖：显式 refspec（HEAD:refs/heads/master、master、main）、force 变体、heredoc/嵌套 bash 内嵌 push。排除 --delete（删除远端分支不走本门，与旧脚本语义一致）。dev-forge 不在作用域（直推 main 工作流，Owner 指令 2026-11-03）；命令串 /dev-forge belt 防跨仓 -C（KOL 会话内 -C dev-forge push 不误拦）。本地分支语义（SC4/SC5 shared-branch 校验）由 push-guard.sh 残余薄脚本继续承担，本规则组仅接管 master/main 门禁。",
       "on": {
         "in": [
           "PreToolUse"
@@ -50,20 +50,15 @@
             ]
           },
           {
+            "op": "repo",
+            "in": ["kol", "gqt"]
+          },
+          {
             "op": "not",
             "arg": {
-              "op": "any",
-              "args": [
-                {
-                  "op": "cwd",
-                  "pattern": "(^|/)dev-forge(/|$)"
-                },
-                {
-                  "op": "command",
-                  "scope": "current",
-                  "keyword": "/dev-forge"
-                }
-              ]
+              "op": "command",
+              "scope": "current",
+              "keyword": "/dev-forge"
             }
           }
         ]
@@ -71,13 +66,13 @@
       "action": [
         {
           "op": "deny",
-          "message": "[push-guard] 错误：禁止直接 push 到 main/master 分支（KOL / godot-qa-toolkit 两库适用；dev-forge 已豁免）。\n[push-guard] 必须按以下流程操作：\n[push-guard] 1. 先 checkout（在共享分支或新建 feature 分支上开发）；\n[push-guard] 2. 把改动 push 到一个不同于 main/master 的 remote 分支（例如 git push origin <your-branch>）；\n[push-guard] 3. 再提交 PR，把这条分支合入 main/master。\n[push-guard] 详见仓库贡献约定。"
+          "message": "[push-guard] 错误：禁止直接 push 到 main/master 分支（KOL / godot-qa-toolkit 两库适用；dev-forge 不在门禁作用域）。\n[push-guard] 必须按以下流程操作：\n[push-guard] 1. 先 checkout（在共享分支或新建 feature 分支上开发）；\n[push-guard] 2. 把改动 push 到一个不同于 main/master 的 remote 分支（例如 git push origin <your-branch>）；\n[push-guard] 3. 再提交 PR，把这条分支合入 main/master。\n[push-guard] 详见仓库贡献约定。"
         }
       ]
     },
     {
       "name": "push-guard-force-push-gate",
-      "version_note": "force-push 拦截（覆盖 KOL/GQT 全部分支——shared 分支同样不可 force）。--force-with-lease / --force / 短选项簇含 f 均命中；--delete 排除。dev-forge 豁免与 master 门禁同口径（cwd 或命令串指涉 dev-forge）。",
+      "version_note": "force-push 拦截（覆盖注册仓库 kol/gqt 全部分支——shared 分支同样不可 force；凭 repos.json origin git URL 判定）。--force-with-lease / --force / 短选项簇含 f 均命中；--delete 排除。dev-forge 不在作用域（直推 main 工作流）；命令串 /dev-forge belt 防跨仓 -C 边角。",
       "on": {
         "in": [
           "PreToolUse"
@@ -134,20 +129,15 @@
             ]
           },
           {
+            "op": "repo",
+            "in": ["kol", "gqt"]
+          },
+          {
             "op": "not",
             "arg": {
-              "op": "any",
-              "args": [
-                {
-                  "op": "cwd",
-                  "pattern": "(^|/)dev-forge(/|$)"
-                },
-                {
-                  "op": "command",
-                  "scope": "current",
-                  "keyword": "/dev-forge"
-                }
-              ]
+              "op": "command",
+              "scope": "current",
+              "keyword": "/dev-forge"
             }
           }
         ]

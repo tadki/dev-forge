@@ -33,6 +33,8 @@
     "scripts/repo-checkout.sh",
     "unified/engine.js",
     "unified/rules-v2.json",
+    "unified/repos.json",
+    "unified/rules.d/push-guard-gates.json",
     "unified/rules.d/runscript-mounts.json",
     "unified/unified-hook.sh",
     "unified/when-ops.js"
