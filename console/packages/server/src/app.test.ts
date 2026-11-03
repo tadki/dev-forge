@@ -29,10 +29,15 @@ const state: RegistryState = {
       attach: { level: 'project', ref: '/mnt/d/GodotProjects/king-of-likes' },
       payload: { path: '/mnt/d/GodotProjects/king-of-likes', workspace: 'kol' },
     }),
-    mk('agent:multica-fronti', 'agent', {
+    mk('agent:fronti', 'agent', {
       name: 'Fronti',
+      payload: { model: 'agent-fronti[1m]', instructions: 'You are Fronti' },
+    }),
+    mk('deployment:multica:fronti', 'deployment', {
+      name: 'Fronti @ multica',
       attach: { level: 'platform', ref: 'multica' },
-      payload: { platformId: 'f1', model: 'agent-fronti[1m]', instructions: 'You are Fronti' },
+      platforms: ['multica'],
+      payload: { platform: 'multica', agent: 'Fronti', platformId: 'f1', status: 'idle' },
     }),
     mk('instruction:king-of-likes/CLAUDE.md', 'instruction', {
       attach: { level: 'project', ref: '/mnt/d/GodotProjects/king-of-likes' },
@@ -139,8 +144,9 @@ describe('api endpoints', () => {
 
   it('overview aggregates counts, health, drift', async () => {
     const r = await get('/api/overview', TOKEN);
-    expect(r.body.total).toBe(9);
+    expect(r.body.total).toBe(10);
     expect(r.body.counts['hook-rule']).toBe(1);
+    expect(r.body.counts['deployment']).toBe(1);
     expect(r.body.health.status).toBe('GREEN');
     expect(r.body.driftGroups[0].workspace).toBe('kol');
   });

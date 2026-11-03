@@ -7,34 +7,49 @@ import { Markdown } from '../components/Markdown';
 import type { PageCtx } from './ctx';
 
 interface AgentPayload {
-  platformId?: string;
   subagent?: boolean;
   instructions?: string;
   model?: string;
   thinkingLevel?: string;
-  status?: string;
-  workspaceId?: string;
   skills?: Array<{ name: string; enabled?: boolean }>;
   mcp?: Record<string, Record<string, unknown>>;
   customEnvKeyCount?: number;
   customArgs?: string[];
+  bodyLines?: number;
+}
+
+interface DeploymentPayload {
+  platform: string;
+  agent: string;
+  platformId?: string;
+  workspaceId?: string;
+  status?: string;
   maxConcurrentTasks?: number;
+}
+
+interface TaskRow {
+  id: string;
+  agent?: string;
+  status?: string;
+  issue?: string;
+  startedAt?: string;
 }
 
 export function AgentsPage(_props: { ctx: PageCtx }) {
   const agents = useQuery({ queryKey: ['assets', 'agent'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=agent') });
+  const deployments = useQuery({ queryKey: ['assets', 'deployment'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=deployment') });
   const rules = useQuery({ queryKey: ['assets', 'hook-rule'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=hook-rule') });
   const tasks = useQuery({
     queryKey: ['assets', 'multica-tasks'],
     queryFn: () => apiGet<{ asset: AssetLite }>('/api/assets/custom%3Amultica-recent-tasks'),
-    select: (d) => ((d.asset.payload as { tasks?: Array<{ id: string; agent?: string; status?: string; issue?: string; startedAt?: string }> }).tasks ?? []),
+    select: (d) => ((d.asset.payload as { tasks?: TaskRow[] }).tasks ?? []),
   });
   const [sel, setSel] = useState<string | null>(null);
 
-  const rows = agents.data?.assets ?? [];
-  const platformAgents = rows.filter((a) => (a.payload as AgentPayload).platformId);
-  const subagents = rows.filter((a) => (a.payload as AgentPayload).subagent);
-  const selId = sel ?? platformAgents[0]?.id ?? rows[0]?.id ?? null;
+  const rows = [...(agents.data?.assets ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  const deps = deployments.data?.assets ?? [];
+  const depsOf = (agentName: string) => deps.filter((d) => ((d.payload as DeploymentPayload).agent ?? '').toLowerCase() === agentName.toLowerCase());
+  const selId = sel ?? rows[0]?.id ?? null;
   const selected = rows.find((a) => a.id === selId);
   const detail = useQuery({
     queryKey: ['asset', selId],
@@ -42,6 +57,8 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
     enabled: !!selId,
   });
   const selPayload = ((detail.data?.asset ?? selected)?.payload ?? {}) as AgentPayload;
+  const selDeps = selected ? depsOf(selected.name) : [];
+  const mcDep = selDeps.find((d) => (d.payload as DeploymentPayload).platform === 'multica');
 
   const gatedRules = (rules.data?.assets ?? []).filter((r) => {
     const g = r.applies?.agents;
@@ -57,7 +74,7 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
       <div className="page-head">
         <div>
           <h2>智能体</h2>
-          <div className="sub tagline">AGENTS · multica 平台 {platformAgents.length} · CC subagent {subagents.length}</div>
+          <div className="sub tagline">AGENTS · 本体 {rows.length} · 部署 {deps.length}</div>
         </div>
         <div className="page-actions">
           <a className="btn btn-ghost" href={`#/effective`} style={{ textDecoration: 'none' }}>有效 HARNESS →</a>
@@ -66,10 +83,12 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
 
       <div className="grid" style={{ gridTemplateColumns: 'minmax(380px, 1fr) 1.2fr' }}>
         <div className="col">
-          <Panel title="multica 平台 agents" en={`PLATFORM · ${platformAgents.length}`}>
+          <Panel title="AGENTS 本体" en={`DEFINITIONS · ${rows.length}`}>
             <div className="card-grid">
-              {platformAgents.map((a) => {
+              {rows.map((a) => {
                 const p = a.payload as AgentPayload;
+                const d = depsOf(a.name);
+                const mc = d.find((x) => (x.payload as DeploymentPayload).platform === 'multica');
                 return (
                   <button key={a.id} className={`card ${a.id === selId ? 'sel' : ''}`} onClick={() => setSel(a.id)}>
                     <div className="row">
@@ -78,11 +97,12 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
                         <h3>{a.name}</h3>
                         <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{p.model ?? ''}</span>
                       </div>
-                      <span style={{ marginLeft: 'auto' }}>{p.status ? <StatusBadge status={p.status} /> : null}</span>
+                      <span style={{ marginLeft: 'auto' }}>{mc?.payload ? <StatusBadge status={(mc.payload as DeploymentPayload).status ?? '?'} /> : null}</span>
                     </div>
                     <div className="desc">{(a.summary ?? '').slice(0, 80)}</div>
                     <div className="row">
-                      <Badge tone="plain">ws {p.workspaceId?.slice(0, 8) ?? '—'}</Badge>
+                      {d.length > 0 ? d.map((x) => <Badge key={x.id} tone="plain">{(x.payload as DeploymentPayload).platform}</Badge>) : <Badge tone="off">未部署</Badge>}
+                      {p.subagent ? <Badge tone="plain">subagent</Badge> : null}
                       <Badge tone="plain">{p.skills?.length ?? 0} skills</Badge>
                       {p.customEnvKeyCount ? <Badge tone="plain">env×{p.customEnvKeyCount}</Badge> : null}
                     </div>
@@ -91,18 +111,6 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
               })}
             </div>
           </Panel>
-          {subagents.length > 0 && (
-            <Panel title="CC subagents" en={`PROJECT-SCOPED · ${subagents.length}`}>
-              {subagents.map((a) => (
-                <div key={a.id} className="row" style={{ padding: '2px 0', fontSize: 'var(--fs-l1)' }}>
-                  <span className="avatar alt">{a.name.slice(0, 2).toUpperCase()}</span>
-                  <span>{a.name}</span>
-                  <span className="dim mono">{a.attach.ref?.split('/').pop()}</span>
-                  <span className="dim">{a.summary.slice(0, 60)}</span>
-                </div>
-              ))}
-            </Panel>
-          )}
         </div>
 
         <div className="col">
@@ -113,9 +121,12 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
             <KV
               items={[
                 ['模型', <span className="mono">{selPayload.model ?? '—'} · thinking {selPayload.thinkingLevel ?? '—'}</span>],
-                ['状态', selPayload.status ? <StatusBadge status={selPayload.status} /> : '—'],
-                ['并发', String(selPayload.maxConcurrentTasks ?? '—')],
-                ['平台', selected?.attach.ref ?? '—'],
+                ['部署', selDeps.length > 0
+                  ? <span className="row" style={{ gap: 4 }}>{selDeps.map((d) => {
+                      const dp = d.payload as DeploymentPayload;
+                      return <Badge key={d.id} tone={d.enabled ? 'ok' : 'off'} title={dp.status}>{dp.platform}{dp.status ? ` · ${dp.status}` : ''}</Badge>;
+                    })}</span>
+                  : <span className="dim">未部署（本体待部署）</span>],
               ]}
             />
           </div>
@@ -152,16 +163,32 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
             ]}
           />
 
-          <SectionHeader no="05" title="近期任务" en={`RECENT TASKS · ${recentTasks.length}`} />
+          <SectionHeader no="05" title="部署实例" en={`DEPLOYMENTS · ${selDeps.length}`} />
           <DataTable
-            rows={recentTasks.map((t) => ({ ...t }))}
+            rows={selDeps}
             cols={[
-              { key: 'id', head: 'TASK', render: (t) => <span className="mono dim">{t.id.slice(0, 8)}</span> },
-              { key: 'issue', head: 'ISSUE', render: (t) => <span className="mono">{t.issue ?? '—'}</span> },
-              { key: 'status', head: '状态', render: (t) => <StatusBadge status={t.status ?? '?'} /> },
-              { key: 'at', head: '开始', render: (t) => <span className="mono dim">{t.startedAt?.slice(0, 16).replace('T', ' ') ?? '—'}</span> },
+              { key: 'platform', head: '平台', render: (d) => <Badge tone="plain">{(d.payload as DeploymentPayload).platform}</Badge> },
+              { key: 'ws', head: '环境', render: (d) => <span className="mono dim">{(d.payload as DeploymentPayload).workspaceId?.slice(0, 8) ?? d.attach.ref ?? '—'}</span> },
+              { key: 'status', head: '状态', render: (d) => (d.payload as DeploymentPayload).status ? <StatusBadge status={(d.payload as DeploymentPayload).status ?? '?'} /> : <span className="dim">—</span> },
+              { key: 'conc', head: '并发', render: (d) => <span className="mono dim">{(d.payload as DeploymentPayload).maxConcurrentTasks ?? '—'}</span> },
             ]}
           />
+          {selDeps.length === 0 && <div className="dim" style={{ padding: '4px 0' }}>该本体尚未部署到任何平台 / 项目。</div>}
+
+          {mcDep && (
+            <>
+              <SectionHeader no="06" title="近期任务" en={`RECENT TASKS · ${recentTasks.length}`} />
+              <DataTable
+                rows={recentTasks.map((t) => ({ ...t }))}
+                cols={[
+                  { key: 'id', head: 'TASK', render: (t) => <span className="mono dim">{t.id.slice(0, 8)}</span> },
+                  { key: 'issue', head: 'ISSUE', render: (t) => <span className="mono">{t.issue ?? '—'}</span> },
+                  { key: 'status', head: '状态', render: (t) => <StatusBadge status={t.status ?? '?'} /> },
+                  { key: 'at', head: '开始', render: (t) => <span className="mono dim">{t.startedAt?.slice(0, 16).replace('T', ' ') ?? '—'}</span> },
+                ]}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

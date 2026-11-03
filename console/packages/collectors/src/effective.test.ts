@@ -25,10 +25,15 @@ const project = base('project:king-of-likes', 'project', {
   payload: { path: '/mnt/d/GodotProjects/king-of-likes', workspace: 'kol', workspaceName: 'King of Likes' },
 });
 
-const fronti = base('agent:multica-fronti', 'agent', {
+const fronti = base('agent:fronti', 'agent', {
   name: 'Fronti',
+  payload: { model: 'agent-fronti[1m]', thinkingLevel: 'max', customEnvKeyCount: 3, instructions: 'You are Fronti…', skills: [{ name: 'code-review' }, { name: 'recall' }] },
+});
+const frontiDep = base('deployment:multica:fronti', 'deployment', {
+  name: 'Fronti @ multica',
   attach: { level: 'platform', ref: 'multica' },
-  payload: { platformId: 'f-1', model: 'agent-fronti[1m]', thinkingLevel: 'max', customEnvKeyCount: 3, instructions: 'You are Fronti…', skills: [{ name: 'code-review' }, { name: 'recall' }] },
+  platforms: ['multica'],
+  payload: { platform: 'multica', agent: 'Fronti', platformId: 'f-1', status: 'idle' },
 });
 
 const kolMd = base('instruction:king-of-likes/CLAUDE.md', 'instruction', {
@@ -48,6 +53,7 @@ const ruleGlobal = base('hook-rule:global-gate', 'hook-rule', {});
 const assets = [
   project,
   fronti,
+  frontiDep,
   kolMd,
   ruleForFronti,
   ruleForRevy,

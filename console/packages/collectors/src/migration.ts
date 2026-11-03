@@ -96,7 +96,7 @@ export function buildMigrationView(assets: Asset[]): MigrationView {
   const diffs: MigrationDiff[] = [];
   for (const s of samples) {
     const agent = assets.find(
-      (a) => a.kind === 'agent' && a.name.toLowerCase() === s.agent.toLowerCase() && !!(a.payload as { platformId?: string }).platformId
+      (a) => a.kind === 'agent' && a.name.toLowerCase() === s.agent.toLowerCase() && !(a.payload as { subagent?: boolean }).subagent
     );
     const instructions = ((agent?.payload as { instructions?: string } | undefined)?.instructions ?? '').trim();
     const identical = s.body.trim() === instructions.trim();

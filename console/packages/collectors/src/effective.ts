@@ -38,21 +38,24 @@ export function resolveEffective(
   const projectPath = (project?.payload as { path?: string } | undefined)?.path ?? '';
   const workspace = (project?.payload as { workspace?: string } | undefined)?.workspace;
 
-  const multicaAgent = agentName
-    ? assets.find((a) => a.kind === 'agent' && a.name.toLowerCase() === agentName.toLowerCase() && (a.payload as { platformId?: string } | undefined)?.platformId)
+  const agentDef = agentName
+    ? assets.find((a) => a.kind === 'agent' && a.name.toLowerCase() === agentName.toLowerCase())
     : undefined;
-  const subagent = agentName
-    ? assets.find((a) => a.kind === 'agent' && a.name.toLowerCase() === agentName.toLowerCase() && (a.payload as { subagent?: boolean } | undefined)?.subagent)
-    : undefined;
+  const agentLc = agentName?.toLowerCase();
+  const deployments = agentDef && agentLc
+    ? assets.filter((a) => a.kind === 'deployment' && (a.payload as { agent?: string }).agent?.toLowerCase() === agentLc)
+    : [];
+  const mcDeployment = deployments.find((d) => (d.payload as { platform?: string }).platform === 'multica');
+  const isSubagent = agentDef ? (agentDef.payload as { subagent?: boolean }).subagent === true : false;
 
   // 01 指令：multica 前导 + agent instructions + 项目 CLAUDE.md
   const instructions: EffectiveItem[] = [];
-  if (multicaAgent) {
-    const p = multicaAgent.payload as { instructions?: string; model?: string };
+  if (agentDef && mcDeployment) {
+    const p = agentDef.payload as { instructions?: string; model?: string };
     instructions.push({
       label: 'agent.instructions（平台）',
       detail: `${(p.instructions ?? '').length} 字符 markdown`,
-      sources: [{ path: `multica://agents/${(multicaAgent.payload as { platformId?: string }).platformId}`, scope: 'AGENT' }],
+      sources: [{ path: `multica://agents/${(mcDeployment.payload as { platformId?: string }).platformId}`, scope: 'AGENT' }],
     });
     instructions.push({
       label: 'multica 运行时前导（物化时注入）',
@@ -60,11 +63,11 @@ export function resolveEffective(
       sources: [{ path: 'workdir/CLAUDE.md', scope: 'SESSION' }],
     });
   }
-  if (subagent) {
+  if (agentDef && isSubagent) {
     instructions.push({
-      label: `subagent ${subagent.name}（frontmatter 定义）`,
-      detail: `${(subagent.payload as { bodyLines?: number }).bodyLines ?? '?'} 行`,
-      sources: [{ path: subagent.source.path, scope: 'PROJECT' }],
+      label: `subagent ${agentDef.name}（frontmatter 定义）`,
+      detail: `${(agentDef.payload as { bodyLines?: number }).bodyLines ?? '?'} 行`,
+      sources: [{ path: agentDef.source.path, scope: 'PROJECT' }],
     });
   }
   const claudeMd = assets.find(
@@ -89,7 +92,7 @@ export function resolveEffective(
   // 02 hooks：注册 + 命中规则
   const registrations = assets.filter((a) => a.kind === 'hook-registration' && a.attach.level === 'user');
   const rules = assets.filter((a) => a.kind === 'hook-rule' && a.enabled);
-  const gated = rules.filter((r) => agentGates(r, multicaAgent?.name ?? agentName));
+  const gated = rules.filter((r) => agentGates(r, agentDef?.name ?? agentName));
   const hooksItems: EffectiveItem[] = [
     {
       label: 'user 层挂载点',
@@ -108,7 +111,7 @@ export function resolveEffective(
   const globalFirst = assets.filter((a) => a.kind === 'skill' && a.attach.level === 'user' && a.provenance === 'first-party');
   const globalThird = assets.filter((a) => a.kind === 'skill' && a.attach.level === 'user' && a.provenance === 'third-party');
   const projectSkills = assets.filter((a) => a.kind === 'skill' && a.attach.level === 'project' && a.attach.ref === projectPath);
-  const platformSkills = multicaAgent ? ((multicaAgent.payload as { skills?: Array<{ name: string }> }).skills ?? []) : [];
+  const platformSkills = agentDef && mcDeployment ? ((agentDef.payload as { skills?: Array<{ name: string }> }).skills ?? []) : [];
   skills.push({ label: '全局自建技能', detail: `${globalFirst.length} 个`, sources: [{ path: '~/.claude/skills/', scope: 'USER' }] });
   if (globalThird.length) skills.push({ label: 'ECC 依赖架技能', detail: `${globalThird.length} 个（部分被 ECC_DISABLED_* 禁用）`, sources: [{ path: '~/.claude/.agents/skills/', scope: 'USER' }] });
   if (projectSkills.length) skills.push({ label: '项目技能', detail: projectSkills.map((s) => s.name).join(' · '), sources: [{ path: `${projectPath}/.claude/skills/`, scope: 'PROJECT' }] });
@@ -120,14 +123,14 @@ export function resolveEffective(
     const inScope =
       ep.attach.level === 'user' ||
       (ep.attach.level === 'project' && ep.attach.ref === projectPath) ||
-      (ep.attach.level === 'agent' && multicaAgent && ep.name.includes(multicaAgent.name));
+      (ep.attach.level === 'agent' && agentDef && ep.name.includes(agentDef.name));
     if (inScope) mcpItems.push({ label: ep.name, detail: ep.summary, sources: [{ path: ep.source.path + (ep.source.locator ?? ''), scope: ep.attach.level.toUpperCase() }] });
   }
 
   // 05 模型与环境
   const envItems: EffectiveItem[] = [];
-  if (multicaAgent) {
-    const p = multicaAgent.payload as { model?: string; thinkingLevel?: string; customEnvKeyCount?: number };
+  if (agentDef && mcDeployment) {
+    const p = agentDef.payload as { model?: string; thinkingLevel?: string; customEnvKeyCount?: number };
     envItems.push({ label: '模型', detail: `${p.model ?? '?'} · thinking ${p.thinkingLevel ?? '—'}`, sources: [{ path: 'multica://agents', scope: 'AGENT' }] });
     envItems.push({ label: 'custom_env', detail: `${p.customEnvKeyCount ?? 0} 项（值不采集）`, sources: [{ path: 'multica://agents', scope: 'AGENT' }] });
   }
@@ -138,13 +141,15 @@ export function resolveEffective(
 
   return {
     project: { name: project?.name ?? projectName, path: projectPath, workspace },
-    agent: multicaAgent
-      ? { name: multicaAgent.name, model: (multicaAgent.payload as { model?: string }).model, platform: 'multica' }
-      : subagent
-        ? { name: subagent.name, platform: 'claude-code' }
-        : agentName
-          ? { name: agentName, platform: 'claude-code' }
-          : undefined,
+    agent: agentDef
+      ? {
+          name: agentDef.name,
+          model: (agentDef.payload as { model?: string }).model,
+          platform: mcDeployment ? 'multica' : 'claude-code',
+        }
+      : agentName
+        ? { name: agentName, platform: 'claude-code' }
+        : undefined,
     sections: [
       { id: 'instructions', title: '指令 INSTRUCTIONS', items: instructions },
       { id: 'hooks', title: '钩子 HOOKS', items: hooksItems },

@@ -39,7 +39,7 @@ describe('buildMigrationView', () => {
 
   it('compares platform instructions against materialized workdir samples', () => {
     const assets = [
-      mk('agent:multica-fronti', 'agent', { platformId: 'f1', instructions: 'line1\nline2\nline3' }, 'Fronti'),
+      mk('agent:fronti', 'agent', { instructions: 'line1\nline2\nline3' }, 'Fronti'),
       mk('custom:multica-materialized-instructions', 'custom', {
         samples: [{ agent: 'fronti', path: '/tmp/w/CLAUDE.md', hash: 'abcdef012345', body: 'line1\nline2\nline3' }],
       }),
@@ -50,7 +50,7 @@ describe('buildMigrationView', () => {
 
   it('flags differences between instructions and materialization', () => {
     const assets = [
-      mk('agent:multica-fronti', 'agent', { platformId: 'f1', instructions: 'line1\nCHANGED\nline3' }, 'Fronti'),
+      mk('agent:fronti', 'agent', { instructions: 'line1\nCHANGED\nline3' }, 'Fronti'),
       mk('custom:multica-materialized-instructions', 'custom', {
         samples: [{ agent: 'fronti', path: '/tmp/w/CLAUDE.md', hash: 'abcdef012345', body: 'line1\nline2\nline3' }],
       }),

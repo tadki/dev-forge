@@ -45,13 +45,14 @@
         "agents": [],
         "mcpServers": [
           "godot-mcp"
-        ]
+        ],
+        "git": "https://github.com/tadki/KingOfLikes-Godot.git"
       }
     },
     {
-      "id": "project:s5recheck-worktree",
+      "id": "project:godot_mcp",
       "kind": "project",
-      "name": "s5recheck-worktree",
+      "name": "godot_mcp",
       "summary": "KOL worktree · CLAUDE.md 157 行",
       "attach": {
         "level": "project",
@@ -80,15 +81,16 @@
         "harnesses": [
           "claude"
         ],
-        "path": "/e2e/s5recheck-worktree",
+        "path": "/e2e/king-of-likes/addons/godot_mcp",
         "workspace": "kol",
         "hasClaudeMd": true,
-        "claudeMdLines": 157,
-        "hasSettings": true,
-        "hooksScripts": 2,
+        "claudeMdLines": 29,
+        "hasSettings": false,
+        "hooksScripts": 0,
         "skills": [],
         "agents": [],
-        "mcpServers": []
+        "mcpServers": [],
+        "git": "https://github.com/tadki/godot-mcp.git"
       }
     },
     {
@@ -141,9 +143,9 @@
       }
     },
     {
-      "id": "instruction:s5recheck-worktree/CLAUDE.md",
+      "id": "instruction:godot_mcp/CLAUDE.md",
       "kind": "instruction",
-      "name": "s5recheck-worktree/CLAUDE.md",
+      "name": "godot_mcp/CLAUDE.md",
       "summary": "基础规范（Harti 版）",
       "attach": {
         "level": "project",
@@ -171,54 +173,47 @@
         "sha256": "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222"
       },
       "payload": {
-        "content": "# 基础规范\n\n## 编码规范\n\n- 效果一律走 EffectManager\n- 测试归集 tests/\n- 变异测试走 Harti\n\n## 团队架构\n\n| Agent | 职责 |\n|---|---|\n| Fronti | 前端 |\n| Revy | QA |\n| Harti | 测试硬化 |\n\n## 工作流\n\n1. 检出分支\n2. tidy 与 harden\n3. 实现与测试\n4. PR 合入",
+        "content": "# MCP 服务器规范\n\n## 职责\n\n- Godot 场景树的 MCP 只读接口\n\n## 约束\n\n1. 不写场景树\n2. 报错必须带节点路径",
         "basename": "CLAUDE.md",
-        "lines": 157,
+        "lines": 29,
         "headings": [
           {
             "level": 1,
-            "text": "基础规范"
+            "text": "MCP 服务器规范"
+          },
+          {
+            "level": 2,
+            "text": "职责"
           }
         ],
         "lang": "zh",
         "contentHash": "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
-        "projectName": "s5recheck-worktree"
+        "projectName": "godot_mcp"
       }
     },
     {
-      "id": "agent:multica-fronti",
+      "id": "agent:fronti",
       "kind": "agent",
       "name": "Fronti",
       "summary": "前端工程师 · KOL 前端实现",
       "attach": {
-        "level": "platform",
-        "ref": "multica"
+        "level": "user"
       },
       "enforcement": "enforced",
-      "platforms": [
-        "multica",
-        "claude-code"
-      ],
+      "platforms": [],
       "provenance": "first-party",
-      "tags": [
-        "multica"
-      ],
+      "tags": [],
       "enabled": true,
       "source": {
         "collector": "fixture",
         "path": "multica://agents/fronti-1"
       },
       "payload": {
-        "platformId": "fronti-1",
         "description": "前端工程师",
         "instructions": "# Fronti\n\n你是 KOL 的前端实现 agent。负责 Godot UI 场景与像素风格一致性。",
         "instructionsHash": "cccc3333",
         "model": "agent-fronti[1m]",
         "thinkingLevel": "max",
-        "status": "idle",
-        "workspaceId": "ws-kol",
-        "maxConcurrentTasks": 2,
-        "runtimeId": "rt-1",
         "skills": [
           {
             "id": "s1",
@@ -246,34 +241,59 @@
       }
     },
     {
-      "id": "agent:multica-revy",
-      "kind": "agent",
-      "name": "Revy",
-      "summary": "QA agent · 测试规范执行者",
+      "id": "deployment:multica:fronti",
+      "kind": "deployment",
+      "name": "Fronti @ multica",
+      "summary": "idle · ws ws-kol · 并发 2",
       "attach": {
         "level": "platform",
         "ref": "multica"
       },
       "enforcement": "enforced",
       "platforms": [
-        "multica",
-        "claude-code"
+        "multica"
       ],
       "provenance": "first-party",
       "tags": [
-        "multica"
+        "multica",
+        "idle"
       ],
+      "enabled": true,
+      "source": {
+        "collector": "fixture",
+        "path": "multica://agents/fronti-1"
+      },
+      "payload": {
+        "platform": "multica",
+        "agent": "Fronti",
+        "platformId": "fronti-1",
+        "workspaceId": "ws-kol",
+        "status": "idle",
+        "maxConcurrentTasks": 2,
+        "runtimeId": "rt-1"
+      }
+    },
+    {
+      "id": "agent:revy",
+      "kind": "agent",
+      "name": "Revy",
+      "summary": "QA agent · 测试规范执行者",
+      "attach": {
+        "level": "user"
+      },
+      "enforcement": "enforced",
+      "platforms": [],
+      "provenance": "first-party",
+      "tags": [],
       "enabled": true,
       "source": {
         "collector": "fixture",
         "path": "multica://agents/revy-2"
       },
       "payload": {
-        "platformId": "revy-2",
         "instructions": "# Revy\n\n你是 QA agent，一切测试任务必须激活 /revy-testing。",
         "model": "agent-revy",
         "thinkingLevel": "high",
-        "status": "working",
         "skills": [
           {
             "id": "s3",
@@ -283,6 +303,36 @@
         ],
         "mcp": {},
         "customEnvKeyCount": 0
+      }
+    },
+    {
+      "id": "deployment:multica:revy",
+      "kind": "deployment",
+      "name": "Revy @ multica",
+      "summary": "working · 并发 —",
+      "attach": {
+        "level": "platform",
+        "ref": "multica"
+      },
+      "enforcement": "enforced",
+      "platforms": [
+        "multica"
+      ],
+      "provenance": "first-party",
+      "tags": [
+        "multica",
+        "working"
+      ],
+      "enabled": true,
+      "source": {
+        "collector": "fixture",
+        "path": "multica://agents/revy-2"
+      },
+      "payload": {
+        "platform": "multica",
+        "agent": "Revy",
+        "platformId": "revy-2",
+        "status": "working"
       }
     },
     {
