@@ -3,13 +3,32 @@
   "rules": [
     {
       "name": "plan-mode-permission-allow",
+      "owner": "Owner",
+      "blocking": false,
       "version_note": "Mac 原实现等价迁移：jq -c 'if .permission_mode == \"plan\" then {hookSpecificOutput:{hookEventName:\"PermissionRequest\",decision:{behavior:\"allow\"}}} else empty end'。引擎侧新增 PermissionRequest 时点（HOOK_POINTS 第 10 时点）与 payload op 字符串等值；协议经 run_script stdout 直通（decision.behavior=allow 为 PermissionRequest 专有协议，与 PreToolUse permissionDecision 不同形）。",
-      "on": { "in": ["PermissionRequest"] },
+      "on": {
+        "in": [
+          "PermissionRequest"
+        ]
+      },
       "enabled": true,
-      "when": { "op": "all", "args": [
-        { "op": "payload", "path": "permission_mode", "equals": "plan" }
-      ] },
-      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/plan-mode-allow.sh", "timeout_ms": 5000 }]
+      "when": {
+        "op": "all",
+        "args": [
+          {
+            "op": "payload",
+            "path": "permission_mode",
+            "equals": "plan"
+          }
+        ]
+      },
+      "action": [
+        {
+          "op": "run_script",
+          "path": "${HOOKS_DIR}/scripts/plan-mode-allow.sh",
+          "timeout_ms": 5000
+        }
+      ]
     }
   ]
 }

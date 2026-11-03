@@ -125,9 +125,19 @@ require("fs").writeFileSync(out, JSON.stringify({ rules: [rule] }));
 HOOK_SCOPE_ID_OVERRIDE=""
 
 run_engine() { # $1=rules_file $2=agent_name ; payload env already set
+    # T13b 归因修正（SEE-1516 §SPEC-011 附加项 / fingerprint e97ee65eb11c 域内）:
+    # one_shot{scope:run} 经 LEGACY_SCOPE_MAP 映射到 MULTICA_TASK_ID（引擎正确
+    # 行为，unified-hook.sh:21 文档「mention-confirm = per run」）。原 fixture
+    # 每次 run_engine 铸新 task id → run 窗口哨兵键逐调用漂移，T13「同 run 内
+    # 哨兵抑制」 premise 永不成立。本修正支持 TASK_ID_OVERRIDE 钉死同 run ——
+    # 判据本身（哨兵抑制同窗口重 fire）不变，fixture 修为与被测机制同源。
     local rules_file="$1" agent="${2:-TestAgent}"
     local task scope
-    task=$(cat /proc/sys/kernel/random/uuid)
+    if [ -n "${TASK_ID_OVERRIDE:-}" ]; then
+        task="$TASK_ID_OVERRIDE"
+    else
+        task=$(cat /proc/sys/kernel/random/uuid)
+    fi
     if [ -n "$HOOK_SCOPE_ID_OVERRIDE" ]; then
         scope="$HOOK_SCOPE_ID_OVERRIDE"
     else
@@ -243,6 +253,7 @@ assert_pass "T12: comment without @mention → PASS"
 RMF13="$TEST_BASE/rules-t13.json"
 new_rules_file "$RMF13" "mention-confirm-check" "$MENTION_WHEN" "mention-confirm-block" on none
 HOOK_SCOPE_ID_OVERRIDE=$(cat /proc/sys/kernel/random/uuid)
+TASK_ID_OVERRIDE=$(cat /proc/sys/kernel/random/uuid)  # 钉死同 run（T13 归因修正）
 PAYLOAD=$(comment_payload 'first [@Atlas](mention://agent/abc) mention')
 run_engine "$RMF13" "AnyAgent"
 assert_blocked "T13a: first @mention → BLOCK"
@@ -250,6 +261,7 @@ PAYLOAD=$(comment_payload 'second [@Atlas](mention://agent/abc) mention')
 run_engine "$RMF13" "AnyAgent"
 assert_pass "T13b: second @mention → PASS (sentinel stops re-fire)"
 HOOK_SCOPE_ID_OVERRIDE=""
+TASK_ID_OVERRIDE=""
 
 # T14: rule without agents object → fires for any agent name
 RMF14="$TEST_BASE/rules-t14.json"
