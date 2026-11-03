@@ -16,14 +16,13 @@ import json
 import subprocess
 import sys
 import os
-import time
 import signal
 import tempfile
 
 # Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from push_comment_sender import send_push_comments, send_kill_switch_alert
-from multica_helpers import AGENT_MAP, PidFileLock, WorkspaceMutex, multica_cli
+from multica_helpers import AGENT_MAP, PidFileLock, WorkspaceMutex, multica_cli, utc_now_iso
 from kill_switch import kill_switch_default
 from issue_status_analysis import (
     STALE_RUN_AGE_HOURS,  # noqa: F401 — re-export (tests import from here)
@@ -633,7 +632,7 @@ def main():
         "kill_switch": state["kill_switch"],
         "self_agent_id": self_agent_id,
         "push_threshold": PUSH_THRESHOLD,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "timestamp": utc_now_iso(),
     }
 
     result = {}

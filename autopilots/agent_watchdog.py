@@ -25,12 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from multica_helpers import (
     multica_cli,
     multica_stdin_cmd,
+    utc_now_iso,
     PidFileLock,
     WorkspaceMutex,
     WATCHDOG_STATE_FILE,
     AGENT_NAME_MAP,
 )
 from watchdog_state import WatchdogState
+from kill_switch import kill_switch_default
 from watchdog_report import (
     generate_json_report,
     generate_comment_markdown,
@@ -41,7 +43,6 @@ from watchdog_report import (
 # --- Constants ---
 
 MAX_ERRORS_RATIO = 0.3
-CHEKKY_AGENT_ID = "b2384294-919a-4a91-9f35-2c45848577aa"
 IDLE_WATCHDOG_ERROR_PATTERN = "idle watchdog"
 MIN_CANCELLED_DURATION_MIN = 25
 
@@ -83,13 +84,26 @@ def parse_args() -> argparse.Namespace:
         help="Persistent restart-state file. Defaults to ~/.multica/watchdog_state.json "
              "so the sliding-window count survives reboots (SEE-956 C6).",
     )
-    parser.add_argument("--kill-switch", default="false")
-    parser.add_argument("--self-agent-id", default=CHEKKY_AGENT_ID)
+    parser.add_argument("--kill-switch", default=kill_switch_default())
+    parser.add_argument("--self-agent-id", default=resolve_default_self_agent())
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
 
 # --- Helper functions ---
+
+
+def resolve_default_self_agent() -> str:
+    """--self-agent-id 默认单源: env WATCHDOG_SELF_AGENT_ID → SELF_AGENT_ID → 空串。
+
+    §SPEC-013: 原缺省硬编码单一 agent ID 使 rerun 目标集随 ID 迁移失真;
+    空串缺省 = 不排除任何 agent (诚实语义)。
+    """
+    for var in ("WATCHDOG_SELF_AGENT_ID", "SELF_AGENT_ID"):
+        env_id = os.environ.get(var, "")
+        if env_id:
+            return env_id
+    return ""
 
 
 def _parse_ts(ts: str) -> datetime:
@@ -477,11 +491,24 @@ def main(args: argparse.Namespace) -> None:
     enrich_issue_identifiers(idle_watchdog_kills, processing_log)
 
     # Phase 4: Rate limiting
+    # §SPEC-011 (fingerprint a9c71b0e708c): long_cancelled 是人工显式取消,
+    # 仅报告不 rerun — 与操作者取消意图对抗的自动重入队在此切断。
+    rerunnable = [t for t in idle_watchdog_kills
+                  if t.get("detection_method") != "long_cancelled"]
+    report_only = [t for t in idle_watchdog_kills
+                   if t.get("detection_method") == "long_cancelled"]
+    for t in report_only:
+        t["skip_reason"] = "manual_cancel_report_only"
+        processing_log.append(
+            f"phase4_report_only: issue={t.get('issue_id', '')} "
+            f"method=long_cancelled not_rerun=true")
+
     watchdog_state = WatchdogState(args.state_file)
     watchdog_state.cleanup_expired()
     approved, skipped = apply_restart_limits(
-        idle_watchdog_kills, watchdog_state, args.max_restarts_per_hour, processing_log,
+        rerunnable, watchdog_state, args.max_restarts_per_hour, processing_log,
     )
+    skipped = skipped + report_only  # 报告有记录 (已跳过表)
 
     rerun_results = _execute_phase5_reruns(
         approved, watchdog_state, args, kill_switch, processing_log,
