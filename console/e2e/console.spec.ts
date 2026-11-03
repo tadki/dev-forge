@@ -183,6 +183,35 @@ test('custom: REST push accepted and appears', async ({ page }) => {
   await expect(page.getByText('接受 1 个资产')).toBeVisible();
 });
 
+test('registry: stats table + first-party inventory', async ({ page }) => {
+  await page.goto('/registry');
+  await expect(page.getByText('统计表').first()).toBeVisible();
+  await expect(page.getByText('自建资产清单').first()).toBeVisible();
+  await expect(page.locator('.table').getByText('hook-rule').first()).toBeVisible();
+  await expect(page.getByText('revy-testing-skill-check')).toBeVisible(); // 自建清单含规则
+  await expect(page.locator('.table').getByText('EXT', { exact: false }).first()).toBeVisible(); // 统计表有外部列
+});
+
+test('services: EXT badge on third-party, toggle only on first-party user units', async ({ page }) => {
+  await page.goto('/services');
+  await expect(page.getByText('◇ EXT 外部').first()).toBeVisible();
+  const extRow = page.locator('tr', { hasText: 'external-agent' });
+  await expect(extRow.locator('.badge-off', { hasText: '开关' })).toBeVisible();
+  const grepaiRow = page.locator('tr', { hasText: 'grepai-watch' });
+  await expect(grepaiRow.locator('button', { hasText: '■ 停止' })).toBeVisible();
+  // system 级禁用
+  const sysRow = page.locator('tr', { hasText: 'toolchain-start-all' });
+  await expect(sysRow.getByText('system 级需 root')).toBeVisible();
+});
+
+test('services: dry-run stop returns ok message', async ({ page }) => {
+  await page.goto('/services');
+  page.on('dialog', (d) => d.accept());
+  const grepaiRow = page.locator('tr', { hasText: 'grepai-watch' });
+  await grepaiRow.locator('button', { hasText: '■ 停止' }).click();
+  await expect(grepaiRow.getByText('stop ✓').first()).toBeVisible({ timeout: 10_000 });
+});
+
 test('sse indicator eventually connected', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('SSE ●')).toBeVisible({ timeout: 15_000 });

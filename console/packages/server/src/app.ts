@@ -13,7 +13,12 @@ export interface AppDeps {
   sse: SSEBus;
   staticDir?: string;
   pushAssets: (assets: Asset[], collector: string) => void;
+  /** 服务启停（只允许注册表内 first-party · user 级单元）；注入以便测试/dry-run */
+  serviceAction: (unit: string, action: 'start' | 'stop' | 'restart') => Promise<{ ok: boolean; output: string }>;
+  onAfterAction?: () => void;
 }
+
+const SERVICE_ACTIONS = new Set(['start', 'stop', 'restart']);
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
@@ -135,6 +140,32 @@ export function createHandler(deps: AppDeps) {
 
       if (path === '/api/migration') {
         return json(res, 200, buildMigrationView(state.assets));
+      }
+
+      if (path === '/api/services/actions' && req.method === 'POST') {
+        let body: { unit?: string; action?: string };
+        try {
+          body = JSON.parse(await readBody(req, 64 * 1024)) as { unit?: string; action?: string };
+        } catch {
+          return json(res, 400, { error: 'invalid json' });
+        }
+        const unit = (body.unit ?? '').trim();
+        const action = (body.action ?? '').trim();
+        if (!unit || !SERVICE_ACTIONS.has(action)) {
+          return json(res, 400, { error: 'unit 与 action(start|stop|restart) 必填' });
+        }
+        const asset = state.assets.find((a) => a.id === `service:systemd-${unit}` || a.source.path === `systemd://user/${unit}` || a.source.path === `systemd://system/${unit}`);
+        if (!asset) return json(res, 404, { error: 'unit 不在注册表中', unit });
+        if (asset.provenance !== 'first-party') {
+          return json(res, 403, { error: '外部/第三方服务不做启停（仅限自建）', unit });
+        }
+        const scope = (asset.payload as { scope?: string }).scope;
+        if (scope !== 'user') {
+          return json(res, 403, { error: `system 级单元需要 root（scope=${scope}）`, unit });
+        }
+        const result = await deps.serviceAction(unit, action as 'start' | 'stop' | 'restart');
+        deps.onAfterAction?.();
+        return json(res, result.ok ? 200 : 500, { ok: result.ok, unit, action, output: result.output.slice(0, 400) });
       }
 
       if (path === '/api/custom/assets' && req.method === 'POST') {

@@ -20,15 +20,18 @@ export const servicesCollector: Collector = {
     const relations: Relation[] = [];
     const diagnostics = ctx.diagnostics;
 
+    // systemctl list-units 每行 = UNIT LOAD ACTIVE SUB DESCRIPTION（描述在行尾，
+    // 不能对整行 endsWith 单元后缀——历史 bug：永远解析不到任何单元）
     const parseList = (out: string): UnitInfo[] =>
       out
         .split('\n')
         .map((l) => l.trim())
-        .filter((l) => l.endsWith('.service') && !l.startsWith('unit'))
+        .filter(Boolean)
         .map((l) => {
-          const [unit, load, active, sub, ...desc] = l.split(/\s+/);
-          return { unit, active, sub, load, description: desc.join(' ') } as unknown as UnitInfo;
-        });
+          const parts = l.split(/\s+/);
+          return { unit: parts[0] ?? '', load: parts[1] ?? '', active: parts[2] ?? '', sub: parts[3] ?? '', description: parts.slice(4).join(' ') } as unknown as UnitInfo;
+        })
+        .filter((u) => u.unit.endsWith('.service'));
 
     const userUnits = parseList((await ctx.exec('systemctl', ['--user', 'list-units', '--type=service', '--all', '--no-legend', '--no-pager'], 10_000)).stdout);
     const sysUnits = parseList((await ctx.exec('systemctl', ['list-units', '--type=service', '--all', '--no-legend', '--no-pager'], 10_000)).stdout);
@@ -58,7 +61,13 @@ export const servicesCollector: Collector = {
       const prop = (k: string) => show.match(new RegExp(`^${k}=(.*)$`, 'm'))?.[1]?.trim();
       const enabled = (await ctx.exec('systemctl', [isUser ? '--user' : '', 'is-enabled', u.unit].filter(Boolean), 5000)).stdout.trim();
       const mainPid = Number(prop('ExecMainPID') ?? 0);
-      const children = mainPid > 1 ? childrenOf(mainPid) : [];
+      const seen = new Set<number>();
+      const children = (mainPid > 1 ? childrenOf(mainPid) : []).filter((c) => (seen.has(c.pid) ? false : (seen.add(c.pid), true)));
+      const triggerHuman = enabled === 'enabled'
+        ? (isUser ? '用户级开机自启' : '系统开机自启')
+        : enabled === 'static' ? 'static（被依赖时启动）'
+        : enabled === 'disabled' ? '手动启动'
+        : `enabled=${enabled || '?'}`;
       assets.push(
         asset({
           id: `service:systemd-${u.unit}`,
@@ -80,7 +89,7 @@ export const servicesCollector: Collector = {
             since: prop('ActiveEnterTimestamp'),
             description: prop('Description') ?? u.description,
             children,
-            trigger: u.scope === 'system' ? 'boot' : 'boot(user)',
+            trigger: triggerHuman,
           },
           tags: ['systemd', u.scope],
         })

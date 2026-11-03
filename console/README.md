@@ -55,6 +55,10 @@ netsh advfirewall firewall add rule name="forge-console-7310" dir=in action=allo
 | `console.config.yaml` | workspace 注册表（可提交）+ 扫描根 + multica/hindsight 配置 |
 | `collectors.d/` | 外部采集器投放目录（可执行，stdout 吐契约 JSON；见下） |
 
+## 服务启停（写操作，仅限自建）
+
+`POST /api/services/actions` `{unit, action: start|stop|restart}`——仅接受注册表内 **first-party 且 user 级 systemd 单元**；外部/第三方与 system 级一律 403（system 级需 root）。UI 在「服务」页给可控行加 ■停止/▶启动/↻ 按钮（停 forge-console 自身有二次警告）。`FORGE_CONSOLE_DRY_ACTIONS=1` 时只回显命令不执行（E2E 用）。「注册表」页给 kind×自建/外部的统计表与自建资产全量清单，外部服务在服务页标 ◇ EXT。
+
 ## 扩展接入（新增一个监控域）
 
 1. **内置**：`packages/collectors/src/collectors/<domain>.ts` 实现 `Collector` 接口，注册进 `builtinCollectors`。

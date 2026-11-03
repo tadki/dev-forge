@@ -16,6 +16,16 @@ export const devforgeLaunchCollector: Collector = {
       const cfg = await readJson<Record<string, unknown>>(join(reposD, f));
       if (!cfg) continue;
       const name = String(cfg.name ?? f.replace(/\.json$/, ''));
+      let active = 'unknown';
+      const pidFile = String(cfg.pid_file ?? '');
+      if (pidFile) {
+        const pidText = await readText(pidFile);
+        const pid = Number((pidText ?? '').trim());
+        if (pid > 0) {
+          const alive = await exists(`/proc/${pid}`);
+          active = alive ? 'active' : 'dead';
+        }
+      }
       assets.push(
         asset({
           id: `service:repo-sync-${name}`,
@@ -24,7 +34,7 @@ export const devforgeLaunchCollector: Collector = {
           summary: `${String(cfg.repo_path ?? '')} @ ${String(cfg.branch ?? '')}`,
           attach: { level: 'project', ref: String(cfg.repo_path ?? '') },
           enforcement: 'enforced',
-          payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir },
+          payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, active, trigger: '随 toolchain-start-all 启动' },
           source: { collector: 'devforge-launch', path: join(reposD, f) },
           tags: ['repo-sync', 'devforge'],
         })

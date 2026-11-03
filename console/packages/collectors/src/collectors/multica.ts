@@ -226,7 +226,7 @@ export const multicaCollector: Collector = {
             enforcement: 'enforced',
             platforms: ['multica'],
             source: { collector: 'multica', path: 'multica://runtimes/' + rt.id },
-            payload: redactObject(rt),
+            payload: { ...redactObject(rt), active: rt.status, trigger: '平台守护登记' },
             tags: ['multica', 'runtime'],
           })
         );

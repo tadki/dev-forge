@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { apiGet } from '../api';
+import { apiGet, apiPost } from '../api';
 import type { AssetLite } from '../types';
 import { Badge, DataTable, KV, Panel, SectionHeader, StatusBadge } from '../components/ui';
 import type { PageCtx } from './ctx';
@@ -21,9 +21,38 @@ interface ServicePayload {
   daemon?: string;
 }
 
-export function ServicesPage(_ctx: { ctx: PageCtx }) {
+function unitOf(a: AssetLite): string {
+  return a.source.path.split('/').pop() ?? '';
+}
+
+function canToggle(a: AssetLite): boolean {
+  const p2 = a.payload as ServicePayload;
+  return a.provenance === 'first-party' && p2.scope === 'user' && a.source.path.startsWith('systemd://user/');
+}
+
+export function ServicesPage(_props: { ctx: PageCtx }) {
+  const queryClient = useQueryClient();
   const services = useQuery({ queryKey: ['assets', 'service'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=service'), refetchInterval: 20_000 });
   const [sel, setSel] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<Record<string, string>>({});
+
+  async function runAction(a: AssetLite, action: 'start' | 'stop' | 'restart'): Promise<void> {
+    const unit = unitOf(a);
+    const isConsole = unit.startsWith('forge-console');
+    const tip =
+      action === 'stop' && isConsole
+        ? `即将停止 forge-console 自身！停止后本页面失联，恢复需在终端执行 systemctl --user start forge-console。确认停止 ${unit}？`
+        : `确认对自建服务 ${unit} 执行 ${action}？`;
+    if (!window.confirm(tip)) return;
+    setActionMsg((m) => ({ ...m, [a.id]: `${action}…` }));
+    try {
+      const r = await apiPost<{ ok: boolean; output?: string }>('/api/services/actions', { unit, action });
+      setActionMsg((m) => ({ ...m, [a.id]: r.ok ? `${action} ✓` : `${action} ✕ ${r.output ?? ''}`.slice(0, 80) }));
+    } catch (e) {
+      setActionMsg((m) => ({ ...m, [a.id]: `${action} ✕ ${String(e).slice(0, 80)}` }));
+    }
+    setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['assets', 'service'] }), 2500);
+  }
 
   const rows = services.data?.assets ?? [];
   const systemd = rows.filter((s) => s.source.path.startsWith('systemd://'));
@@ -51,11 +80,42 @@ export function ServicesPage(_ctx: { ctx: PageCtx }) {
               selectedId={selId ?? undefined}
               onRowClick={(r) => setSel(r.id)}
               cols={[
-                { key: 'name', head: '名称 NAME', render: (r) => <span className="mono">{r.name}</span> },
+                {
+                  key: 'name',
+                  head: '名称 NAME',
+                  render: (r) => (
+                    <span className="row" style={{ gap: 4 }}>
+                      <span className="mono">{r.name}</span>
+                      {r.provenance === 'third-party' && <Badge tone="off" >◇ EXT 外部</Badge>}
+                    </span>
+                  ),
+                },
                 { key: 'status', head: '状态', render: (r) => <StatusBadge status={`${(r.payload as ServicePayload).active ?? 'n/a'}`} /> },
                 { key: 'en', head: '启用', render: (r) => <span className="mono dim">{(r.payload as ServicePayload).enabled ?? '—'}</span> },
                 { key: 'kids', head: '子进程', render: (r) => <span className="mono">{(r.payload as ServicePayload).children?.length ?? 0}</span> },
-                { key: 'trigger', head: '触发', render: (r) => <span className="dim">{(r.payload as ServicePayload).trigger ?? r.source.path.split('/')[2] ?? ''}</span> },
+                { key: 'trigger', head: '启动时机', render: (r) => <span className="dim">{(r.payload as ServicePayload).trigger ?? r.source.path.split('/')[2] ?? ''}</span> },
+                {
+                  key: 'switch',
+                  head: '启停开关',
+                  render: (r) => {
+                    const msg = actionMsg[r.id];
+                    if (msg) return <span className="badge badge-plain">{msg}</span>;
+                    if (!canToggle(r)) {
+                      const p = r.payload as ServicePayload;
+                      const why = r.provenance !== 'first-party' ? '外部服务' : p.scope !== 'user' ? 'system 级需 root' : '非 systemd 来源';
+                      return <span className="badge badge-off" title={why}>开关 {why}</span>;
+                    }
+                    const running = (r.payload as ServicePayload).active === 'active';
+                    return (
+                      <span className="row" style={{ gap: 4 }}>
+                        <button className={`btn small ${running ? 'btn-amber' : 'btn-mint'}`} onClick={(e) => { e.stopPropagation(); void runAction(r, running ? 'stop' : 'start'); }}>
+                          {running ? '■ 停止' : '▶ 启动'}
+                        </button>
+                        <button className="btn small btn-ghost" onClick={(e) => { e.stopPropagation(); void runAction(r, 'restart'); }}>↻</button>
+                      </span>
+                    );
+                  },
+                },
               ]}
             />
           </Panel>
