@@ -35,6 +35,36 @@ interface TaskRow {
   startedAt?: string;
 }
 
+function AgentCard({ a, selId, depsOf, onSelect }: {
+  a: AssetLite;
+  selId: string | null;
+  depsOf: (name: string) => AssetLite[];
+  onSelect: (id: string) => void;
+}) {
+  const p = a.payload as AgentPayload;
+  const d = depsOf(a.name);
+  const mc = d.find((x) => (x.payload as DeploymentPayload).platform === 'multica');
+  return (
+    <button className={`card ${a.id === selId ? 'sel' : ''}`} onClick={() => onSelect(a.id)}>
+      <div className="row">
+        <span className="avatar">{a.name.slice(0, 2).toUpperCase()}</span>
+        <div>
+          <h3>{a.name}</h3>
+          <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{p.model ?? ''}</span>
+        </div>
+        <span style={{ marginLeft: 'auto' }}>{mc?.payload ? <StatusBadge status={(mc.payload as DeploymentPayload).status ?? '?'} /> : null}</span>
+      </div>
+      <div className="desc">{(a.summary ?? '').slice(0, 80)}</div>
+      <div className="row">
+        {d.length > 0 ? d.map((x) => <Badge key={x.id} tone="plain">{(x.payload as DeploymentPayload).platform}</Badge>) : <Badge tone="off">未部署</Badge>}
+        {p.subagent ? <Badge tone="plain">subagent</Badge> : null}
+        <Badge tone="plain">{p.skills?.length ?? 0} skills</Badge>
+        {p.customEnvKeyCount ? <Badge tone="plain">env×{p.customEnvKeyCount}</Badge> : null}
+      </div>
+    </button>
+  );
+}
+
 export function AgentsPage(_props: { ctx: PageCtx }) {
   const agents = useQuery({ queryKey: ['assets', 'agent'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=agent') });
   const deployments = useQuery({ queryKey: ['assets', 'deployment'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=deployment') });
@@ -47,6 +77,8 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
   const [sel, setSel] = useState<string | null>(null);
 
   const rows = [...(agents.data?.assets ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  const ownRows = rows.filter((a) => a.provenance === 'first-party');
+  const discoveredRows = rows.filter((a) => a.provenance !== 'first-party');
   const deps = deployments.data?.assets ?? [];
   const depsOf = (agentName: string) => deps.filter((d) => ((d.payload as DeploymentPayload).agent ?? '').toLowerCase() === agentName.toLowerCase());
   const selId = sel ?? rows[0]?.id ?? null;
@@ -74,7 +106,7 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
       <div className="page-head">
         <div>
           <h2>智能体</h2>
-          <div className="sub tagline">AGENTS · 本体 {rows.length} · 部署 {deps.length}</div>
+          <div className="sub tagline">AGENTS · 自建 {ownRows.length} · 探测 {discoveredRows.length} · 部署 {deps.length}</div>
         </div>
         <div className="page-actions">
           <a className="btn btn-ghost" href={`#/effective`} style={{ textDecoration: 'none' }}>有效 HARNESS →</a>
@@ -83,34 +115,23 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
 
       <div className="grid" style={{ gridTemplateColumns: 'minmax(380px, 1fr) 1.2fr' }}>
         <div className="col">
-          <Panel title="AGENTS 本体" en={`DEFINITIONS · ${rows.length}`}>
+          <Panel title="自建 AGENTS" en={`FIRST-PARTY · ${ownRows.length}`}>
             <div className="card-grid">
-              {rows.map((a) => {
-                const p = a.payload as AgentPayload;
-                const d = depsOf(a.name);
-                const mc = d.find((x) => (x.payload as DeploymentPayload).platform === 'multica');
-                return (
-                  <button key={a.id} className={`card ${a.id === selId ? 'sel' : ''}`} onClick={() => setSel(a.id)}>
-                    <div className="row">
-                      <span className="avatar">{a.name.slice(0, 2).toUpperCase()}</span>
-                      <div>
-                        <h3>{a.name}</h3>
-                        <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{p.model ?? ''}</span>
-                      </div>
-                      <span style={{ marginLeft: 'auto' }}>{mc?.payload ? <StatusBadge status={(mc.payload as DeploymentPayload).status ?? '?'} /> : null}</span>
-                    </div>
-                    <div className="desc">{(a.summary ?? '').slice(0, 80)}</div>
-                    <div className="row">
-                      {d.length > 0 ? d.map((x) => <Badge key={x.id} tone="plain">{(x.payload as DeploymentPayload).platform}</Badge>) : <Badge tone="off">未部署</Badge>}
-                      {p.subagent ? <Badge tone="plain">subagent</Badge> : null}
-                      <Badge tone="plain">{p.skills?.length ?? 0} skills</Badge>
-                      {p.customEnvKeyCount ? <Badge tone="plain">env×{p.customEnvKeyCount}</Badge> : null}
-                    </div>
-                  </button>
-                );
-              })}
+              {ownRows.map((a) => (
+                <AgentCard key={a.id} a={a} selId={selId} depsOf={depsOf} onSelect={setSel} />
+              ))}
             </div>
           </Panel>
+          {discoveredRows.length > 0 && (
+            <Panel title="探测 DISCOVERED" en={`HARNESS · ${discoveredRows.length}`}>
+              <div className="card-grid">
+                {discoveredRows.map((a) => (
+                  <AgentCard key={a.id} a={a} selId={selId} depsOf={depsOf} onSelect={setSel} />
+                ))}
+              </div>
+              <div className="dim" style={{ fontSize: 'var(--fs-label)', padding: '4px 0' }}>harness / 项目目录扫描发现，非自建 roster；确认为自建后可在 registry.d/owned.yaml 声明收编。</div>
+            </Panel>
+          )}
         </div>
 
         <div className="col">

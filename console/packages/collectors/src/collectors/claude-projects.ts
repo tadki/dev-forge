@@ -185,9 +185,10 @@ export const claudeProjectsCollector: Collector = {
             attach: { level: 'project', ref: dir },
             applies: { workspaces: [ws.id], origin: 'native' },
             enforcement: 'advisory',
+            provenance: 'third-party',
             payload: { subagent: true, project: name, frontmatter: md.split('---')[1]?.trim() ?? '', bodyLines: md.split('\n').length },
             source: { collector: 'claude-projects', path: join(dotClaude, 'agents', a), sha256: sha256(md) },
-            tags: ['subagent', 'claude-code'],
+            tags: ['subagent', 'claude-code', 'discovered'],
           })
         );
       }
