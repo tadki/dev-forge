@@ -47,6 +47,8 @@ export interface ConsoleConfig {
   snapshotPath?: string;
   /** E2E/演示：只跑 fixture 采集器（目录内 *.json = 契约 Collection） */
   fixturesDir?: string;
+  /** 自建资产声明目录（registry.d/*.yaml，声明即归属 + meta 盖戳）；默认 <devforge>/console/registry.d */
+  registryDir?: string;
 }
 
 export function defaultConfig(root?: { home?: string; devforge?: string }): ConsoleConfig {

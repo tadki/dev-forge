@@ -55,6 +55,20 @@ netsh advfirewall firewall add rule name="forge-console-7310" dir=in action=allo
 | `console.config.yaml` | workspace 注册表（可提交）+ 扫描根 + multica/hindsight 配置 |
 | `collectors.d/` | 外部采集器投放目录（可执行，stdout 吐契约 JSON；见下） |
 
+## 自建资产注册（registry.d）与通用 metadata
+
+每个资产除基础信封（kind/attach/provenance/owner/tags/source 溯源）外，还有一套**通用 meta 词汇表**：
+`owner` / `category` / `lifecycle(stable|experimental|deprecated)` / `criticality(high|medium|low)` / `runtime(claude-code|multica|both|standalone)` / `docs` / `since` / `notes`。
+
+**声明即归属**：`console/registry.d/*.yaml` 里按 `match: {idPrefix|pathPrefix}` 声明我们的资产并写 meta；引擎采集后统一盖戳（覆盖采集器对 provenance 的推断）。声明没命中 → 「未匹配声明」；自建但没声明 → 「未登记」。注册表页的「注册管理」区做覆盖核对，服务页等处在 name 上给自建资产标 ◆ 自建（外部 ◇ EXT）。
+
+```yaml
+entries:
+  - id: my-domain
+    match: { pathPrefix: "/home/jerry/tools/my-thing" }
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: high, runtime: both }
+```
+
 ## 服务启停（写操作，仅限自建）
 
 `POST /api/services/actions` `{unit, action: start|stop|restart}`——仅接受注册表内 **first-party 且 user 级 systemd 单元**；外部/第三方与 system 级一律 403（system 级需 root）。UI 在「服务」页给可控行加 ■停止/▶启动/↻ 按钮（停 forge-console 自身有二次警告）。`FORGE_CONSOLE_DRY_ACTIONS=1` 时只回显命令不执行（E2E 用）。「注册表」页给 kind×自建/外部的统计表与自建资产全量清单，外部服务在服务页标 ◇ EXT。

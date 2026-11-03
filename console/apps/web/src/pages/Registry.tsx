@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { apiGet } from '../api';
 import type { AssetLite } from '../types';
-import { Badge, DataTable, Panel, SectionHeader } from '../components/ui';
+import { Badge, Chip, DataTable, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
 
 const KIND_ORDER = ['agent', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'project', 'report', 'env', 'custom'];
@@ -82,7 +82,44 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
         />
       </Panel>
 
-      <SectionHeader no="01" title="自建资产清单" en={`FIRST-PARTY INVENTORY · ${ownList.length}`} />
+      <SectionHeader no="01" title="注册管理" en={`REGISTRY MGMT · 声明 console/registry.d/owned.yaml`} />
+      <div className="grid grid-3">
+        <Panel title="已登记" en="DECLARED">
+          <div className="num" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-d1)' }}>
+            {assets.filter((a) => (a.payload as { registry?: { declared?: boolean } }).registry?.declared).length}
+          </div>
+          <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>声明命中（meta 已盖戳）</div>
+        </Panel>
+        <Panel title="未登记的自建资产" en="UNDECLARED">
+          <div className="num" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-d1)', color: 'var(--accent)' }}>
+            {assets.filter((a) => (a.payload as { registry?: { declared?: boolean } }).registry?.declared === false).length}
+          </div>
+          <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>建议补声明（registry.d 加 entry）</div>
+        </Panel>
+        <Panel title="未匹配声明" en="UNMATCHED">
+          <div className="num" style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-d1)', color: 'var(--gray)' }}>
+            {assets.filter((a) => a.id.startsWith('registry:unmatched-')).length}
+          </div>
+          <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>声明了但没采到（检查 match）</div>
+        </Panel>
+      </div>
+      {ownList.some((a) => (a.payload as { registry?: { declared?: boolean } }).registry?.declared === false) && (
+        <div className="panel-flat mt" style={{ maxHeight: 220, overflow: 'auto' }}>
+          <div className="tagline mb">未登记清单（自建但 registry.d 没声明）</div>
+          {ownList
+            .filter((a) => (a.payload as { registry?: { declared?: boolean } }).registry?.declared === false)
+            .slice(0, 40)
+            .map((a) => (
+              <div key={a.id} className="row" style={{ padding: '2px 0', fontSize: 'var(--fs-l1)' }}>
+                <Badge tone="warn">{a.kind}</Badge>
+                <span className="mono">{a.name}</span>
+                <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{a.source.path}</span>
+              </div>
+            ))}
+        </div>
+      )}
+
+      <SectionHeader no="02" title="自建资产清单" en={`FIRST-PARTY INVENTORY · ${ownList.length}`} />
       <DataTable
         rows={ownList}
         cols={[
@@ -91,6 +128,19 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
           { key: 'attach', head: '挂载', render: (r) => <span className="mono dim">{r.attach.level}{r.attach.ref ? ` · ${String(r.attach.ref).split('/').pop()}` : ''}</span> },
           { key: 'on', head: '启用', render: (r) => <Badge tone={r.enabled ? 'ok' : 'off'}>{r.enabled ? '●' : '○'}</Badge> },
           { key: 'en', head: '强制力', render: (r) => <span className="dim">{r.enforcement}</span> },
+            {
+              key: 'meta',
+              head: 'META',
+              render: (r) => (
+                <span className="row" style={{ gap: 2 }}>
+                  {r.meta?.category && <Chip>{r.meta.category}</Chip>}
+                  {r.meta?.lifecycle && <Chip>{r.meta.lifecycle}</Chip>}
+                  {r.meta?.criticality && <Chip>{r.meta.criticality === 'high' ? '⚑ high' : r.meta.criticality}</Chip>}
+                  {r.meta?.runtime && <Chip>{r.meta.runtime}</Chip>}
+                  {(r.payload as { registry?: { declared?: boolean } }).registry?.declared === false && <Badge tone="warn">未登记</Badge>}
+                </span>
+              ),
+            },
           { key: 'src', head: '源', render: (r) => <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{r.source.path}</span> },
         ]}
       />

@@ -1,0 +1,35 @@
+# 自建资产注册表 —— 声明即归属：匹配到的资产盖 provenance=first-party + meta（优先于采集器推断）
+# 通用 meta 词汇表：owner / category / lifecycle(stable|experimental|deprecated) /
+#                   criticality(high|medium|low) / runtime(claude-code|multica|both|standalone) / docs / since / notes
+entries:
+  - id: forge-console
+    match: { idPrefix: "service:systemd-forge-console" }
+    meta: { owner: jerry, category: infra, lifecycle: experimental, criticality: low, runtime: standalone, since: "2026-11-03" }
+
+  - id: devforge-hooks-engine
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/claude-hooks" }
+    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both, notes: "9 挂载点 → 统一引擎，multica 会话同样生效" }
+
+  - id: devforge-core
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/" }
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: high, runtime: standalone }
+
+  - id: kol-instructions
+    match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/CLAUDE.md" }
+    meta: { owner: jerry, category: game, lifecycle: stable, criticality: medium, runtime: both }
+
+  - id: multica-platform-agents
+    match: { pathPrefix: "multica://agents/" }
+    meta: { owner: jerry, category: platform, lifecycle: stable, criticality: high, runtime: multica }
+
+  - id: multica-platform-skills
+    match: { pathPrefix: "multica://skills/" }
+    meta: { owner: jerry, category: platform, lifecycle: stable, criticality: medium, runtime: multica }
+
+  - id: hindsight-integration
+    match: { pathPrefix: "/home/jerry/.hindsight/" }
+    meta: { owner: jerry, category: memory, lifecycle: stable, criticality: medium, runtime: claude-code }
+
+  - id: claude-user-skills
+    match: { pathPrefix: "/home/jerry/.claude/skills/" }
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: claude-code }

@@ -39,3 +39,6 @@ export { servicesCollector } from './collectors/services.js';
 export { devforgeLaunchCollector } from './collectors/devforge-launch.js';
 export { parseFirelogLine } from './collectors/devforge-firelog.js';
 export { loadExternalCollectors } from './external.js';
+
+export { loadRegistryEntries, applyRegistryOverlay } from './overlay.js';
+export type { RegistryEntry, RegistryMatch } from './overlay.js';

@@ -45,6 +45,22 @@ export const appliesSchema = z.object({
   origin: z.enum(['native', 'overlay']).optional(),
 });
 
+/** 通用 metadata 词汇表——所有 kind 通用的属性标签（registry.d 声明盖戳 > 采集器推断） */
+export const META_LIFECYCLE = ['stable', 'experimental', 'deprecated'] as const;
+export const META_CRITICALITY = ['high', 'medium', 'low'] as const;
+export const META_RUNTIME = ['claude-code', 'multica', 'both', 'standalone'] as const;
+
+export const metaSchema = z.object({
+  owner: z.string().optional(),
+  category: z.string().optional(),
+  lifecycle: z.enum(META_LIFECYCLE).optional(),
+  criticality: z.enum(META_CRITICALITY).optional(),
+  runtime: z.enum(META_RUNTIME).optional(),
+  docs: z.string().optional(),
+  since: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 export const sourceSchema = z.object({
   collector: z.string(),
   path: z.string(),
@@ -65,6 +81,7 @@ export const assetBase = {
   provenance: z.enum(['first-party', 'third-party']),
   tags: z.array(z.string()).default([]),
   owner: z.string().optional(),
+  meta: metaSchema.optional(),
   enabled: z.boolean().default(true),
   source: sourceSchema,
   payload: z.record(z.string(), z.unknown()).default({}),
@@ -110,3 +127,5 @@ export type Diagnostic = z.infer<typeof diagnosticSchema>;
 export type Collection = z.infer<typeof collectionSchema>;
 export type Attach = z.infer<typeof attachSchema>;
 export type Applies = z.infer<typeof appliesSchema>;
+
+export type Meta = z.infer<typeof metaSchema>;

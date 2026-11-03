@@ -141,6 +141,52 @@
           "owner": {
             "type": "string"
           },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "owner": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "lifecycle": {
+                "type": "string",
+                "enum": [
+                  "stable",
+                  "experimental",
+                  "deprecated"
+                ]
+              },
+              "criticality": {
+                "type": "string",
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              },
+              "runtime": {
+                "type": "string",
+                "enum": [
+                  "claude-code",
+                  "multica",
+                  "both",
+                  "standalone"
+                ]
+              },
+              "docs": {
+                "type": "string"
+              },
+              "since": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
           "enabled": {
             "default": true,
             "type": "boolean"

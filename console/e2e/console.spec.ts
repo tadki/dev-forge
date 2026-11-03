@@ -183,12 +183,26 @@ test('custom: REST push accepted and appears', async ({ page }) => {
   await expect(page.getByText('接受 1 个资产')).toBeVisible();
 });
 
+test('services: OWN badge on first-party name', async ({ page }) => {
+  await page.goto('/services');
+  const grepaiRow = page.locator('tr', { hasText: 'grepai-watch' }).first();
+  await expect(grepaiRow.getByText('◆ 自建').first()).toBeVisible();
+});
+
+test('registry: mgmt section shows declared/undeclared/unmatched', async ({ page }) => {
+  await page.goto('/registry');
+  await expect(page.getByText('注册管理').first()).toBeVisible();
+  await expect(page.getByText('未登记的自建资产').first()).toBeVisible();
+  await expect(page.getByText('未匹配声明').first()).toBeVisible();
+  await expect(page.getByText('未登记清单', { exact: false }).first()).toBeVisible(); // fixture 自建未声明 → 有清单
+});
+
 test('registry: stats table + first-party inventory', async ({ page }) => {
   await page.goto('/registry');
   await expect(page.getByText('统计表').first()).toBeVisible();
   await expect(page.getByText('自建资产清单').first()).toBeVisible();
   await expect(page.locator('.table').getByText('hook-rule').first()).toBeVisible();
-  await expect(page.getByText('revy-testing-skill-check')).toBeVisible(); // 自建清单含规则
+  await expect(page.locator('.table').getByText('revy-testing-skill-check').first()).toBeVisible(); // 自建清单含规则
   await expect(page.locator('.table').getByText('EXT', { exact: false }).first()).toBeVisible(); // 统计表有外部列
 });
 

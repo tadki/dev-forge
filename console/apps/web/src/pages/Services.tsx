@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { apiGet, apiPost } from '../api';
 import type { AssetLite } from '../types';
-import { Badge, DataTable, KV, Panel, SectionHeader, StatusBadge } from '../components/ui';
+import { Badge, Chip, DataTable, KV, Panel, SectionHeader, StatusBadge } from '../components/ui';
 import type { PageCtx } from './ctx';
 
 interface ServicePayload {
@@ -28,6 +28,19 @@ function unitOf(a: AssetLite): string {
 function canToggle(a: AssetLite): boolean {
   const p2 = a.payload as ServicePayload;
   return a.provenance === 'first-party' && p2.scope === 'user' && a.source.path.startsWith('systemd://user/');
+}
+
+function MetaChips({ meta }: { meta?: AssetLite['meta'] }) {
+  if (!meta) return <span className="dim">—</span>;
+  return (
+    <span className="row">
+      {meta.owner && <Chip>owner {meta.owner}</Chip>}
+      {meta.category && <Chip>{meta.category}</Chip>}
+      {meta.lifecycle && <Chip>{meta.lifecycle}</Chip>}
+      {meta.criticality && <Chip>criticality {meta.criticality}</Chip>}
+      {meta.runtime && <Chip>{meta.runtime}</Chip>}
+    </span>
+  );
 }
 
 export function ServicesPage(_props: { ctx: PageCtx }) {
@@ -86,7 +99,13 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
                   render: (r) => (
                     <span className="row" style={{ gap: 4 }}>
                       <span className="mono">{r.name}</span>
-                      {r.provenance === 'third-party' && <Badge tone="off" >◇ EXT 外部</Badge>}
+                      {r.provenance === 'first-party' ? (
+                        <Badge tone="ok" title={`自建${r.meta?.owner ? ` · owner ${r.meta.owner}` : ''}`}>
+                          ◆ 自建{r.meta?.criticality === 'high' ? ' ⚑' : ''}
+                        </Badge>
+                      ) : (
+                        <Badge tone="off">◇ EXT 外部</Badge>
+                      )}
                     </span>
                   ),
                 },
@@ -132,6 +151,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
                 ['MainPID', p.mainPid ? <span className="mono">#{p.mainPid}</span> : '—'],
                 ['since', <span className="mono dim">{p.since ?? '—'}</span>],
                 ['trigger', p.trigger ?? '—'],
+                ['meta', <MetaChips meta={selected?.meta} />],
                 ['note', (p.note ?? '') + (p.stale ? ' · 疑似旧桥（已被 systemd 取代）' : '')],
               ]}
             />
