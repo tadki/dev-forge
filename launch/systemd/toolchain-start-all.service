@@ -11,6 +11,14 @@ Type=simple
 # absolute path, matching the legacy multica-daemon.service that runs fine.
 WorkingDirectory=/home/jerry
 
+# SEE-1519 §SPEC-002: repo-sync daemon 不再随本 unit 的 cgroup 被连带杀。
+# 旧默认 KillMode=control-group 在 daemon 已独立运行、脚本 exec 失败 (exit 1) 时，
+# 把整组（含脚本刚 nohup 拉起的 repo-sync）一起 SIGTERM —— 是 SEE-1518 42h 停摆的
+# 直接耦合点。改为 KillMode=process 后，stop/restart 只向 MainPID 发信号，
+# repo-sync 存活保障 = KillMode 解耦 + 脚本幂等补拉（每次激活对已停实例补拉、
+# 对存活实例自锁不 double-start）。setsid 不能脱离 cgroup，不构成解耦，不用。
+KillMode=process
+
 # SEE-1429 rev B: zero coupling — the unit carries NO checkout path literals.
 # TARGET_REPO_ROOT (the tool-chain host repo) is injected via EnvironmentFile,
 # written by `bootstrap.sh --write-toolchain-env` at install time.
@@ -18,14 +26,15 @@ EnvironmentFile=/home/jerry/.config/dev-forge/toolchain.env
 
 # Login shell so the multica CLI is on PATH. The script backgrounds repo-sync
 # then execs the multica daemon in the foreground, so MainPID == the daemon.
+# SEE-1519: daemon 已在运行时脚本幂等驻留（不立即退出，Type=simple + Restart=
+# always 下避免 10s 空转重启），守护消失后退出交本 unit 重启补位。
 # ExecStart path = this repo's canonical checkout (dev-forge itself), not a
 # target-repo path.
 ExecStart=/bin/bash -l /home/jerry/tools/dev-forge/launch/toolchain-start.sh
 
-# Plan 2 tradeoff: no explicit ExecStop. systemd's default stop sends SIGTERM
-# to the whole control group (KillMode=control-group), which coarse-stops both
-# the foreground daemon and the backgrounded repo-sync. There is no graceful
-# agent-task drain and no PID-file idempotency — accepted by the simplification.
+# SEE-1519 §SPEC-002: KillMode=process 后 stop/restart 只信号 MainPID（multica
+# daemon 或幂等驻留脚本），不再整组 SIGTERM repo-sync；repo-sync 每次 unit
+# 激活由脚本补拉。
 
 # SEE-1001: Restart=always. The daemon exits 0 when told to stop via
 # `multica daemon stop` (and the upgrade path used to call exactly that), which
