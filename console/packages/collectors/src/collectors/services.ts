@@ -114,6 +114,27 @@ export const servicesCollector: Collector = {
       );
     }
 
+    // multica daemon 进程行（third-party 软件进程；toolchain-start-all 的前台子进程）
+    {
+      const psAll = await ctx.exec('ps', ['-eo', 'args', '--no-headers'], 10_000);
+      const daemonAlive = /multica daemon start/.test(psAll.stdout);
+      assets.push(
+        asset({
+          id: 'service:proc-multica-daemon',
+          kind: 'service',
+          name: 'multica daemon',
+          summary: daemonAlive ? '进程在运行（toolchain-start-all 前台子进程）' : '进程未运行',
+          attach: { level: 'user' },
+          provenance: 'third-party',
+          enforcement: 'enforced',
+          enabled: true,
+          payload: { active: daemonAlive ? 'active' : 'dead', trigger: '随 toolchain-start-all（前台 exec）', process: 'multica daemon start' },
+          source: { collector: 'services', path: 'proc://multica-daemon' },
+          tags: ['multica', 'process'],
+        })
+      );
+    }
+
     // Windows 登录桥
     const bridges: Array<[string, string]> = [
       ['multica-daemon', '/mnt/c/Users/Jerry/multica-daemon.bat'],
@@ -125,14 +146,15 @@ export const servicesCollector: Collector = {
         asset({
           id: `service:winbridge-${name}`,
           kind: 'service',
-          name: `${name}（Windows 登录桥）`,
+          name: `${name} 桥（legacy）`,
           summary: script ? script.split('\n').join(' ').slice(0, 120) : '脚本不存在',
           attach: { level: 'user' },
+          provenance: 'third-party',
           enforcement: 'advisory',
           enabled: script !== null,
           platforms: ['claude-code'],
           source: { collector: 'services', path: p },
-          payload: { trigger: 'windows-logon', script: script?.slice(0, 500), stale: name === 'multica-daemon' },
+          payload: { trigger: 'windows-logon', script: script?.slice(0, 500), active: 'legacy', stale: true },
           tags: ['windows-bridge'],
         })
       );

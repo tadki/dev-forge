@@ -41,28 +41,6 @@ export const devforgeLaunchCollector: Collector = {
       relations.push({ from: `project:${name}`, to: `service:repo-sync-${name}`, type: 'references' });
     }
 
-    const unitPath = join(ctx.paths.devforge, 'launch', 'systemd', 'toolchain-start-all.service');
-    if (await exists(unitPath)) {
-      const unit = (await readText(unitPath)) ?? '';
-      assets.push(
-        asset({
-          id: 'service:toolchain-start-all',
-          kind: 'service',
-          name: 'toolchain-start-all（启动链根）',
-          summary: 'repo-sync ×N → multica daemon 前台 exec',
-          attach: { level: 'user' },
-          enforcement: 'enforced',
-          payload: {
-            unit: unit.slice(0, 3000),
-            envFile: unit.match(/EnvironmentFile=(.+)/)?.[1]?.trim(),
-            execStart: unit.match(/ExecStart=(.+)/)?.[1]?.trim(),
-          },
-          source: { collector: 'devforge-launch', path: unitPath },
-          tags: ['systemd', 'launch', 'devforge'],
-        })
-      );
-    }
-
     const envFile = join(ctx.paths.home, '.config', 'dev-forge', 'toolchain.env');
     const env = await readText(envFile);
     if (env !== null) {
