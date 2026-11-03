@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { claudeProjectsCollector, defaultConfig, makeContext } from '../index.js';
+import { claudeProjectsCollector } from './claude-projects.js';
+import { defaultConfig, makeContext } from '../index.js';
+import type { WorkspaceDef } from '../config.js';
 
 let root = '';
 
@@ -29,15 +31,15 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-function ctxFor(workspaces: Array<{ id: string; name: string; projects: string[] }>) {
+function ctxFor(workspaces: WorkspaceDef[]) {
   const cfg = { ...defaultConfig({ home: root, devforge: root }), workspaces };
   return makeContext(cfg);
 }
 
-describe('claude-projects collector（注册制）', () => {
+describe('claude-projects collector（注册制 + harness 声明制）', () => {
   it('只为注册路径产出资产，workspace 归属来自注册而非路径匹配', async () => {
     const ctx = ctxFor([
-      { id: 'wsa', name: 'WS A', projects: [join(root, 'ws-a', 'proj-alpha')] },
+      { id: 'wsa', name: 'WS A', projects: [{ path: join(root, 'ws-a', 'proj-alpha'), harnesses: ['claude'] }] },
     ]);
     const r = await claudeProjectsCollector.collect(ctx);
     const proj = r.assets.find((a) => a.id === 'project:proj-alpha');
@@ -46,12 +48,13 @@ describe('claude-projects collector（注册制）', () => {
       path: join(root, 'ws-a', 'proj-alpha'),
       workspace: 'wsa',
       workspaceName: 'WS A',
+      harnesses: ['claude'],
       hasClaudeMd: true,
       hooksScripts: 1,
       mcpServers: ['grepai'],
     });
     expect(proj!.applies?.workspaces).toEqual(['wsa']);
-    // 派生资产仍由注册项目派生
+    // 声明了 claude → 解析 harness 目录内容
     expect(r.assets.some((a) => a.id === 'instruction:proj-alpha/CLAUDE.md')).toBe(true);
     expect(r.assets.some((a) => a.id === 'skill:project-proj-alpha-demo-skill')).toBe(true);
     expect(r.assets.some((a) => a.id === 'agent:sub-proj-alpha-worker')).toBe(true);
@@ -61,30 +64,41 @@ describe('claude-projects collector（注册制）', () => {
     expect(r.assets.some((a) => a.source.path.includes('proj-stray'))).toBe(false);
   });
 
+  it('未声明 harness → 只出项目资产，不解析 harness 目录内容', async () => {
+    const ctx = ctxFor([
+      { id: 'wsa', name: 'WS A', projects: [{ path: join(root, 'ws-a', 'proj-alpha'), harnesses: [] }] },
+    ]);
+    const r = await claudeProjectsCollector.collect(ctx);
+    const proj = r.assets.find((a) => a.id === 'project:proj-alpha');
+    expect(proj).toBeDefined();
+    expect(proj!.payload).toMatchObject({ workspace: 'wsa', harnesses: [], hasClaudeMd: false, mcpServers: [] });
+    expect(r.assets.filter((a) => a.kind !== 'project')).toHaveLength(0);
+  });
+
   it('注册即项目：无 harness 痕迹的注册目录也产出资产', async () => {
-    const ctx = ctxFor([{ id: 'wsb', name: 'WS B', projects: [join(root, 'ws-b', 'proj-bare')] }]);
+    const ctx = ctxFor([{ id: 'wsb', name: 'WS B', projects: [{ path: join(root, 'ws-b', 'proj-bare'), harnesses: ['claude'] }] }]);
     const r = await claudeProjectsCollector.collect(ctx);
     const proj = r.assets.find((a) => a.id === 'project:proj-bare');
     expect(proj).toBeDefined();
-    expect(proj!.payload).toMatchObject({ workspace: 'wsb', hasClaudeMd: false, hooksScripts: 0 });
+    expect(proj!.payload).toMatchObject({ workspace: 'wsb', harnesses: ['claude'], hasClaudeMd: false, hooksScripts: 0 });
     expect(r.assets.filter((a) => a.kind !== 'project')).toHaveLength(0);
   });
 
   it('注册路径不存在 → missing 资产 + warn 诊断', async () => {
     const missing = join(root, 'gone', 'proj-missing');
-    const ctx = ctxFor([{ id: 'wsc', name: 'WS C', projects: [missing] }]);
+    const ctx = ctxFor([{ id: 'wsc', name: 'WS C', projects: [{ path: missing, harnesses: ['claude'] }] }]);
     const r = await claudeProjectsCollector.collect(ctx);
     const proj = r.assets.find((a) => a.id === 'project:proj-missing');
     expect(proj).toBeDefined();
-    expect(proj!.payload).toMatchObject({ path: missing, workspace: 'wsc', missing: true });
+    expect(proj!.payload).toMatchObject({ path: missing, workspace: 'wsc', harnesses: ['claude'], missing: true });
     expect(r.diagnostics.some((d) => d.level === 'warn' && d.message.includes('proj-missing'))).toBe(true);
   });
 
   it('同一路径注册到两个 workspace → 首个胜出 + warn 诊断', async () => {
     const dup = join(root, 'ws-a', 'proj-alpha');
     const ctx = ctxFor([
-      { id: 'first', name: 'First', projects: [dup] },
-      { id: 'second', name: 'Second', projects: [dup] },
+      { id: 'first', name: 'First', projects: [{ path: dup, harnesses: ['claude'] }] },
+      { id: 'second', name: 'Second', projects: [{ path: dup, harnesses: ['claude'] }] },
     ]);
     const r = await claudeProjectsCollector.collect(ctx);
     const projs = r.assets.filter((a) => a.id === 'project:proj-alpha');
@@ -94,11 +108,10 @@ describe('claude-projects collector（注册制）', () => {
   });
 
   it('watchPaths 返回注册路径且不产生诊断副作用', () => {
-    const ctx = ctxFor([
-      { id: 'wsa', name: 'WS A', projects: [join(root, 'ws-a', 'proj-alpha'), join(root, 'ws-a', 'proj-alpha/')] },
-    ]);
+    const p = join(root, 'ws-a', 'proj-alpha');
+    const ctx = ctxFor([{ id: 'wsa', name: 'WS A', projects: [{ path: p, harnesses: [] }, { path: `${p}/`, harnesses: [] }] }]);
     const paths = claudeProjectsCollector.watchPaths!(ctx);
-    expect(paths).toEqual([join(root, 'ws-a', 'proj-alpha')]);
+    expect(paths).toEqual([p]);
     expect(ctx.diagnostics).toHaveLength(0);
   });
 });

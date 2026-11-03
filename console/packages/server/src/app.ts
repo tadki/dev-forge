@@ -13,8 +13,8 @@ export interface AppDeps {
   sse: SSEBus;
   staticDir?: string;
   pushAssets: (assets: Asset[], collector: string) => void;
-  /** workspace 注册表（console.config.yaml 权威）；项目页层级与顶栏过滤的数据源 */
-  workspaces: WorkspaceDef[];
+  /** workspace 注册表（console.config.yaml 权威，getter 以支持配置热重载）；项目页层级与顶栏过滤的数据源 */
+  workspaces: () => WorkspaceDef[];
   /** 服务启停（只允许注册表内 first-party · user 级单元）；注入以便测试/dry-run */
   serviceAction: (unit: string, action: 'start' | 'stop' | 'restart') => Promise<{ ok: boolean; output: string }>;
   onAfterAction?: () => void;
@@ -64,7 +64,12 @@ export function createHandler(deps: AppDeps) {
 
       if (path === '/api/workspaces') {
         return json(res, 200, {
-          workspaces: deps.workspaces.map((ws) => ({ id: ws.id, name: ws.name, projects: ws.projects ?? [], residents: ws.residents ?? [] })),
+          workspaces: deps.workspaces().map((ws) => ({
+            id: ws.id,
+            name: ws.name,
+            projects: (ws.projects ?? []).map((p) => ({ path: p.path, harnesses: p.harnesses ?? [] })),
+            residents: ws.residents ?? [],
+          })),
         });
       }
 

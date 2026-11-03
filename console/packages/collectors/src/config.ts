@@ -3,10 +3,19 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 
+export interface ProjectDef {
+  /** 仓库身份（GitHub git URL）；同仓库去重以此为准。缺省时 collector 自动探测 origin remote */
+  git?: string;
+  /** 本地主仓库检出位置（普通字段，不代表仓库身份） */
+  path: string;
+  /** 声明的 harness（如 claude）；仅对声明的 harness 解析其目录内容（.claude、CLAUDE.md 等） */
+  harnesses: string[];
+}
+
 export interface WorkspaceDef {
   id: string;
   name: string;
-  projects: string[];
+  projects: ProjectDef[];
   residents?: string[];
   services?: string[];
 }
@@ -108,7 +117,9 @@ export async function loadConfig(path: string, overrides?: { home?: string; devf
     ),
   };
   for (const ws of cfg.workspaces) {
-    ws.projects = (ws.projects ?? []).map((p) => resolveTilde(p, home));
+    ws.projects = (ws.projects ?? []).map((p) =>
+      typeof p === 'string' ? { path: resolveTilde(p, home), harnesses: [] } : { ...p, path: resolveTilde(p.path, home) }
+    );
   }
   return cfg;
 }

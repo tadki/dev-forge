@@ -1,30 +1,40 @@
 import type { Asset, Relation } from '@forge/schema';
 import { join } from 'node:path';
-import { exists, guessLang, headings, listDir, readJson, readText, sha256 } from '../util.js';
+import { exists, execCapture, guessLang, headings, listDir, readJson, readText, sha256 } from '../util.js';
 import { asset, type CollectContext, type Collector } from '../types.js';
-import type { WorkspaceDef } from '../config.js';
+import type { ProjectDef, WorkspaceDef } from '../config.js';
 
 interface RegisteredProject {
   path: string;
   ws: WorkspaceDef;
+  def: ProjectDef;
 }
 
 function registeredProjects(ctx: CollectContext): RegisteredProject[] {
   const out: RegisteredProject[] = [];
   const ownerOf = new Map<string, string>();
   for (const ws of ctx.config.workspaces) {
-    for (const p of ws.projects ?? []) {
-      const norm = p.replace(/\/+$/, '') || '/';
-      const firstWs = ownerOf.get(norm);
+    for (const def of ws.projects ?? []) {
+      const norm = def.path.replace(/\/+$/, '') || '/';
+      const identity = def.git?.trim() || norm;
+      const firstWs = ownerOf.get(identity);
       if (firstWs) {
-        ctx.diagnostics.push({ level: 'warn', message: `[claude-projects] 路径重复注册（归属 ${firstWs}，${ws.id} 跳过）：${norm}` });
+        ctx.diagnostics.push({ level: 'warn', message: `[claude-projects] 仓库身份重复注册（归属 ${firstWs}，${ws.id} 跳过）：${identity}` });
         continue;
       }
-      ownerOf.set(norm, ws.id);
-      out.push({ path: norm, ws });
+      ownerOf.set(identity, ws.id);
+      out.push({ path: norm, ws, def });
     }
   }
   return out;
+}
+
+async function gitIdentity(def: ProjectDef, dir: string): Promise<string | undefined> {
+  const declared = def.git?.trim();
+  if (declared) return declared;
+  const r = await execCapture('git', ['-C', dir, 'remote', 'get-url', 'origin'], 3000);
+  const url = r.stdout.trim();
+  return r.ok && url ? url : undefined;
 }
 
 export const claudeProjectsCollector: Collector = {
@@ -35,9 +45,10 @@ export const claudeProjectsCollector: Collector = {
     const assets: Asset[] = [];
     const relations: Relation[] = [];
 
-    for (const { path: dir, ws } of registeredProjects(ctx)) {
+    for (const { path: dir, ws, def } of registeredProjects(ctx)) {
       const name = dir.split('/').filter(Boolean).pop() ?? dir;
       const st = await import('node:fs/promises').then((m) => m.stat(dir).catch(() => null));
+      const hasHarness = def.harnesses.includes('claude');
 
       if (!st?.isDirectory()) {
         ctx.diagnostics.push({ level: 'warn', message: `[claude-projects] 注册的项目路径不存在或不是目录：${dir}（workspace ${ws.id}）` });
@@ -52,7 +63,7 @@ export const claudeProjectsCollector: Collector = {
             enforcement: 'derived',
             platforms: ['claude-code'],
             source: { collector: 'claude-projects', path: dir },
-            payload: { path: dir, workspace: ws.id, workspaceName: ws.name, missing: true },
+            payload: { path: dir, git: def.git?.trim() || undefined, workspace: ws.id, workspaceName: ws.name, harnesses: def.harnesses, missing: true },
             tags: [ws.id],
           })
         );
@@ -60,26 +71,29 @@ export const claudeProjectsCollector: Collector = {
       }
 
       const projectId = `project:${name}`;
-      const claudeMd = await readText(join(dir, 'CLAUDE.md'));
+      const git = await gitIdentity(def, dir);
+      const claudeMd = hasHarness ? await readText(join(dir, 'CLAUDE.md')) : null;
       const dotClaude = join(dir, '.claude');
-      const hasSettings = await exists(join(dotClaude, 'settings.json'));
-      const hooksScripts = (await exists(join(dotClaude, 'hooks')))
+      const hasSettings = hasHarness ? await exists(join(dotClaude, 'settings.json')) : false;
+      const hooksScripts = hasHarness && (await exists(join(dotClaude, 'hooks')))
         ? (await listDir(join(dotClaude, 'hooks'))).filter((f) => f.endsWith('.sh'))
         : [];
-      const skillDirs = (await exists(join(dotClaude, 'skills'))) ? await listDir(join(dotClaude, 'skills')) : [];
-      const agentFiles = (await exists(join(dotClaude, 'agents')))
+      const skillDirs = hasHarness && (await exists(join(dotClaude, 'skills'))) ? await listDir(join(dotClaude, 'skills')) : [];
+      const agentFiles = hasHarness && (await exists(join(dotClaude, 'agents')))
         ? (await listDir(join(dotClaude, 'agents'))).filter((f) => f.endsWith('.md'))
         : [];
-      const mcpJson = await readJson<{ mcpServers?: Record<string, { command?: string; args?: string[] }> }>(
-        join(dir, '.mcp.json')
-      );
+      const mcpJson = hasHarness
+        ? await readJson<{ mcpServers?: Record<string, { command?: string; args?: string[] }> }>(join(dir, '.mcp.json'))
+        : null;
 
       assets.push(
         asset({
           id: projectId,
           kind: 'project',
           name: name,
-          summary: `${ws.name} · CLAUDE.md ${claudeMd ? claudeMd.split('\n').length + ' 行' : '无'} · hooks ${hooksScripts.length}`,
+          summary: hasHarness
+            ? `${ws.name} · CLAUDE.md ${claudeMd ? claudeMd.split('\n').length + ' 行' : '无'} · hooks ${hooksScripts.length}`
+            : `${ws.name} · 未声明 harness 解析`,
           attach: { level: 'project', ref: dir },
           applies: { workspaces: [ws.id], origin: 'native' },
           enforcement: 'derived',
@@ -87,8 +101,10 @@ export const claudeProjectsCollector: Collector = {
           source: { collector: 'claude-projects', path: dir },
           payload: {
             path: dir,
+            git,
             workspace: ws.id,
             workspaceName: ws.name,
+            harnesses: def.harnesses,
             hasClaudeMd: claudeMd !== null,
             claudeMdLines: claudeMd ? claudeMd.split('\n').length : 0,
             claudeMdHash: claudeMd ? sha256(claudeMd) : undefined,
