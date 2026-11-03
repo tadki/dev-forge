@@ -16,6 +16,7 @@ import { AutopilotsPage } from './pages/Autopilots';
 import { MigrationPage } from './pages/Migration';
 import { GraphPage } from './pages/Graph';
 import { CustomPage } from './pages/Custom';
+import { RegistryPage } from './pages/Registry';
 import { EffectivePage } from './pages/Effective';
 
 const queryClient = new QueryClient({
@@ -94,6 +95,7 @@ function Shell() {
             <Route path="/migration" element={<MigrationPage ctx={ctx} />} />
             <Route path="/graph" element={<GraphPage ctx={ctx} />} />
             <Route path="/custom" element={<CustomPage ctx={ctx} />} />
+            <Route path="/registry" element={<RegistryPage ctx={ctx} />} />
             <Route path="/effective" element={<EffectivePage ctx={ctx} />} />
           </Routes>
         </main>

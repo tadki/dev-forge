@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { execCapture } from '@forge/collectors';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { loadConfig } from './engine.js';
@@ -18,18 +19,26 @@ const hasStatic = existsSync(join(staticDir, 'index.html'));
 
 const sse = new SSEBus();
 const engine = new Engine({ config, sse, watchEnabled: process.env.FORGE_CONSOLE_WATCH !== 'off' });
+const dryActions = process.env.FORGE_CONSOLE_DRY_ACTIONS === '1';
 const handler = createHandler({
   getState: () => engine.state,
   token,
   sse,
   staticDir: hasStatic ? staticDir : undefined,
   pushAssets: (assets, collector) => engine.pushAssets(assets, collector),
+  serviceAction: dryActions
+    ? async (unit, action) => ({ ok: true, output: `[dry-run] systemctl --user ${action} ${unit}` })
+    : async (unit, action) => {
+        const r = await execCapture('systemctl', ['--user', action, unit], 20_000);
+        return { ok: r.ok && (!r.stdout || !/failed/i.test(r.stdout)), output: `${r.stdout}${r.stderr}`.slice(0, 400) };
+      },
+  onAfterAction: () => void engine.collectNow(),
 });
 
 await engine.start();
 const server = createServer((req, res) => void handler(req, res));
 server.listen(port, bind, () => {
-  console.error(`forge-console listening on http://${bind}:${port} (static: ${hasStatic ? 'on' : 'off'}, token: ${token ? 'required' : 'OFF — local mode'})`);
+  console.error(`forge-console listening on http://${bind}:${port} (static: ${hasStatic ? 'on' : 'off'}, token: ${token ? 'required' : 'OFF — local mode'}, actions: ${dryActions ? 'DRY-RUN' : 'live systemctl --user'})`);
 });
 
 const shutdown = () => {

@@ -15,6 +15,7 @@ const child = spawn('node', [join(here, '..', 'packages', 'server', 'dist', 'ind
     FORGE_CONSOLE_PORT: '7390',
     FORGE_CONSOLE_BIND: '127.0.0.1',
     FORGE_CONSOLE_WATCH: 'off',
+    FORGE_CONSOLE_DRY_ACTIONS: '1',
     FORGE_CONSOLE_CONFIG: configPath,
   },
   stdio: 'inherit',

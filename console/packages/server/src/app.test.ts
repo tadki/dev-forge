@@ -43,6 +43,22 @@ const state: RegistryState = {
     }),
     mk('report:toolchain-latest', 'report', { payload: { health: 'GREEN', generatedAt: '2026-11-03T04:00:00+08:00', redlineCount: 0 } }),
     mk('skill:ecc-deep-research', 'skill', { provenance: 'third-party' }),
+    mk('service:systemd-grepai-watch.service', 'service', {
+      name: 'grepai-watch',
+      source: { collector: 'test', path: 'systemd://user/grepai-watch.service' },
+      payload: { scope: 'user', active: 'active' },
+    }),
+    mk('service:systemd-external-thing.service', 'service', {
+      name: 'external-thing',
+      provenance: 'third-party',
+      source: { collector: 'test', path: 'systemd://user/external-thing.service' },
+      payload: { scope: 'user', active: 'active' },
+    }),
+    mk('service:systemd-toolchain-start-all.service', 'service', {
+      name: 'toolchain-start-all',
+      source: { collector: 'test', path: 'systemd://system/toolchain-start-all.service' },
+      payload: { scope: 'system', active: 'active' },
+    }),
   ],
   relations: [{ from: 'hook-rule:push-guard-master-gate', to: 'hook-script:x.sh', type: 'mounts' }],
   diagnostics: [],
@@ -54,6 +70,7 @@ const state: RegistryState = {
 };
 
 const TOKEN = 'test-token-abc';
+const actionLog: Array<{ unit: string; action: string }> = [];
 let server: Server;
 let base = '';
 
@@ -65,6 +82,10 @@ beforeAll(async () => {
     token: TOKEN,
     sse,
     pushAssets: (a) => pushed.push(...a),
+    serviceAction: async (unit, action) => {
+      actionLog.push({ unit, action });
+      return { ok: true, output: `fake ${action} ${unit}` };
+    },
   });
   server = createServer((req, res) => void handler(req, res));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -101,7 +122,7 @@ describe('auth', () => {
 describe('api endpoints', () => {
   it('overview aggregates counts, health, drift', async () => {
     const r = await get('/api/overview', TOKEN);
-    expect(r.body.total).toBe(6);
+    expect(r.body.total).toBe(9);
     expect(r.body.counts['hook-rule']).toBe(1);
     expect(r.body.health.status).toBe('GREEN');
     expect(r.body.driftGroups[0].workspace).toBe('kol');
@@ -174,6 +195,23 @@ describe('api endpoints', () => {
     });
     expect(good.status).toBe(201);
     expect((await good.json()).accepted).toBe(1);
+  });
+
+  it('service actions: only first-party user units', async () => {
+    const post = (body: unknown) =>
+      fetch(base + '/api/services/actions', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ unit: 'no-such.service', action: 'stop' })).status).toBe(404);
+    expect((await post({ unit: 'external-thing.service', action: 'stop' })).status).toBe(403); // 外部
+    expect((await post({ unit: 'toolchain-start-all.service', action: 'stop' })).status).toBe(403); // system 级
+    expect((await post({ unit: 'grepai-watch.service', action: 'zzz' })).status).toBe(400); // 非法动作
+    const ok = await post({ unit: 'grepai-watch.service', action: 'stop' });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ ok: true, unit: 'grepai-watch.service', action: 'stop' });
+    expect(actionLog.at(-1)).toEqual({ unit: 'grepai-watch.service', action: 'stop' });
   });
 
   it('unknown path 404s as json', async () => {

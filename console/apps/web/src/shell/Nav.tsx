@@ -13,6 +13,7 @@ const ITEMS: Array<{ to: string; icon: string; zh: string; en: string }> = [
   { to: '/migration', icon: '◆', zh: '迁移', en: 'MIGRATION' },
   { to: '/graph', icon: '◇', zh: '关系图', en: 'GRAPH' },
   { to: '/custom', icon: '○', zh: '通用资产', en: 'CUSTOM' },
+  { to: '/registry', icon: '◧', zh: '注册表', en: 'REGISTRY' },
 ];
 
 export function Nav({ collectors, total }: { collectors: CollectorStatus[]; total: number }) {
