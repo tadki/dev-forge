@@ -33,6 +33,10 @@ fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL + 1)); }
 WORKTREE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK_SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/push-guard.sh"
 ATLAS_ID="fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
+# dev-forge 豁免（Owner 指令 2026-11-03）后 push-guard 按 PWD 解析目标仓库；
+# 本套件断言 force 白名单/审计语义（与仓库策略无关），从中性非 git 目录执行
+# （PROJECT_ROOT 仍指审计目录，供白名单审计落点），豁免不参与结果。
+NEUTRAL_DIR="$(mktemp -d /tmp/pgw-neutral.XXXXXX)"
 
 echo "============================================"
 echo "  SEE-1069: push-guard.sh Atlas force-push whitelist + audit"
@@ -80,6 +84,8 @@ run_hook() {
   stderr_file=$(mktemp /tmp/pgw-err.XXXXXX)
 
   (
+    cd "$NEUTRAL_DIR" || exit 99
+    unset TARGET_REPO_ROOT GIT_ROOT
     export MULTICA_AGENT_ID="$agent_id"
     export MULTICA_AGENT_NAME="$agent_name"
     export MULTICA_TASK_ID=""
@@ -267,6 +273,7 @@ rm -rf "$AUDIT_DIR_S4"
 # ========================================================
 # Summary
 # ========================================================
+rm -rf "$NEUTRAL_DIR"
 echo ""
 echo "============================================"
 echo -e "${CYAN}Results:${NC} ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
