@@ -330,6 +330,12 @@ function main() {
     cwd: process.env.PWD || '',
     projectRoot: process.env.PROJECT_ROOT || process.env.CLAUDE_PROJECT_DIR || '',
     taskId: process.env.MULTICA_TASK_ID || '',
+    // repo op 注册表：锚定 hooks 部署根的 unified/repos.json（configFile 无论落
+    // 在 unified/ 还是 rules.d/ 都解析正确——dirname³ = <repo>/claude-hooks），
+    // HOOK_REPO_REGISTRY 供测试注入
+    registryPath: process.env.HOOK_REPO_REGISTRY
+      || path.join(path.dirname(path.dirname(path.dirname(configFile))), 'unified', 'repos.json'),
+    warn: (msg) => firelog(logFile, '[unified-hook] WARN ' + msg),
   });
 
   const firedNames = [];

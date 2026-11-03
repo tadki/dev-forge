@@ -1,9 +1,9 @@
 'use strict';
 // when-ops.js - v2 when op tree evaluator (SEE-1330 P0, plan §3)
-// Word list: 9 atomic ops (event/tool/command/file/content/used_skill/branch/
-// payload/cwd) + 3 combinators (all/any/not). Data sources are lazily
+// Word list: 10 atomic ops (event/tool/command/file/content/used_skill/branch/
+// payload/cwd/repo) + 3 combinators (all/any/not). Data sources are lazily
 // evaluated and cached per payload (plan §7): zero-I/O ops first, I/O ops
-// (content/run history/branch) only when depended upon.
+// (content/run history/branch/repo+registry) only when depended upon.
 
 const fs = require('fs');
 const path = require('path');
@@ -124,6 +124,17 @@ function safeRegex(pattern) {
   try { return new RegExp(pattern); } catch (e) { return null; }
 }
 
+// git URL 归一化：抹平 https/ssh/scp/git 协议、大小写、尾部斜杠、.git 后缀，
+// 使注册表 git 字段与本机 remote get-url origin 的任意合法形态可等值比对。
+function normalizeGitUrl(url) {
+  let u = String(url || '').trim().toLowerCase();
+  u = u.replace(/\/+$/, '');
+  u = u.replace(/\.git$/, '');
+  u = u.replace(/^(https?|ssh|git):\/\//, '');
+  u = u.replace(/^git@([^:/]+)[:/]/, '$1/');
+  return u;
+}
+
 function createEvaluator(payload, opts) {
   const env = opts || {};
   const cwd = env.cwd || process.env.PWD || '';
@@ -170,6 +181,92 @@ function createEvaluator(payload, opts) {
       }).trim();
     } catch (e) { gitBranch = ''; }
     return gitBranch;
+  }
+
+  // ---- repo + registry（懒加载，per-payload 缓存；Owner 定案 2026-11-03）----
+  // 会话仓库解析：projectRoot || cwd → git toplevel（worktree/gitdir 场景回退
+  // --git-dir 父目录）→ origin URL 归一化。注册表 = repos.json（id → git 集），
+  // HOOK_REPO_REGISTRY 可覆写。任一环节不可用 → repoInfo=null / 注册表空集，
+  // repo op 恒 false（保守方向：门禁作用域不命中、豁免不生效）+ 一次性 WARN。
+  let repoLoaded = false;
+  let repoInfo = null; // { root, url } | null
+  let registryWarned = false;
+
+  function warnOnce(msg) {
+    if (registryWarned) return;
+    registryWarned = true;
+    if (typeof env.warn === 'function') env.warn(msg);
+  }
+
+  function loadRepo() {
+    if (repoLoaded) return repoInfo;
+    repoLoaded = true;
+    const probeDirs = [...new Set([projectRoot || cwd, cwd].filter(Boolean))];
+    let root = '';
+    for (const dir of probeDirs) {
+      try {
+        root = execSync('git rev-parse --show-toplevel', {
+          cwd: dir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
+        }).trim();
+        if (root) break;
+      } catch (e) {
+        try {
+          const gitdir = execSync('git rev-parse --git-dir', {
+            cwd: dir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
+          }).trim();
+          if (gitdir) { root = path.isAbsolute(gitdir) ? path.dirname(gitdir) : path.resolve(dir, path.dirname(gitdir)); break; }
+        } catch (e2) { /* 下一候选 */ }
+      }
+    }
+    if (!root) return repoInfo = null;
+    let url = '';
+    try {
+      url = execSync('git -C "' + root + '" remote get-url origin', {
+        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
+      }).trim();
+    } catch (e) { /* 无 origin → url 空 */ }
+    return repoInfo = { root, url: normalizeGitUrl(url) };
+  }
+
+  let registryLoaded = false;
+  let registryMap = null; // Map<id, Set<normalized url>>
+  function loadRegistry() {
+    if (registryLoaded) return registryMap;
+    registryLoaded = true;
+    const regPath = env.registryPath || '';
+    if (!regPath) return registryMap = new Map();
+    let raw;
+    try { raw = fs.readFileSync(regPath, 'utf8'); } catch (e) {
+      warnOnce('repo-registry-unavailable path=' + regPath + ' err=' + e.message + ' -> repo op 恒 false');
+      return registryMap = new Map();
+    }
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      warnOnce('repo-registry-parse path=' + regPath + ' err=' + e.message + ' -> repo op 恒 false');
+      return registryMap = new Map();
+    }
+    const map = new Map();
+    for (const r of (Array.isArray(parsed && parsed.repos) ? parsed.repos : [])) {
+      if (!r || typeof r.id !== 'string' || r.id === '') continue;
+      const urls = (Array.isArray(r.git) ? r.git : [r.git]).filter(g => typeof g === 'string' && g !== '');
+      map.set(r.id, new Set(urls.map(normalizeGitUrl)));
+    }
+    return registryMap = map;
+  }
+
+  function matchRepo(node) {
+    const repo = loadRepo();
+    const registry = loadRegistry();
+    if (!repo || !repo.url) return false; // 非 git / 无 origin → 恒 false
+    if (node.registered === true) {
+      for (const urls of registry.values()) if (urls.has(repo.url)) return true;
+      return false;
+    }
+    for (const id of (Array.isArray(node.in) ? node.in : [])) {
+      const urls = registry.get(String(id));
+      if (urls && urls.has(repo.url)) return true;
+    }
+    return false;
   }
 
   let contentLoaded = false;
@@ -351,6 +448,10 @@ function createEvaluator(payload, opts) {
         const re = safeRegex(node.pattern);
         return !!(re && re.test(cwd));
       }
+      case 'repo':
+        // devforge 注册表驱动的仓库门控（Owner 定案 2026-11-03）：凭 origin git
+        // URL 判定会话仓库是否属于注册仓库。非 git/无 origin/注册表不可用 → 恒 false。
+        return matchRepo(node);
       case 'branch': {
         const b = loadBranch();
         if (!b) return false; // 非 git 目录恒 false（M1 注记）
@@ -374,6 +475,8 @@ function createEvaluator(payload, opts) {
       get transcriptAvailable() { loadTranscript(); return transcriptAvailable; },
       branch: loadBranch,
       commentContent: loadCommentContent,
+      repo: loadRepo,
+      registry: loadRegistry,
     },
   };
 }
@@ -383,4 +486,5 @@ module.exports = {
   parseCommand,
   splitShellCommands,
   extractCommands,
+  normalizeGitUrl,
 };

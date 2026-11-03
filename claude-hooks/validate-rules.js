@@ -35,6 +35,8 @@ const M1_OP_POINTS = {
   payload: new Set(HOOK_POINTS),
   // 会话 cwd 正则，零 I/O（读引擎注入的 PWD），全时点可用
   cwd: new Set(HOOK_POINTS),
+  // devforge 注册表仓库判定（origin git URL），I/O 懒加载同 branch，全时点可用
+  repo: new Set(HOOK_POINTS),
 };
 
 // M2 lookup: action op -> set of hook points where the action is protocol-valid.
@@ -48,7 +50,7 @@ const M2_ACTION_POINTS = {
 };
 
 const ACTION_OPS = ['deny', 'context', 'modify', 'run_script'];
-const ATOMIC_OPS = ['event', 'tool', 'command', 'file', 'content', 'used_skill', 'branch', 'payload', 'cwd'];
+const ATOMIC_OPS = ['event', 'tool', 'command', 'file', 'content', 'used_skill', 'branch', 'payload', 'cwd', 'repo'];
 const ONE_SHOT_SCOPES = ['run', 'issue', 'session', 'never'];
 // SEE-1333 D4：{id} 直读形态的窗口 id 来源白名单（run/session 合一后仅两源）
 const ONE_SHOT_IDS = ['run', 'issue'];
@@ -326,6 +328,25 @@ function whenNodeIssues(node) {
     }
     return null;
   }
+  if (node.op === 'repo') {
+    // devforge 注册表仓库判定；in[]（按注册 id 列举）与 registered（任意注册仓）二选一
+    const hasIn = Array.isArray(node.in) && node.in.length > 0;
+    const hasRegistered = node.registered === true;
+    if (hasIn && node.registered !== undefined) {
+      return invalid('when.repo', 'repo.in 与 repo.registered 二选一互斥（M7）');
+    }
+    if (!hasIn && !hasRegistered) {
+      return invalid('when.repo', 'repo 需要非空 in[]（注册 id 列举）或 registered:true');
+    }
+    if (hasIn) {
+      for (const id of node.in) {
+        if (typeof id !== 'string' || id === '') {
+          return invalid('when.repo', 'repo.in 元素必须是非空字符串（repos.json 注册 id）');
+        }
+      }
+    }
+    return null;
+  }
   return invalid('when.op', `未知 op: ${node.op}`);
 }
 
@@ -463,6 +484,10 @@ function transWhen(state, when, ctx) {
   // 语义注记: branch 非 git 目录恒 false（注记非冲突）
   if (S_op.has('branch')) {
     warnings.push('branch op 在非 git 目录恒 false（M1 语义注记）');
+  }
+  // 语义注记: repo 依赖 origin git URL + repos.json 注册表，不可用时恒 false（注记非冲突）
+  if (S_op.has('repo')) {
+    warnings.push('repo op 在非 git/无 origin/注册表不可用时恒 false（M1 语义注记）');
   }
   return ok('WHEN_BOUND', { S_op });
 }
