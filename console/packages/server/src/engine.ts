@@ -76,6 +76,16 @@ export class Engine {
     this.watchers = [];
   }
 
+  /** 热更新：console.config.yaml 变更后重载注册表、重建 chokidar watch 并立即重采（无需重启进程） */
+  async updateConfig(config: ConsoleConfig): Promise<void> {
+    this.config = config;
+    this.collectors = this.resolveCollectors();
+    for (const w of this.watchers) w.close();
+    this.watchers = [];
+    await this.collectNow();
+    if (this.watchEnabled) this.setupWatchers();
+  }
+
   pushAssets(assets: Asset[], collector: string): void {
     const collection: Collection = {
       collector,
