@@ -67,9 +67,6 @@ const state: RegistryState = {
   ],
   relations: [{ from: 'hook-rule:push-guard-master-gate', to: 'hook-script:x.sh', type: 'mounts' }],
   diagnostics: [],
-  driftGroups: [
-    { key: 'kol:CLAUDE.md', workspace: 'kol', basename: 'CLAUDE.md', copies: 3, variants: [{ id: 'instruction:king-of-likes/CLAUDE.md', path: '/a', hash8: 'aaaa1111', lines: 144 }] },
-  ],
   collectorStatus: [{ name: 'test', mode: 'watch', ok: true, ms: 5, assets: 6 }],
   lastCollectedAt: '2026-11-03T00:00:00Z',
 };
@@ -142,13 +139,12 @@ describe('api endpoints', () => {
     expect(body.workspaces[1].residents).toEqual([]);
   });
 
-  it('overview aggregates counts, health, drift', async () => {
+  it('overview aggregates counts, health', async () => {
     const r = await get('/api/overview', TOKEN);
     expect(r.body.total).toBe(10);
     expect(r.body.counts['hook-rule']).toBe(1);
     expect(r.body.counts['deployment']).toBe(1);
     expect(r.body.health.status).toBe('GREEN');
-    expect(r.body.driftGroups[0].workspace).toBe('kol');
   });
 
   it('assets list filters by kind and strips heavy payload fields', async () => {
