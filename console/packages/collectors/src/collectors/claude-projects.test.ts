@@ -59,6 +59,7 @@ describe('claude-projects collector（注册制 + harness 声明制）', () => {
     expect(r.assets.some((a) => a.id === 'skill:project-proj-alpha-demo-skill')).toBe(true);
     expect(r.assets.some((a) => a.id === 'agent:worker')).toBe(true);
     expect(r.assets.find((a) => a.id === 'agent:worker')?.payload).toMatchObject({ subagent: true, project: 'proj-alpha' });
+    expect(r.assets.find((a) => a.id === 'agent:worker')?.provenance).toBe('third-party');
     expect(r.assets.some((a) => a.id === 'hook-script:project-proj-alpha-guard.sh')).toBe(true);
     expect(r.assets.some((a) => a.id === 'mcp-endpoint:project-proj-alpha-grepai')).toBe(true);
     // 磁盘上存在但未注册的目录不产出任何资产
