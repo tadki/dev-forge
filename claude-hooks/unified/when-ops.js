@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 
 const TASK_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -221,7 +221,8 @@ function createEvaluator(payload, opts) {
     if (!root) return repoInfo = null;
     let url = '';
     try {
-      url = execSync('git -C "' + root + '" remote get-url origin', {
+      // execFileSync 直排 argv（不经 shell）：root 来自 git 输出，含引号/元字符也安全
+      url = execFileSync('git', ['-C', root, 'remote', 'get-url', 'origin'], {
         encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
       }).trim();
     } catch (e) { /* 无 origin → url 空 */ }

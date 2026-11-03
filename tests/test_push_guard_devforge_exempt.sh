@@ -38,6 +38,7 @@ ENGINE="$REPO_ROOT/claude-hooks/unified/engine.js"
 GATES_FILE="$REPO_ROOT/claude-hooks/unified/rules.d/push-guard-gates.json"
 VALIDATOR="$REPO_ROOT/claude-hooks/validate-rules.js"
 REG_FILE="$REPO_ROOT/claude-hooks/unified/repos.json"
+RULES_V2="$REPO_ROOT/claude-hooks/unified/rules-v2.json"
 
 KOL_GIT="https://github.com/tadki/KingOfLikes-Godot.git"
 
@@ -58,12 +59,15 @@ run_script() {
   printf '%s' "$out"
 }
 
-# run_engine <workdir> <command> [registry-path-override] → engine stdout（空 = 无 deny）
+# run_engine <workdir> <command> [registry-path-override|DEFAULT] [rules-file] → engine stdout
+# reg=DEFAULT 时不注入 HOOK_REPO_REGISTRY——钉住引擎默认注册表路径解析（生产口径）
 run_engine() {
-  local workdir="$1" cmd="$2" reg="${3:-$REG_FILE}"
+  local workdir="$1" cmd="$2" reg="${3:-$REG_FILE}" rules="${4:-$GATES_FILE}"
+  local envreg=""
+  [ "$reg" != "DEFAULT" ] && envreg="HOOK_REPO_REGISTRY=$reg"
   ( cd "$workdir" && \
     printf '{"tool_name":"Bash","hook_event_name":"PreToolUse","tool_input":{"command":"%s"}}' "$cmd" | \
-    UNIFIED_RULES_FILE="$GATES_FILE" HOOK_REPO_REGISTRY="$reg" HOOK_STATE_DIR="$STATE_DIR" \
+    env UNIFIED_RULES_FILE="$rules" $envreg HOOK_STATE_DIR="$STATE_DIR" \
     HOOK_FIRE_LOG="$FIRE_LOG" HOOK_SCOPE_ID="pgdf-exempt-suite" \
     node "$ENGINE" 2>/dev/null )
 }
@@ -124,6 +128,9 @@ git -C "$FIX/work_kol" remote add origin "$KOL_GIT"
 git init -q -b master "$FIX/work_gqt_ssh"
 git -C "$FIX/work_gqt_ssh" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$FIX/work_gqt_ssh" remote add origin "ssh://git@github.com/tadki/godot-qa-toolkit"
+git init -q -b master "$FIX/work_scp"
+git -C "$FIX/work_scp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$FIX/work_scp" remote add origin "git@github.com:tadki/KingOfLikes-Godot"
 
 # --- Group B: 引擎层 repo 作用域门禁 ---
 echo ""
@@ -161,6 +168,52 @@ if grep -q "repo-registry-unavailable" "$FIRE_LOG" 2>/dev/null; then
 else
   fail "B9b — firelog 缺 repo-registry-unavailable 行"
 fi
+
+# B10（CRITICAL 回归，review PR#51）：生产默认口径——configFile = unified/rules-v2.json
+# 且不注入 HOOK_REPO_REGISTRY，引擎必须经 __dirname 默认解析找到 repos.json → deny。
+# 默认路径若解析错误（曾经 dirname³ 锚错为 <repo>/unified/），此处将放行而非 deny。
+FIRE_B10=$(mktemp -u /tmp/pgdf-b10.XXXXXX)
+B10_OUT=$( cd "$FIX/work_kol" && \
+  printf '{"tool_name":"Bash","hook_event_name":"PreToolUse","tool_input":{"command":"git push origin main"}}' | \
+  env UNIFIED_RULES_FILE="$RULES_V2" HOOK_STATE_DIR="$STATE_DIR" \
+      HOOK_FIRE_LOG="$FIRE_B10" HOOK_SCOPE_ID="pgdf-b10" \
+      node "$ENGINE" 2>/dev/null )
+if printf '%s' "$B10_OUT" | grep -q "permissionDecision.:.deny"; then
+  pass "B10 默认注册表路径（rules-v2 config + 无 env）→ deny"
+else
+  fail "B10 — 默认路径解析失败（期望 deny）: $B10_OUT"
+fi
+if grep -q "repo-registry-unavailable" "$FIRE_B10" 2>/dev/null; then
+  fail "B10b — 默认路径不应产生注册表缺失 WARN"
+else
+  pass "B10b 默认路径无缺失 WARN"
+fi
+
+# B11：scp 形态 origin（git@host:path，无 .git 后缀）→ 归一化命中注册仓
+ea "B11 注册仓 kol scp 形态 master 直推 → deny" "$FIX/work_scp" "git push origin main" deny "禁止直接 push"
+
+# B12：registered:true 端到端 + git 多 URL 数组注册
+C3_RULES=$(mktemp -u /tmp/pgdf-c3.XXXXXX).json
+C3_REG=$(mktemp -u /tmp/pgdf-c3.XXXXXX).json
+cat > "$C3_RULES" <<'EOF'
+{"version":2,"rules":[{"name":"repo-reg-hit","on":{"in":["PreToolUse"]},"when":{"op":"repo","registered":true},"action":[{"op":"context","message":"[reg-hit] registered repo"}]}]}
+EOF
+cat > "$C3_REG" <<EOF
+{"version":1,"repos":[{"id":"kolsplit","git":["$KOL_GIT","git@github.com:tadki:KingOfLikes-Godot"]}]}
+EOF
+C3_HIT=$(run_engine "$FIX/work_kol" "git status" "$C3_REG" "$C3_RULES")
+if printf '%s' "$C3_HIT" | grep -q "additionalContext" && printf '%s' "$C3_HIT" | grep -q "reg-hit"; then
+  pass "B12a registered:true 命中（多 URL 数组注册）→ context 注入"
+else
+  fail "B12a — 期望 reg-hit context，got: $C3_HIT"
+fi
+C3_MISS=$(run_engine "$FIX/work" "git status" "$C3_REG" "$C3_RULES")
+if [ -z "$C3_MISS" ]; then
+  pass "B12b 未注册仓 registered:true 不命中 → 无输出"
+else
+  fail "B12b — 未注册仓意外命中: $C3_MISS"
+fi
+rm -f "$C3_RULES" "$C3_REG"
 
 # --- Group C: validator ---
 echo ""
