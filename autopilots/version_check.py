@@ -355,12 +355,21 @@ def generate_markdown_report(current_version, newer_versions, processing_log):
 # --- Issue comment posting ---
 
 
-def post_report_comment(issue_id, content, dry_run=True):
+def post_report_comment(issue_id, content, dry_run=True, kill_switch=False):
     """Post the report as a comment on the specified issue."""
     if dry_run:
         return {
             "posted": False,
             "reason": "dry_run",
+            "issue_id": issue_id,
+        }
+
+    # §SPEC-007 (SEE-1516 / fingerprint 014f65842d53): kill-switch 门控与
+    # dry_run 同级 —— true 时零发帖（主路径拦停的最危险出口），显式记 reason。
+    if kill_switch:
+        return {
+            "posted": False,
+            "reason": "kill_switch",
             "issue_id": issue_id,
         }
 
@@ -442,8 +451,13 @@ def main():
     # Phase 4: Generate report
     markdown_report = generate_markdown_report(current_version, newer_versions, processing_log)
 
-    # Phase 5: Post comment (if not dry-run)
-    comment_result = post_report_comment(args.issue_id, markdown_report, dry_run=args.dry_run)
+    # Phase 5: Post comment (if not dry-run and kill switch off)
+    comment_result = post_report_comment(
+        args.issue_id,
+        markdown_report,
+        dry_run=args.dry_run,
+        kill_switch=args.kill_switch.lower() == "true",
+    )
     if comment_result.get("posted"):
         processing_log.append(f"phase5_comment_posted: issue={args.issue_id}")
     else:
