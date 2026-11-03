@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { execCapture } from '@forge/collectors';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { watch } from 'chokidar';
 import { loadConfig } from './engine.js';
 import { Engine } from './engine.js';
 import { createHandler } from './app.js';
@@ -10,6 +11,7 @@ import { SSEBus } from './sse.js';
 const consoleRoot = join(import.meta.dirname, '..', '..', '..');
 const configPath = process.env.FORGE_CONSOLE_CONFIG ?? join(consoleRoot, 'console.config.yaml');
 const config = await loadConfig(configPath);
+const configRef = { current: config };
 
 const token = process.env.FORGE_CONSOLE_TOKEN ?? null;
 const port = Number(process.env.FORGE_CONSOLE_PORT ?? 7310);
@@ -75,7 +77,7 @@ const handler = createHandler({
   getState: () => engine.state,
   token,
   sse,
-  workspaces: config.workspaces,
+  workspaces: () => configRef.current.workspaces,
   staticDir: hasStatic ? staticDir : undefined,
   pushAssets: (assets, collector) => engine.pushAssets(assets, collector),
   serviceAction: dryActions
@@ -93,6 +95,26 @@ const handler = createHandler({
 });
 
 await engine.start();
+
+// console.config.yaml 热重载：注册表变更无需重启进程（编辑器原子写会产生连续事件，debounce 800ms）
+let cfgTimer: ReturnType<typeof setTimeout> | null = null;
+const cfgWatch = watch(configPath, { ignoreInitial: true, awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 } });
+cfgWatch.on('all', () => {
+  if (cfgTimer) clearTimeout(cfgTimer);
+  cfgTimer = setTimeout(() => {
+    void (async () => {
+      try {
+        const fresh = await loadConfig(configPath);
+        configRef.current = fresh;
+        await engine.updateConfig(fresh);
+        console.error(`[config] 热重载完成：${configPath}`);
+      } catch (e) {
+        console.error(`[config] 热重载失败（保留旧配置）：${String(e).slice(0, 300)}`);
+      }
+    })();
+  }, 800);
+});
+
 const server = createServer((req, res) => void handler(req, res));
 server.listen(port, bind, () => {
   console.error(`forge-console listening on http://${bind}:${port} (static: ${hasStatic ? 'on' : 'off'}, token: ${token ? 'required' : 'OFF — local mode'}, actions: ${dryActions ? 'DRY-RUN' : 'live systemctl --user'})`);
@@ -100,6 +122,7 @@ server.listen(port, bind, () => {
 
 const shutdown = () => {
   engine.stop();
+  void cfgWatch.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 };
