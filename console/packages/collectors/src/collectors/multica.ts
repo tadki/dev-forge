@@ -223,6 +223,7 @@ export const multicaCollector: Collector = {
             name: `multica runtime · ${rt.custom_name ?? rt.name ?? rt.id.slice(0, 8)}`,
             summary: `provider ${rt.provider ?? '?'} · ${rt.status ?? '?'} · 最后在线 ${rt.last_seen_at ?? '—'}`,
             attach: { level: 'platform', ref: 'multica' },
+            provenance: 'third-party',
             enforcement: 'enforced',
             platforms: ['multica'],
             source: { collector: 'multica', path: 'multica://runtimes/' + rt.id },
