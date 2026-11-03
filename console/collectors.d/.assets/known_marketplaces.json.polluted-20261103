@@ -1,0 +1,26 @@
+{
+  "ecc": {
+    "source": {
+      "source": "git",
+      "url": "https://github.com/affaan-m/everything-claude-code.git"
+    },
+    "installLocation": "/home/jerry/.claude/plugins/marketplaces/ecc",
+    "lastUpdated": "2026-10-15T19:00:37.109Z"
+  },
+  "claude-plugins-official": {
+    "source": {
+      "source": "github",
+      "repo": "anthropics/claude-plugins-official"
+    },
+    "installLocation": "C:\\Users\\Jerry\\.claude\\plugins\\marketplaces\\claude-plugins-official",
+    "lastUpdated": "2026-11-03T01:16:33.751Z"
+  },
+  "everything-claude-code": {
+    "source": {
+      "source": "git",
+      "url": "https://github.com/affaan-m/everything-claude-code.git"
+    },
+    "installLocation": "C:\\Users\\Jerry\\.claude\\plugins\\marketplaces\\everything-claude-code",
+    "lastUpdated": "2026-11-03T01:17:04.269Z"
+  }
+}
