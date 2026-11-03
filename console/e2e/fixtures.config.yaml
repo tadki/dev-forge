@@ -6,7 +6,11 @@ workspaces:
   - id: kol
     name: King of Likes
     projects:
-      - path: /e2e/king-of-likes
+      - git: https://github.com/tadki/KingOfLikes-Godot.git
+        path: /e2e/king-of-likes
+        harnesses: [claude]
+      - git: https://github.com/tadki/godot-mcp.git
+        path: /e2e/king-of-likes/addons/godot_mcp
         harnesses: [claude]
     residents: [Fronti, Revy]
 multica:

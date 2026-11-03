@@ -86,7 +86,7 @@ test('agents: revy shows gated rule', async ({ page }) => {
 test('instructions: tree, render, drift diff', async ({ page }) => {
   await page.goto('/instructions');
   await expect(page.getByText('作用域树').first()).toBeVisible();
-  await expect(page.getByText('king-of-likes/CLAUDE.md').first()).toBeVisible();
+  await page.locator('.tree-node', { hasText: 'king-of-likes/CLAUDE.md' }).first().click();
   await expect(page.getByText('EffectManager').first()).toBeVisible(); // markdown 渲染
   await page.getByRole('button', { name: '源码' }).click();
   await expect(page.locator('pre.code').first()).toContainText('# 基础规范');
@@ -126,9 +126,13 @@ test('skills: first-party vs dependencies tabs', async ({ page }) => {
   await expect(page.getByText('deep-research').first()).toBeVisible();
 });
 
-test('projects: matrix rows, harness badge, workspace grouping', async ({ page }) => {
+test('projects: single project card, git identity, harness badge, workspace grouping', async ({ page }) => {
   await page.goto('/projects');
+  await expect(page.locator('.panel-title', { hasText: '项目' }).first()).toBeVisible();
   await expect(page.getByText('king-of-likes').first()).toBeVisible();
+  await expect(page.getByText('godot_mcp').first()).toBeVisible();
+  await expect(page.getByText('tadki/KingOfLikes-Godot').first()).toBeVisible();
+  await expect(page.getByText('tadki/godot-mcp').first()).toBeVisible();
   await expect(page.getByText('CLAUDE', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('King of Likes').first()).toBeVisible();
 });
