@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { apiGet } from '../api';
 import type { AssetLite } from '../types';
@@ -8,6 +7,7 @@ import type { PageCtx } from './ctx';
 
 interface ProjectPayload {
   path: string;
+  git?: string;
   workspace?: string;
   workspaceName?: string;
   harnesses?: string[];
@@ -39,6 +39,13 @@ function useKind(kind: string) {
   return useQuery({ queryKey: ['assets', kind], queryFn: () => apiGet<{ assets: AssetLite[] }>(`/api/assets?kind=${kind}`) });
 }
 
+/** git URL → owner/repo 短形式；解析失败时原样返回 */
+function gitShort(git?: string): string {
+  if (!git) return '';
+  const m = git.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?\/?$/);
+  return m ? `${m[1]}/${m[2]}` : git;
+}
+
 function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
   const projects = useKind('project');
   const instructions = useKind('instruction');
@@ -67,6 +74,7 @@ function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
       <Panel title="注册信息" en="REGISTRATION">
         <KV
           items={[
+            ['仓库', p.git ? <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{p.git}</span> : <span className="dim">未声明（collector 自动探测 origin）</span>],
             ['路径', <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{p.path ?? '—'}</span>],
             ['工作区', p.workspaceName ?? '—'],
             ['CLAUDE.md', p.hasClaudeMd ? `${p.claudeMdLines ?? '—'} 行${inDrift ? ' · ⚠ 与其他项目副本内容不一致' : ''}` : '未检出'],
@@ -123,7 +131,7 @@ function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
 
 export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
   const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: () => apiGet<{ workspaces: WorkspaceDefLite[] }>('/api/workspaces') });
-  const projects = useQuery({ queryKey: ['assets', 'project'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=project') });
+  const projects = useQuery({ queryKey: ['assets', 'project'], queryFn: () => apiGet<{ assets: AssetLite[] }>(`/api/assets?kind=project`) });
   const [sel, setSel] = useState<SelHarness | null>(null);
   const drift = ctx.overview.data?.driftGroups ?? [];
   const byWs = new Map<string, AssetLite[]>();
@@ -149,7 +157,19 @@ export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
         </span>
       ),
     },
-    { key: 'path', head: 'PATH', render: (r: AssetLite) => <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{(r.payload as ProjectPayload).path}</span> },
+    {
+      key: 'git',
+      head: 'GIT 身份',
+      render: (r: AssetLite) => {
+        const git = (r.payload as ProjectPayload).git;
+        return git ? (
+          <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }} title={git}>{gitShort(git)}</span>
+        ) : (
+          <span className="dim" title="注册未声明 git，且本地未探测到 origin remote">—</span>
+        );
+      },
+    },
+    { key: 'path', head: '本地路径 PATH', render: (r: AssetLite) => <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{(r.payload as ProjectPayload).path}</span> },
     {
       key: 'harness',
       head: 'HARNESS（点击看详情）',
@@ -175,19 +195,18 @@ export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
     },
     {
       key: 'drift',
-      head: 'CLAUDE.md 副本',
+      head: 'CLAUDE.md 同步',
       render: (r: AssetLite) => {
         const p = r.payload as ProjectPayload;
-        if (!p.hasClaudeMd) return <span className="dim">无副本</span>;
+        if (!p.hasClaudeMd) return <span className="dim" title="该项目没有 CLAUDE.md">—</span>;
         const inDrift = drift.some((g) => g.variants.some((v) => v.id === `instruction:${r.name}/CLAUDE.md`));
         return inDrift ? (
-          <Badge tone="warn" title="同名 CLAUDE.md 在多个项目间内容不一致（哈希不同）— 可能改了一份没同步其他份">⚠ 各副本不一致</Badge>
+          <Badge tone="warn" title="这个项目的 CLAUDE.md 与另一项目的同名文件内容不同（哈希不一致）— 改了一份时记得同步另一份">⚠ 不一致</Badge>
         ) : (
-          <Badge tone="ok" title="该副本与其他项目同名副本内容一致，或为唯一副本">✓ 一致</Badge>
+          <Badge tone="ok" title="同名 CLAUDE.md 在其他项目里没有不同版本：要么内容一致，要么只有这一份">✓ 一致</Badge>
         );
       },
     },
-    { key: 'eff', head: '', render: () => <Link className="btn small btn-ghost" to={`/effective`}>effective →</Link> },
   ];
 
   return (
@@ -195,35 +214,36 @@ export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
       <div className="page-head">
         <div>
           <h2>项目</h2>
-          <div className="sub tagline">PROJECTS · 注册制 · {totalProjects} 个项目 · {wsList.length} 工作区 · 点击 harness 徽章查看详情</div>
+          <div className="sub tagline">PROJECTS · 注册制（git 为仓库身份） · {totalProjects} 个项目 · {wsList.length} 工作区 · 点击 harness 徽章查看详情</div>
         </div>
       </div>
 
       {(workspaces.isLoading || projects.isLoading) && <div className="dim tagline">加载中…</div>}
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(560px, 1.5fr) 1fr', alignItems: 'start' }}>
-        <div className="col">
+      <div className="grid" style={{ gridTemplateColumns: '1.8fr 0.75fr', alignItems: 'start' }}>
+        <Panel title="项目" en={`PROJECTS · ${totalProjects} PROJECTS · ${wsList.length} WORKSPACES`}>
           {wsList.map((ws, i) => {
             const members = byWs.get(ws.id) ?? [];
             return (
-              <div key={ws.id}>
-                <SectionHeader
-                  no={String(i + 1).padStart(2, '0')}
-                  title={ws.name}
-                  en={`${ws.id.toUpperCase()} · WORKSPACE · ${members.length}/${ws.projects.length} PROJECTS${ws.residents.length ? ` · ${ws.residents.join(', ')}` : ''}`}
-                />
+              <div key={ws.id} style={i > 0 ? { borderTop: '1px solid var(--khaki)', marginTop: 'var(--sp-3)', paddingTop: 'var(--sp-2)' } : undefined}>
+                <div className="row" style={{ gap: 10, padding: '2px 4px 8px' }}>
+                  <span className="mono dim">{String(i + 1).padStart(2, '0')}</span>
+                  <span style={{ fontWeight: 700 }}>{ws.name}</span>
+                  <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{ws.id}</span>
+                  <span className="dim" style={{ fontSize: 'var(--fs-l1)' }}>
+                    {members.length}/{ws.projects.length} 项目{ws.residents.length ? ` · 常驻 ${ws.residents.join(' / ')}` : ''}
+                  </span>
+                </div>
                 {members.length === 0 ? (
-                  <Panel title={ws.id} en="NO REGISTERED PROJECTS">
-                    <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>
-                      此工作区暂无注册项目 — 在 console.config.yaml 的 workspaces[].projects 中添加仓库路径并声明 harness
-                    </div>
-                  </Panel>
+                  <div className="dim" style={{ fontSize: 'var(--fs-l1)', padding: '0 4px 6px' }}>
+                    此工作区暂无注册项目 — 在 console.config.yaml 的 workspaces[].projects 中登记（git + path + harnesses）
+                  </div>
                 ) : (
                   <DataTable rows={members} cols={cols} />
                 )}
               </div>
             );
           })}
-        </div>
+        </Panel>
         <div className="col">
           {sel ? (
             <HarnessDetail sel={sel} ctx={ctx} />
