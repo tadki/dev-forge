@@ -73,7 +73,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
     setTimeout(() => void queryClient.invalidateQueries({ queryKey: ['assets', 'service'] }), 2500);
   }
 
-  const rows = services.data?.assets ?? [];
+  const rows = [...(services.data?.assets ?? [])].sort((a, b) => a.id.localeCompare(b.id));
   const systemd = rows.filter((s) => s.source.path.startsWith('systemd://'));
   const repoSync = rows.filter((s) => s.id.startsWith('service:repo-sync'));
   const winBridges = rows.filter((s) => s.id.startsWith('service:winbridge'));

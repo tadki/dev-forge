@@ -106,6 +106,7 @@ test('hooks: pipeline, rules table, firelog', async ({ page }) => {
 test('services: tree and detail', async ({ page }) => {
   await page.goto('/services');
   await expect(page.getByText('toolchain-start-all').first()).toBeVisible();
+  await page.locator('tr', { hasText: 'toolchain-start-all' }).first().click();
   await expect(page.getByText('/bin/bash -l /home/jerry/tools/dev-forge/launch/toolchain-start.sh')).toBeVisible();
   await expect(page.getByText('#333').first()).toBeVisible();
 });
