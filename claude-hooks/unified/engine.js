@@ -240,9 +240,12 @@ function runScriptAction(action, payload, logFile, ruleName, hooksDir) {
   }
 }
 
-function evaluateActions(actions, payload, logFile, ruleName, hooksDir) {
+function evaluateActions(actions, payload, logFile, ruleName, hooksDir, opts) {
   // deny 命中为终态短路后续（计划 §2.3）；context 叠加；exit2 通道仅无 deny 时生效
-  const result = { denied: false, denyMessage: '', contextMessages: [], modified: false, protocol: null, exitChannel: null, scriptDeny: false };
+  // opts.skipScripts（§SPEC-017）: 前序规则已 deny 时跳过 run_script 执行 —— 副作用
+  // 短路优先于脚本动态 deny 文案（config deny 文案聚合不受影响）。
+  const skipScripts = !!(opts && opts.skipScripts);
+  const result = { denied: false, denyMessage: '', contextMessages: [], modified: false, protocol: null, exitChannel: null, scriptDeny: false, scriptSkipped: false };
   for (const action of actions) {
     if (!action || typeof action !== 'object') continue;
     if (result.denied) break;
@@ -258,6 +261,12 @@ function evaluateActions(actions, payload, logFile, ruleName, hooksDir) {
         result.modified = true;
         break;
       case 'run_script': {
+        if (skipScripts) {
+          // 已 deny：不执行脚本（零副作用），firelog 留痕可观测
+          firelog(logFile, `[unified-hook] run-script-skipped rule=${ruleName} reason=already_denied (§SPEC-017 side-effect short-circuit)`);
+          result.scriptSkipped = true;
+          break;
+        }
         const r = runScriptAction(action, payload, logFile, ruleName, hooksDir);
         if (r.protocol) { result.protocol = r.protocol; return result; }
         if (r.denied) { result.denied = true; result.denyMessage = r.denyMessage; result.scriptDeny = true; return result; }
@@ -405,7 +414,11 @@ function main() {
     firedNames.push(rule.name);
 
     if (Array.isArray(rule.action) && rule.action.length > 0) {
-      const r = evaluateActions(rule.action, payload, logFile, rule.name, hooksDir);
+      // §SPEC-017 (fingerprint bd8072282067): deny 已定后仍要聚合后续规则文案
+      // （SEE-1330 多规则 deny 全输出），但 run_script 的副作用（git fetch /
+      // multica CLI 等，被拦 push 白付至多 10s）不再执行 —— 求值短路与副作用
+      // 短路分层：config deny/context（纯文案）继续收集，脚本执行跳过。
+      const r = evaluateActions(rule.action, payload, logFile, rule.name, hooksDir, { skipScripts: denied });
       if (r.protocol && !scriptProtocol && !denied) scriptProtocol = r.protocol;
       if (r.denied) {
         denied = true;

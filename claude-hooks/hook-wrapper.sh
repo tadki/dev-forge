@@ -15,6 +15,10 @@ done
 LOG_FILE=$(resolve_hook_fire_log_path 2>/dev/null) || LOG_FILE="$HOME/.claude/hook-fire.log"
 maybe_rotate_hook_fire_log "$LOG_FILE" 2>/dev/null || true
 
-echo "[$TIMESTAMP] [$HOOK_TYPE] alias=$ALIAS tool=$TOOL_NAME" >> "$LOG_FILE" 2>/dev/null || true
+# §SPEC-020 (SEE-1516, fingerprint 81cc9a4a20e6): tool= 字段删除 —— $TOOL_NAME
+# 环境变量 CC 从不注入（工具名在 stdin payload JSON 内），本层读 stdin 会吞掉
+# dispatcher/engine 的输入，原字段恒空属排障误导。工具名观测面由引擎侧
+# firelog（payload 解析后）承载。
+echo "[$TIMESTAMP] [$HOOK_TYPE] alias=$ALIAS" >> "$LOG_FILE" 2>/dev/null || true
 
 exec "$(cd "$(dirname "$0")" && pwd)/dispatcher.sh" "$ALIAS"
