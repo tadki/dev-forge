@@ -22,7 +22,7 @@ import urllib.error
 
 # Add autopilots/ (repo-relative) to path for module imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from multica_helpers import PidFileLock, WorkspaceMutex, multica_stdin_cmd
+from multica_helpers import PidFileLock, WorkspaceMutex, multica_cli, multica_stdin_cmd, utc_now_iso
 from kill_switch import kill_switch_default
 
 # --- Constants ---
@@ -92,22 +92,16 @@ def parse_args():
 
 def parse_current_version():
     """Parse the current multica version from `multica version` output."""
-    try:
-        r = subprocess.run(
-            ["multica", "version"],
-            shell=False, capture_output=True, text=True,
-            encoding=ENCODING, errors=ERRORS, timeout=TIMEOUT,
-        )
-        if r.returncode != 0:
-            return None, r.stderr.strip() if r.stderr else f"exit {r.returncode}"
-        stdout = r.stdout.strip()
-        # Expected: "multica 0.3.8 (commit: e351f898, built: 2026-05-25T12:30:29Z)"
-        m = re.search(r"multica\s+(\d+\.\d+\.\d+)", stdout)
-        if m:
-            return m.group(1), stdout
-        return None, f"unable to parse version from: {stdout}"
-    except Exception as e:
-        return None, str(e)
+    # §SPEC-012 (fingerprint 64e6ca36dc97): 走 multica_cli 统一指数退避重试
+    # (原裸 subprocess 无重试, CLI 瞬时失败直接折算成版本解析失败)。
+    ok, stdout = multica_cli("multica version", timeout=TIMEOUT)
+    if not ok:
+        return None, stdout
+    # Expected: "multica 0.3.8 (commit: e351f898, built: 2026-05-25T12:30:29Z)"
+    m = re.search(r"multica\s+(\d+\.\d+\.\d+)", stdout)
+    if m:
+        return m.group(1), stdout
+    return None, f"unable to parse version from: {stdout}"
 
 
 def semver_to_tuple(version_str):
@@ -411,7 +405,7 @@ def main():
         result = {
             "error": f"Failed to parse current version: {version_output}",
             "processing_log": processing_log,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "timestamp": utc_now_iso(),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
@@ -427,7 +421,7 @@ def main():
             "error": f"Failed to fetch releases: {releases_data}",
             "current_version": current_version,
             "processing_log": processing_log,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "timestamp": utc_now_iso(),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
@@ -474,7 +468,7 @@ def main():
         "kill_switch": args.kill_switch.lower() == "true",
         "issue_id": args.issue_id,
         "comment_posted": comment_result.get("posted", False),
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "timestamp": utc_now_iso(),
     }
 
     result = {
