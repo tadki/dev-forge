@@ -135,30 +135,55 @@ export const servicesCollector: Collector = {
       );
     }
 
-    // Windows 登录桥
-    const bridges: Array<[string, string]> = [
-      ['multica-daemon', '/mnt/c/Users/Jerry/multica-daemon.bat'],
-      ['wsl-keepalive', '/mnt/c/Users/Jerry/wsl-keepalive.ps1'],
+    // Windows 登录桥：状态机制化——实时查计划任务（schtasks），非手工标注
+    // Running→active / Ready→enabled(待触发) / Disabled→legacy / 任务与脚本均不存在→不发行
+    const SCHED = '/mnt/c/Windows/System32/schtasks.exe';
+    const bridges: Array<{ task: string; script: string; label: string }> = [
+      { task: 'multica-daemon', script: '/mnt/c/Users/Jerry/multica-daemon.bat', label: 'multica-daemon' },
+      { task: 'wsl-keepalive', script: '/mnt/c/Users/Jerry/wsl-keepalive.ps1', label: 'wsl-keepalive' },
     ];
-    for (const [name, p] of bridges) {
-      const script = (await readText(p)) ?? (await readText(p.replace(/\.bat$/, '.ps1')));
-      assets.push(
-        asset({
-          id: `service:winbridge-${name}`,
+    for (const b of bridges) {
+      const q = await ctx.exec(SCHED, ['/query', '/tn', b.task], 8000);
+      const taskExists = q.ok || !/cannot find|does not exist/i.test(q.stderr);
+      if (!q.ok && !taskExists) {
+        // 任务不存在：脚本也删了才彻底消失，否则发 dead 行提醒残留
+        const scriptOnly = await readText(b.script);
+        if (scriptOnly === null) continue;
+        assets.push(asset({
+          id: `service:winbridge-${b.label}`,
           kind: 'service',
-          name: `${name} 桥（legacy）`,
-          summary: script ? script.split('\n').join(' ').slice(0, 120) : '脚本不存在',
+          name: `${b.label} 桥（残留脚本）`,
+          summary: '计划任务已删除，脚本残留',
           attach: { level: 'user' },
           provenance: 'third-party',
           enforcement: 'advisory',
-          enabled: script !== null,
-          platforms: ['claude-code'],
-          source: { collector: 'services', path: p },
-          payload: { trigger: 'windows-logon', script: script?.slice(0, 500), active: 'legacy', stale: true },
+          enabled: false,
+          payload: { trigger: 'windows-logon', active: 'dead', stale: true },
+          source: { collector: 'services', path: b.script },
+          tags: ['windows-bridge'],
+        }));
+        continue;
+      }
+      const statusWord = (q.stdout.match(/\b(Running|Ready|Disabled)\b/) ?? [])[1] ?? 'unknown';
+      const activeMap: Record<string, string> = { Running: 'active', Ready: 'enabled', Disabled: 'legacy' };
+      const script = await readText(b.script);
+      assets.push(
+        asset({
+          id: `service:winbridge-${b.label}`,
+          kind: 'service',
+          name: `${b.label} 桥（windows 登录任务 · ${statusWord}）`,
+          summary: script ? script.split('\n').join(' ').slice(0, 120) : '脚本不存在（任务仍在）',
+          attach: { level: 'user' },
+          provenance: 'third-party',
+          enforcement: 'advisory',
+          enabled: statusWord !== 'Disabled',
+          payload: { trigger: 'windows-logon', script: script?.slice(0, 500), active: activeMap[statusWord] ?? 'unknown', taskStatus: statusWord, stale: statusWord === 'Disabled' },
+          source: { collector: 'services', path: `schtasks://${b.task}` },
           tags: ['windows-bridge'],
         })
       );
     }
+
     return { assets, relations, diagnostics };
   },
 };
