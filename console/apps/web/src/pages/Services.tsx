@@ -142,6 +142,17 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
               ]}
             />
           </Panel>
+          <div className="panel-flat" style={{ fontSize: 'var(--fs-l1)' }}>
+            <div className="tagline mb">说明 NOTES</div>
+            常驻树根 = <span className="mono">toolchain-start-all.service</span>（系统级）→ repo-sync ×3 → multica daemon（前台 exec）。{' '}
+            Windows 桥由登录计划任务触发 <span className="mono">wsl.exe</span>；hindsight 不常驻（走 CC hook 按事件触发）。
+            <div className="row mt">
+              <Badge tone="ok">running</Badge>
+              <Badge tone="warn">degraded/paused</Badge>
+              <Badge tone="bad">failed</Badge>
+              <Badge tone="off">disabled/inactive</Badge>
+            </div>
+          </div>
         </div>
         <div className="col">
           <div className="panel">
@@ -172,18 +183,6 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
               </div>
             </>
           )}
-        </div>
-      </div>
-
-      <SectionHeader no="02" title="说明" en="NOTES" />
-      <div className="panel-flat" style={{ fontSize: 'var(--fs-l1)' }}>
-        常驻树根 = <span className="mono">toolchain-start-all.service</span>（系统级）→ repo-sync ×3 → multica daemon（前台 exec）。{' '}
-        Windows 桥由登录计划任务触发 <span className="mono">wsl.exe</span>；hindsight 不常驻（走 CC hook 按事件触发）。
-        <div className="row mt">
-          <Badge tone="ok">running</Badge>
-          <Badge tone="warn">degraded/paused</Badge>
-          <Badge tone="bad">failed</Badge>
-          <Badge tone="off">disabled/inactive</Badge>
         </div>
       </div>
     </div>
