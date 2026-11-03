@@ -119,6 +119,11 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .grid { display: grid; gap: var(--sp-4); }
 .grid-2 { grid-template-columns: 1fr 1fr; }
 .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+.split-rules { display: grid; grid-template-columns: 2fr 1fr; gap: var(--sp-4); align-items: start; }
+.split-rules .table-wrap { height: 520px; }
+.split-rules > aside .panel { height: 520px; display: flex; flex-direction: column; }
+.rule-detail-body { flex: 1; min-height: 0; overflow-y: auto; }
+.kv-tight { grid-template-columns: 88px 1fr; }
 .col { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 .row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 .mt { margin-top: var(--sp-4); }
