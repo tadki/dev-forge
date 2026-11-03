@@ -15,6 +15,7 @@ interface RuleDef {
   blocking?: boolean;
   version_note?: string;
   description?: string;
+  harness?: string[];
 }
 
 function oneShotSummary(os: RuleDef['one_shot']): string {
@@ -87,6 +88,7 @@ export const devforgeHooksCollector: Collector = {
             owner: rule.owner,
             source: { collector: 'devforge-hooks', path: file, locator: `$.rules[?(@.name=="${rule.name}")]`, sha256: undefined },
             payload: {
+              harness: rule.harness ?? ['claude-code'],
               on: rule.on?.in ?? rule.on?.except ?? [],
               onExcept: rule.on?.except,
               agents: rule.agents,

@@ -28,13 +28,7 @@ workspaces:
       - /home/jerry/tools/godot-qa-toolkit
     residents: []
 
-scanRoots:
-  - path: /mnt/d/GodotProjects
-    depth: 3
-  - path: /home/jerry/tools
-    depth: 3
-  - path: /home/jerry
-    depth: 2
+# scanRoots 已废除（2026-11-03）：项目为注册制，仅 workspaces[].projects 中注册的仓库进项目页
 
 multica:
   cli: multica

@@ -11,11 +11,6 @@ export interface WorkspaceDef {
   services?: string[];
 }
 
-export interface ScanRoot {
-  path: string;
-  depth: number;
-}
-
 export interface MulticaConfig {
   cli: string;
   timeoutMs: number;
@@ -38,8 +33,6 @@ export interface ConsoleConfig {
   home: string;
   devforge: string;
   workspaces: WorkspaceDef[];
-  scanRoots: ScanRoot[];
-  excludeNames: string[];
   multica: MulticaConfig;
   hindsight: HindsightConfig;
   reports: ReportsConfig;
@@ -58,15 +51,6 @@ export function defaultConfig(root?: { home?: string; devforge?: string }): Cons
     home,
     devforge,
     workspaces: [],
-    scanRoots: [
-      { path: '/mnt/d/GodotProjects', depth: 3 },
-      { path: join(home, 'tools'), depth: 3 },
-      { path: home, depth: 2 },
-    ],
-    excludeNames: [
-      'node_modules', '.git', '__pycache__', '.godot', '.cache', 'multica_workspaces',
-      'docs/archive', 'claude-hooks/unified/state', '.grepai', '.npm', '.local', 'addons/gut',
-    ],
     multica: { cli: 'multica', timeoutMs: 15000, maxTasksPerAgent: 5, enabled: true },
     hindsight: {
       configPath: join(home, '.hindsight', 'coding-agent.json'),
@@ -126,13 +110,5 @@ export async function loadConfig(path: string, overrides?: { home?: string; devf
   for (const ws of cfg.workspaces) {
     ws.projects = (ws.projects ?? []).map((p) => resolveTilde(p, home));
   }
-  cfg.scanRoots = (cfg.scanRoots ?? base.scanRoots).map((r) =>
-    typeof r === 'string' ? { path: resolveTilde(r, home), depth: 2 } : { ...r, path: resolveTilde(r.path, home) }
-  );
   return cfg;
-}
-
-export function workspaceOf(config: ConsoleConfig, projectPath: string): WorkspaceDef | undefined {
-  const norm = projectPath.replace(/\/+$/, '');
-  return config.workspaces.find((ws) => ws.projects.some((p) => p.replace(/\/+$/, '') === norm));
 }

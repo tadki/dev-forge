@@ -81,6 +81,10 @@ beforeAll(async () => {
     getState: () => state,
     token: TOKEN,
     sse,
+    workspaces: [
+      { id: 'kol', name: 'King of Likes', projects: ['/mnt/d/GodotProjects/king-of-likes'], residents: ['Fronti'] },
+      { id: 'devforge', name: 'dev-forge 工具链', projects: [] },
+    ],
     pushAssets: (a) => pushed.push(...a),
     serviceAction: async (unit, action) => {
       actionLog.push({ unit, action });
@@ -120,6 +124,19 @@ describe('auth', () => {
 });
 
 describe('api endpoints', () => {
+  it('workspaces returns the registration registry with defaults for optional fields', async () => {
+    const { status, body } = await get('/api/workspaces', TOKEN);
+    expect(status).toBe(200);
+    expect(body.workspaces).toHaveLength(2);
+    expect(body.workspaces[0]).toEqual({
+      id: 'kol',
+      name: 'King of Likes',
+      projects: ['/mnt/d/GodotProjects/king-of-likes'],
+      residents: ['Fronti'],
+    });
+    expect(body.workspaces[1].residents).toEqual([]);
+  });
+
   it('overview aggregates counts, health, drift', async () => {
     const r = await get('/api/overview', TOKEN);
     expect(r.body.total).toBe(9);

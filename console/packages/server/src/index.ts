@@ -75,6 +75,7 @@ const handler = createHandler({
   getState: () => engine.state,
   token,
   sse,
+  workspaces: config.workspaces,
   staticDir: hasStatic ? staticDir : undefined,
   pushAssets: (assets, collector) => engine.pushAssets(assets, collector),
   serviceAction: dryActions

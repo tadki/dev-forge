@@ -6,6 +6,7 @@ import { Badge, DataTable, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
 
 interface RulePayload {
+  harness?: string[];
   on: string[];
   whenHuman: string;
   oneShot: string;
@@ -13,6 +14,8 @@ interface RulePayload {
   overlay: boolean;
   agents?: { include?: string[]; except?: string[] };
 }
+
+const HARNESS_LABELS: Record<string, string> = { 'claude-code': 'Claude Code' };
 
 export function HooksPage(_props: { ctx: PageCtx }) {
   const rules = useQuery({ queryKey: ['assets', 'hook-rule'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=hook-rule') });
@@ -54,6 +57,21 @@ export function HooksPage(_props: { ctx: PageCtx }) {
         onRowClick={(r) => setSelRule(r.id)}
         cols={[
           { key: 'name', head: '名称 NAME', render: (r) => <span className="mono">{r.name}</span> },
+          {
+            key: 'harness',
+            head: '生效 HARNESS',
+            render: (r) => {
+              const hs = (r.payload as RulePayload).harness ?? [];
+              if (!hs.length) return <span className="dim">—</span>;
+              return (
+                <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {hs.map((h) => (
+                    <Badge key={h} tone="plain" title={`生效 harness：${h}`}>{HARNESS_LABELS[h] ?? h}</Badge>
+                  ))}
+                </span>
+              );
+            },
+          },
           { key: 'on', head: '事件 ON', render: (r) => <span className="mono dim">{((r.payload as RulePayload).on ?? []).join(',')}</span> },
           {
             key: 'agent',

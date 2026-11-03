@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Asset } from '@forge/schema';
-import type { RegistryState } from '@forge/collectors';
+import type { RegistryState, WorkspaceDef } from '@forge/collectors';
 import { buildMigrationView, resolveEffective } from '@forge/collectors';
 import { validateCollection } from '@forge/schema';
 import { checkAuth } from './auth.js';
@@ -13,6 +13,8 @@ export interface AppDeps {
   sse: SSEBus;
   staticDir?: string;
   pushAssets: (assets: Asset[], collector: string) => void;
+  /** workspace 注册表（console.config.yaml 权威）；项目页层级与顶栏过滤的数据源 */
+  workspaces: WorkspaceDef[];
   /** 服务启停（只允许注册表内 first-party · user 级单元）；注入以便测试/dry-run */
   serviceAction: (unit: string, action: 'start' | 'stop' | 'restart') => Promise<{ ok: boolean; output: string }>;
   onAfterAction?: () => void;
@@ -59,6 +61,12 @@ export function createHandler(deps: AppDeps) {
       }
 
       const state = deps.getState();
+
+      if (path === '/api/workspaces') {
+        return json(res, 200, {
+          workspaces: deps.workspaces.map((ws) => ({ id: ws.id, name: ws.name, projects: ws.projects ?? [], residents: ws.residents ?? [] })),
+        });
+      }
 
       if (path === '/api/events' && req.method === 'GET') {
         deps.sse.subscribe(res);
