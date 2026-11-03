@@ -84,10 +84,10 @@ function ok(state, carried) {
 function transGovernance(state, rule) {
   if (state !== 'ON_BOUND') return invalid('owner', `transGovernance called in state ${state}`);
   if (typeof rule.owner !== 'string' || rule.owner === '') {
-    return invalid('owner', '缺少非空字符串 owner（rules-v2.json 全规则须登记 owner）');
+    return invalid('owner', '缺少非空字符串 owner（全规则须登记 owner：rules-v2.json 与 rules.d/*.json 同面校验）');
   }
   if (typeof rule.blocking !== 'boolean') {
-    return invalid('blocking', '缺少 boolean blocking（rules-v2.json 全规则须登记阻断属性）');
+    return invalid('blocking', '缺少 boolean blocking（全规则须登记阻断属性：rules-v2.json 与 rules.d/*.json 同面校验）');
   }
   return ok('ON_BOUND');
 }
@@ -690,13 +690,23 @@ function main(argv) {
   const fileArgs = [];
   let hasScopeId = true;
   let semantic = true;
+  // §SPEC-016 (SEE-1516 / fingerprint 1cea1546e8dd): governance 校验面从
+  // 「仅 rules-v2.json」扩为「生产规则文件」= rules-v2.json + rules.d/*.json
+  // （按路径判定；临时/fixture 文件不受治理面影响，P0 历史契约保留）。
+  // 显式旗标：--governance 强制开（任意路径），--no-governance 豁免。
+  // 取舍说明：选 CLI 同置开关而非引擎 admit 补检——admit 是 fail-soft skip
+  // （无 owner 规则被静默跳过，治理缺陷不可见），CLI 置 governance 让缺陷
+  // 变为显式校验失败（CI 红线，tests/test_hooks_5_1_registration.sh 消费）。
+  let govOverride = null;
   for (const arg of argv) {
     if (arg === '--no-scope-id') hasScopeId = false;
     else if (arg === '--no-semantic') semantic = false;
+    else if (arg === '--governance') govOverride = true;
+    else if (arg === '--no-governance') govOverride = false;
     else fileArgs.push(arg);
   }
   if (fileArgs.length === 0) {
-    process.stderr.write('用法: node validate-rules.js <rules.json> [--no-scope-id] [--no-semantic]\n');
+    process.stderr.write('用法: node validate-rules.js <rules.json> [--no-scope-id] [--no-semantic] [--governance|--no-governance]\n');
     process.exit(2);
   }
   const fs = require('fs');
@@ -710,7 +720,14 @@ function main(argv) {
       exitCode = 1;
       continue;
     }
-    const result = validateConfig(config, { hasScopeId, semantic, governance: require('path').basename(file) === 'rules-v2.json' });
+    const pathMod = require('path');
+    const productionRuleFile = pathMod.basename(file) === 'rules-v2.json'
+      || file.split(pathMod.sep).includes('rules.d');
+    const result = validateConfig(config, {
+      hasScopeId,
+      semantic,
+      governance: govOverride !== null ? govOverride : productionRuleFile,
+    });
     for (const r of result.reports) {
       if (r.valid) {
         process.stdout.write(`VALID   ${r.rule}${r.warnings.length ? '  ⚠ ' + r.warnings.join(' | ') : ''}\n`);

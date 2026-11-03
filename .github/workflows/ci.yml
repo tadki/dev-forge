@@ -56,6 +56,11 @@ jobs:
         run: bash tests/test_v2_unified_engine_p0.sh
       - name: validator
         run: node --test tests/validator.test.mjs
+      # §SPEC-019 (SEE-1516 substep D4, fingerprint e109d91186c4): hooks 治理
+      # 登记一致性断言 —— rules-v2/rules.d 全规则 governance 校验 + 规则名 ⊆
+      # 指南 §5.1 表（故意删行 → CI 红）。
+      - name: hooks 5.1 registration gate
+        run: bash tests/test_hooks_5_1_registration.sh
       - name: pytest full suite
         run: python3 -m pytest tests/ -q
       - name: run_all shell suites
