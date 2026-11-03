@@ -62,6 +62,8 @@ const MODIFY_TARGET_OPS = new Set(['tool', 'cmd-cur', 'file']);
 
 function variantOf(node) {
   if (!node || typeof node !== 'object') return null;
+  // SEE-1516 §SPEC-022：push_refspec 与 cmd-cur 同为 PreToolUse 载荷命令树操作
+  if (node.op === 'push_refspec') return 'cmd-cur';
   if (node.op === 'command') return node.scope === 'run' ? 'cmd-run' : 'cmd-cur';
   return node.op;
 }
@@ -256,7 +258,17 @@ function whenNodeIssues(node) {
     return null;
   }
   if (!ATOMIC_OPS.includes(node.op)) {
-    return invalid('when.op', `未知 op: ${node.op}（词表 §3：${ATOMIC_OPS.join('/')} + all/any/not）`);
+    // SEE-1516 §SPEC-022：push_refspec 为 git-push refspec 结构化判定 op
+    if (node.op === 'push_refspec') {
+      if (node.kind !== 'force' && node.kind !== 'master') {
+        return invalid('when.push_refspec', 'push_refspec 需要 kind ∈ {force, master}');
+      }
+      if (node.exclude !== undefined && typeof node.exclude !== 'string') {
+        return invalid('when.push_refspec', 'push_refspec.exclude 必须是字符串正则');
+      }
+      return null;
+    }
+    return invalid('when.op', `未知 op: ${node.op}（词表 §3：${ATOMIC_OPS.join('/')} + all/any/not + push_refspec）`);
   }
   if (node.op === 'event') {
     if (Array.isArray(node.in) && Array.isArray(node.except)) {

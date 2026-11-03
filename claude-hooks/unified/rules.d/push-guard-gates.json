@@ -21,35 +21,9 @@
             ]
           },
           {
-            "op": "command",
-            "scope": "current",
-            "pattern": "git(\\s+-[A-Za-z-]+)*\\s+push(\\s|$)",
+            "op": "push_refspec",
+            "kind": "master",
             "exclude": "(^|\\s)--delete(\\s|$)|(^|\\s)-d(\\s|$)"
-          },
-          {
-            "op": "any",
-            "args": [
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": ":refs/heads/master"
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": ":refs/heads/main"
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": " master"
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": " main"
-              }
-            ]
           },
           {
             "op": "repo",
@@ -95,45 +69,9 @@
             ]
           },
           {
-            "op": "command",
-            "scope": "current",
-            "pattern": "git(\\s+-[A-Za-z-]+)*\\s+push(\\s|$)",
+            "op": "push_refspec",
+            "kind": "force",
             "exclude": "(^|\\s)--delete(\\s|$)|(^|\\s)-d(\\s|$)"
-          },
-          {
-            "op": "any",
-            "args": [
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": "--force-with-lease"
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": "--force"
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": " -f "
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": " -fn"
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": " -uf"
-              },
-              {
-                "op": "command",
-                "scope": "current",
-                "keyword": " -fo"
-              }
-            ]
           },
           {
             "op": "repo",
