@@ -31,6 +31,9 @@
         "path": "/e2e/king-of-likes"
       },
       "payload": {
+        "harnesses": [
+          "claude"
+        ],
         "path": "/e2e/king-of-likes",
         "workspace": "kol",
         "workspaceName": "King of Likes",
@@ -74,6 +77,9 @@
         "path": "/e2e/s5recheck-worktree"
       },
       "payload": {
+        "harnesses": [
+          "claude"
+        ],
         "path": "/e2e/s5recheck-worktree",
         "workspace": "kol",
         "hasClaudeMd": true,
@@ -343,6 +349,7 @@
         "harness": [
           "claude-code"
         ],
+        "whenKind": "ops",
         "on": [
           "PreToolUse"
         ],
@@ -393,6 +400,7 @@
         "harness": [
           "claude-code"
         ],
+        "whenKind": "none",
         "on": [
           "PreToolUse"
         ],

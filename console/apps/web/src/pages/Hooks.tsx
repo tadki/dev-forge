@@ -7,10 +7,11 @@ import type { PageCtx } from './ctx';
 
 interface RulePayload {
   harness?: string[];
+  whenKind?: 'none' | 'payload' | 'ops' | 'mixed';
   on: string[];
   whenHuman: string;
   oneShot: string;
-  actions: Array<{ op: string; message?: string }>;
+  actions: Array<{ op: string; message?: string; path?: string }>;
   overlay: boolean;
   agents?: { include?: string[]; except?: string[] };
 }
@@ -56,7 +57,16 @@ export function HooksPage(_props: { ctx: PageCtx }) {
         selectedId={selRule ?? undefined}
         onRowClick={(r) => setSelRule(r.id)}
         cols={[
-          { key: 'name', head: '名称 NAME', render: (r) => <span className="mono">{r.name}</span> },
+          {
+            key: 'name',
+            head: '名称 NAME',
+            render: (r) => (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Badge tone={r.enabled ? 'ok' : 'off'} title={r.enabled ? '已启用' : '已停用'}>{r.enabled ? '●' : '○'}</Badge>
+                <span className="mono">{r.name}</span>
+              </span>
+            ),
+          },
           {
             key: 'harness',
             head: '生效 HARNESS',
@@ -78,20 +88,48 @@ export function HooksPage(_props: { ctx: PageCtx }) {
             head: 'AGENT 门控',
             render: (r) => {
               const g = (r.payload as RulePayload).agents;
-              return g?.include ? <Badge tone="ok">{g.include.join(',')}</Badge> : g?.except ? <Badge tone="warn">except {g.except.join(',')}</Badge> : <span className="dim">全部</span>;
+              return g?.include ? <Badge tone="ok">{g.include.join(',')}</Badge> : g?.except ? <Badge tone="warn">except {g.except.join(',')}</Badge> : <Badge title="无 agent 门控">all</Badge>;
             },
           },
-          { key: 'when', head: '条件 WHEN（投影）', render: (r) => <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{(r.payload as RulePayload).whenHuman}</span> },
+          {
+            key: 'when',
+            head: '条件 WHEN（投影）',
+            render: (r) => {
+              const kind = (r.payload as RulePayload).whenKind;
+              const badges = kind === 'payload' ? [['PAYLOAD', 'off'] as const] : kind === 'ops' ? [['OPS', 'plain'] as const] : kind === 'mixed' ? ([['PAYLOAD', 'off'], ['OPS', 'plain']] as const) : [];
+              return (
+                <>
+                  {badges.map(([b, tone]) => (
+                    <Badge key={b} tone={tone} title={b === 'PAYLOAD' ? '条件读 hook payload（零 I/O）' : '条件使用引擎算子（command/file/content 等）'}>{b}</Badge>
+                  ))}{' '}
+                  <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{(r.payload as RulePayload).whenHuman}</span>
+                </>
+              );
+            },
+          },
           {
             key: 'action',
             head: '动作 ACTION',
+            width: '24%',
             render: (r) => {
-              const ops = (r.payload as RulePayload).actions?.map((a) => a.op) ?? [];
-              return ops.includes('deny') ? <Badge tone="bad">DENY</Badge> : ops.includes('context') ? <Badge tone="plain">CONTEXT</Badge> : <Badge>{ops.join('+')}</Badge>;
+              const acts = (r.payload as RulePayload).actions ?? [];
+              const ops = acts.map((a) => a.op);
+              const label = ops.map((o) => (o === 'run_script' ? 'SCRIPT' : o.toUpperCase())).join('+');
+              const detail = acts
+                .map((a) => (a.op === 'run_script' ? (a.path ?? '') : (a.message ?? '').split('\n')[0]))
+                .filter(Boolean)
+                .join(' · ')
+                .slice(0, 60);
+              const badge = ops.includes('deny') ? <Badge tone="bad">{label}</Badge> : ops.includes('context') ? <Badge tone="plain">{label}</Badge> : <Badge>{label}</Badge>;
+              return (
+                <>
+                  {badge}{' '}
+                  {detail && <span className="dim" style={{ fontSize: 'var(--fs-label)' }}>{detail}</span>}
+                </>
+              );
             },
           },
           { key: 'oneshot', head: '单发 ONE-SHOT', render: (r) => <span className="mono dim">{(r.payload as RulePayload).oneShot}</span> },
-          { key: 'enabled', head: '启用', render: (r) => <Badge tone={r.enabled ? 'ok' : 'off'}>{r.enabled ? '●' : '○'}</Badge> },
         ]}
       />
 
