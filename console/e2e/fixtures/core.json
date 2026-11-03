@@ -340,6 +340,9 @@
         "path": "/e2e/rules-v2.json"
       },
       "payload": {
+        "harness": [
+          "claude-code"
+        ],
         "on": [
           "PreToolUse"
         ],
@@ -387,6 +390,9 @@
         "path": "/e2e/rules-v2.json"
       },
       "payload": {
+        "harness": [
+          "claude-code"
+        ],
         "on": [
           "PreToolUse"
         ],
