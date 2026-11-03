@@ -7,7 +7,7 @@ Type=simple
 WorkingDirectory=%h/tools/dev-forge/console
 EnvironmentFile=%h/.config/forge-console/env
 ExecStart=/usr/bin/node %h/tools/dev-forge/console/packages/server/dist/index.js
-Restart=on-failure
+Restart=always  # on-failure 不救 TERM 干净退出（被误杀即失联）
 RestartSec=3
 
 # 安全收敛：只读采集所需的最小权限
