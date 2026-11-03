@@ -9,15 +9,94 @@ interface RulePayload {
   harness?: string[];
   whenKind?: 'none' | 'payload' | 'ops' | 'mixed';
   on: string[];
+  onExcept?: string[];
   whenHuman: string;
   oneShot: string;
+  when?: unknown;
   actions: Array<{ op: string; message?: string; path?: string }>;
   overlay: boolean;
+  blocking?: boolean;
+  versionNote?: string;
+  fileDeclaredScope?: string;
   agents?: { include?: string[]; except?: string[] };
   repoGating?: { in?: string[]; registered?: boolean };
 }
 
 const HARNESS_LABELS: Record<string, string> = { 'claude-code': 'Claude Code' };
+
+function RuleDetail({ rule }: { rule: AssetLite }) {
+  const p = rule.payload as RulePayload;
+  return (
+    <Panel title={`规则详情 · ${rule.name}`} en="RULE DETAIL">
+      <div className="rule-detail-body">
+      <div className="kv kv-tight">
+        <dt>状态</dt>
+        <dd><Badge tone={rule.enabled ? 'ok' : 'off'}>{rule.enabled ? '启用' : '停用'}</Badge></dd>
+        <dt>HARNESS</dt>
+        <dd>
+          {p.harness?.length
+            ? p.harness.map((h) => <Badge key={h} tone="plain" title={`生效 harness：${h}`}>{HARNESS_LABELS[h] ?? h}</Badge>)
+            : <span className="dim">—</span>}
+        </dd>
+        <dt>事件 ON</dt>
+        <dd className="mono dim">{(p.on ?? []).join(',')}{p.onExcept?.length ? ` （除 ${p.onExcept.join('/')}）` : ''}</dd>
+        <dt>AGENT 门控</dt>
+        <dd>
+          {p.agents?.include
+            ? <span className="mono">{p.agents.include.join(', ')}</span>
+            : p.agents?.except
+              ? <span className="mono dim">except {p.agents.except.join(', ')}</span>
+              : <span className="dim">不限</span>}
+        </dd>
+        <dt>REPO 门控</dt>
+        <dd>
+          {p.repoGating?.in?.length
+            ? <span className="mono">{p.repoGating.in.join(', ')}</span>
+            : p.repoGating?.registered
+              ? '已注册仓库'
+              : <span className="dim">不限仓库</span>}
+        </dd>
+        <dt>单发</dt>
+        <dd className="mono dim">{p.oneShot}</dd>
+        {p.blocking && (
+          <>
+            <dt>阻断</dt>
+            <dd><Badge tone="bad" title="DENY 动作会拦截工具调用">BLOCKING</Badge></dd>
+          </>
+        )}
+        {rule.owner && (
+          <>
+            <dt>Owner</dt>
+            <dd className="mono dim">{rule.owner}</dd>
+          </>
+        )}
+      </div>
+      <div className="kv kv-tight" style={{ marginTop: 8 }}>
+        <dt>when 投影</dt>
+        <dd>{p.whenHuman}</dd>
+        <dt>来源</dt>
+        <dd className="dim">{p.overlay ? 'rules.d 覆盖层' : 'rules-v2 主表'}</dd>
+        {p.versionNote && (
+          <>
+            <dt>版本注记</dt>
+            <dd className="dim">{p.versionNote}</dd>
+          </>
+        )}
+        {p.fileDeclaredScope && (
+          <>
+            <dt>文件级作用域</dt>
+            <dd className="dim">{p.fileDeclaredScope}</dd>
+          </>
+        )}
+        <dt>源文件</dt>
+        <dd className="mono dim">{rule.source.path}</dd>
+      </div>
+      <pre className="code">{JSON.stringify(p.actions, null, 2)}</pre>
+      <pre className="code">{JSON.stringify(p.when, null, 2)}</pre>
+      </div>
+    </Panel>
+  );
+}
 
 export function HooksPage(_props: { ctx: PageCtx }) {
   const rules = useQuery({ queryKey: ['assets', 'hook-rule'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=hook-rule') });
@@ -52,7 +131,8 @@ export function HooksPage(_props: { ctx: PageCtx }) {
         ))}
       </div>
 
-      <SectionHeader no="01" title="规则表" en={`RULES · ${ruleRows.length} · when 条件 → 人话投影`} />
+      <SectionHeader no="01" title="规则表" en={`RULES · ${ruleRows.length} · 点击行 → 右栏详情`} />
+      <div className="split-rules">
       <DataTable
         rows={ruleRows}
         selectedId={selRule ?? undefined}
@@ -104,16 +184,16 @@ export function HooksPage(_props: { ctx: PageCtx }) {
           },
           {
             key: 'when',
-            head: '条件 WHEN（投影）',
+            head: '条件 WHEN',
             render: (r) => {
               const kind = (r.payload as RulePayload).whenKind;
               const badges = kind === 'payload' ? [['PAYLOAD', 'off'] as const] : kind === 'ops' ? [['OPS', 'plain'] as const] : kind === 'mixed' ? ([['PAYLOAD', 'off'], ['OPS', 'plain']] as const) : [];
+              if (!badges.length) return <span className="dim">—</span>;
               return (
                 <>
                   {badges.map(([b, tone]) => (
                     <Badge key={b} tone={tone} title={b === 'PAYLOAD' ? '条件读 hook payload（零 I/O）' : '条件使用引擎算子（command/file/content 等）'}>{b}</Badge>
-                  ))}{' '}
-                  <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{(r.payload as RulePayload).whenHuman}</span>
+                  ))}
                 </>
               );
             },
@@ -121,28 +201,27 @@ export function HooksPage(_props: { ctx: PageCtx }) {
           {
             key: 'action',
             head: '动作 ACTION',
-            width: '24%',
             render: (r) => {
               const acts = (r.payload as RulePayload).actions ?? [];
               const ops = acts.map((a) => a.op);
+              if (!ops.length) return <span className="dim">—</span>;
               const label = ops.map((o) => (o === 'run_script' ? 'SCRIPT' : o.toUpperCase())).join('+');
-              const detail = acts
-                .map((a) => (a.op === 'run_script' ? (a.path ?? '') : (a.message ?? '').split('\n')[0]))
-                .filter(Boolean)
-                .join(' · ')
-                .slice(0, 60);
-              const badge = ops.includes('deny') ? <Badge tone="bad">{label}</Badge> : ops.includes('context') ? <Badge tone="plain">{label}</Badge> : <Badge>{label}</Badge>;
-              return (
-                <>
-                  {badge}{' '}
-                  {detail && <span className="dim" style={{ fontSize: 'var(--fs-label)' }}>{detail}</span>}
-                </>
-              );
+              return ops.includes('deny') ? <Badge tone="bad">{label}</Badge> : ops.includes('context') ? <Badge tone="plain">{label}</Badge> : <Badge>{label}</Badge>;
             },
           },
           { key: 'oneshot', head: '单发 ONE-SHOT', render: (r) => <span className="mono dim">{(r.payload as RulePayload).oneShot}</span> },
         ]}
       />
+      <aside>
+        {selected ? (
+          <RuleDetail rule={selected} />
+        ) : (
+          <Panel title="规则详情" en="RULE DETAIL">
+            <div className="dim">点击左侧规则行，这里显示该条钩子的完整定义</div>
+          </Panel>
+        )}
+      </aside>
+      </div>
 
       <div className="grid grid-2 mt">
         <Panel title="挂载脚本" en={`MOUNTED SCRIPTS · ${scripts.data?.assets.length ?? 0}`}>
@@ -172,22 +251,6 @@ export function HooksPage(_props: { ctx: PageCtx }) {
           </div>
         </section>
       </div>
-
-      {selected && (
-        <>
-          <SectionHeader no="02" title={`规则详情 · ${selected.name}`} en="RULE DETAIL" />
-          <div className="panel-flat">
-            <pre className="code" style={{ maxHeight: 200 }}>{JSON.stringify((selected.payload as RulePayload).actions, null, 2)}</pre>
-            <div className="kv" style={{ marginTop: 8 }}>
-              <dt>源文件</dt><dd className="mono dim">{selected.source.path}</dd>
-              <dt>when 原文</dt>
-              <dd>
-                <pre className="code">{JSON.stringify((selected.payload as unknown as { when: unknown }).when, null, 2)}</pre>
-              </dd>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 }
