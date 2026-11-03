@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../api';
-import type { AssetLite, DriftGroup } from '../types';
-import { Badge, DiffView, Panel, SectionHeader } from '../components/ui';
+import type { AssetLite } from '../types';
+import { Badge, Panel } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import type { PageCtx } from './ctx';
 
@@ -13,7 +13,6 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
   });
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<'render' | 'source' | 'meta'>('render');
-  const [diffWith, setDiffWith] = useState<string | null>(null);
 
   const selId = selected ?? list.data?.assets[0]?.id ?? null;
   const detail = useQuery({
@@ -22,7 +21,6 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
     enabled: !!selId,
   });
 
-  const drift: DriftGroup[] = ctx.overview.data?.driftGroups ?? [];
   const tree = useMemo(() => {
     const groups = new Map<string, AssetLite[]>();
     for (const a of list.data?.assets ?? []) {
@@ -33,46 +31,23 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
   }, [list.data]);
 
   const payload = (detail.data?.asset.payload ?? {}) as { content?: string; lines?: number; headings?: Array<{ level: number; text: string }>; lang?: string; contentHash?: string };
-  const diffTarget = useQuery({
-    queryKey: ['asset', diffWith],
-    queryFn: () => apiGet<{ asset: AssetLite }>(`/api/assets/${encodeURIComponent(diffWith ?? '')}`),
-    enabled: !!diffWith,
-  });
-
-  const diffLines = useMemo(() => {
-    if (!diffWith || !diffTarget.data?.asset) return null;
-    const mine = (payload.content ?? '').split('\n');
-    const other = ((diffTarget.data.asset.payload as { content?: string }).content ?? '').split('\n');
-    const out: string[] = [];
-    const n = Math.max(mine.length, other.length);
-    for (let i = 0; i < n && out.length < 80; i++) {
-      if (mine[i] !== other[i]) {
-        out.push(`- ${mine[i] ?? ''}`);
-        out.push(`+ ${other[i] ?? ''}`);
-      }
-    }
-    return out.length ? out : ['（完全一致）'];
-  }, [diffWith, diffTarget.data, payload.content]);
-
-  const driftGroupOf = drift.find((g) => g.variants.some((v) => v.id === selId));
 
   return (
     <div>
       <div className="page-head">
         <div>
           <h2>指令库</h2>
-          <div className="sub tagline">INSTRUCTIONS · {list.data?.assets.length ?? 0} 份 · 作用域树 + 渲染 + 漂移对比</div>
+          <div className="sub tagline">INSTRUCTIONS · {list.data?.assets.length ?? 0} 份 · 作用域树 + 渲染</div>
         </div>
       </div>
-      <div className="grid" style={{ gridTemplateColumns: '230px 1fr 1fr' }}>
+      <div className="grid" style={{ gridTemplateColumns: '230px 1fr' }}>
         <Panel title="作用域树" en="SCOPE TREE">
           {tree.map(([scope, items]) => (
             <div key={scope} style={{ marginBottom: 8 }}>
               <div className="tagline" style={{ color: 'var(--text-sub)' }}>{scope}</div>
               {items.map((a) => (
-                <div key={a.id} className={`tree-node ${a.id === selId ? 'sel' : ''}`} onClick={() => { setSelected(a.id); setDiffWith(null); }}>
+                <div key={a.id} className={`tree-node ${a.id === selId ? 'sel' : ''}`} onClick={() => setSelected(a.id)}>
                   {a.name}
-                  {drift.some((g) => g.variants.some((v) => v.id === a.id)) && <span className="badge badge-warn" style={{ marginLeft: 4 }}>漂移</span>}
                 </div>
               ))}
             </div>
@@ -102,38 +77,6 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
             </dl>
           )}
         </Panel>
-
-        <div className="col">
-          <Panel title="漂移对比" en={`DRIFT · ${drift.length} 组`}>
-            {drift.length === 0 && <div className="dim">无漂移（或全部一致）</div>}
-            {drift.map((g) => (
-              <div key={g.key} className="panel-flat" style={{ marginBottom: 8 }}>
-                <div className="row">
-                  <span className="tagline">{g.workspace} / {g.basename}</span>
-                  <Badge tone="warn">{g.variants.length} 变体 / {g.copies} 副本</Badge>
-                </div>
-                {g.variants.map((v) => (
-                  <div key={v.id} className="row" style={{ marginTop: 4 }}>
-                    <span className="mono dim">{v.hash8}</span>
-                    <span className="mono">{v.lines} 行</span>
-                    <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{v.path}</span>
-                    {v.id !== selId && (
-                      <button className="btn small btn-ghost" onClick={() => setDiffWith(v.id)}>与选中对比</button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </Panel>
-          {driftGroupOf && diffLines && (
-            <>
-              <SectionHeader no="≠" title="行级差异" en={`DIFF vs ${diffWith?.split(':')[1] ?? ''}`} />
-              <div className="panel-flat" style={{ maxHeight: 300, overflow: 'auto' }}>
-                <DiffView lines={diffLines} />
-              </div>
-            </>
-          )}
-        </div>
       </div>
     </div>
   );

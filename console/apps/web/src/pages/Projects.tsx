@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { apiGet } from '../api';
 import type { AssetLite } from '../types';
 import { Badge, DataTable, KV, Panel, SectionHeader } from '../components/ui';
-import type { PageCtx } from './ctx';
 
 interface ProjectPayload {
   path: string;
@@ -46,7 +45,7 @@ function gitShort(git?: string): string {
   return m ? `${m[1]}/${m[2]}` : git;
 }
 
-function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
+function HarnessDetail({ sel }: { sel: SelHarness }) {
   const projects = useKind('project');
   const instructions = useKind('instruction');
   const hooks = useKind('hook-script');
@@ -65,8 +64,6 @@ function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
   });
   const mcpRows = (mcp.data?.assets ?? []).filter((a) => a.id.startsWith(`mcp-endpoint:project-${sel.project}-`));
   const headings = (claudeMd?.payload as { headings?: Array<{ text: string }> } | undefined)?.headings ?? [];
-  const drift = ctx.overview.data?.driftGroups ?? [];
-  const inDrift = drift.some((g) => g.variants.some((v) => v.id === `instruction:${sel.project}/CLAUDE.md`));
 
   return (
     <>
@@ -77,7 +74,7 @@ function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
             ['仓库', p.git ? <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{p.git}</span> : <span className="dim">未声明（collector 自动探测 origin）</span>],
             ['路径', <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{p.path ?? '—'}</span>],
             ['工作区', p.workspaceName ?? '—'],
-            ['CLAUDE.md', p.hasClaudeMd ? `${p.claudeMdLines ?? '—'} 行${inDrift ? ' · ⚠ 与其他项目副本内容不一致' : ''}` : '未检出'],
+            ['CLAUDE.md', p.hasClaudeMd ? `${p.claudeMdLines ?? '—'} 行` : '未检出'],
             ['settings.json', p.hasSettings ? '有' : '无'],
           ]}
         />
@@ -129,11 +126,10 @@ function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
   );
 }
 
-export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
+export function ProjectsPage() {
   const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: () => apiGet<{ workspaces: WorkspaceDefLite[] }>('/api/workspaces') });
   const projects = useQuery({ queryKey: ['assets', 'project'], queryFn: () => apiGet<{ assets: AssetLite[] }>(`/api/assets?kind=project`) });
   const [sel, setSel] = useState<SelHarness | null>(null);
-  const drift = ctx.overview.data?.driftGroups ?? [];
   const byWs = new Map<string, AssetLite[]>();
   for (const r of projects.data?.assets ?? []) {
     const ws = (r.payload as ProjectPayload).workspace;
@@ -195,16 +191,10 @@ export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
     },
     {
       key: 'drift',
-      head: 'CLAUDE.md 同步',
+      head: 'CLAUDE.md 行数',
       render: (r: AssetLite) => {
         const p = r.payload as ProjectPayload;
-        if (!p.hasClaudeMd) return <span className="dim" title="该项目没有 CLAUDE.md">—</span>;
-        const inDrift = drift.some((g) => g.variants.some((v) => v.id === `instruction:${r.name}/CLAUDE.md`));
-        return inDrift ? (
-          <Badge tone="warn" title="这个项目的 CLAUDE.md 与另一项目的同名文件内容不同（哈希不一致）— 改了一份时记得同步另一份">⚠ 不一致</Badge>
-        ) : (
-          <Badge tone="ok" title="同名 CLAUDE.md 在其他项目里没有不同版本：要么内容一致，要么只有这一份">✓ 一致</Badge>
-        );
+        return p.hasClaudeMd ? <span className="mono dim" style={{ fontSize: 'var(--fs-l1)' }}>{p.claudeMdLines ?? '—'}</span> : <span className="dim">—</span>;
       },
     },
   ];
@@ -220,7 +210,7 @@ export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
 
       {(workspaces.isLoading || projects.isLoading) && <div className="dim tagline">加载中…</div>}
       <div className="grid" style={{ gridTemplateColumns: '1.8fr 0.75fr', alignItems: 'start' }}>
-        <Panel title="项目" en={`PROJECTS · ${totalProjects} PROJECTS · ${wsList.length} WORKSPACES`}>
+        <Panel>
           {wsList.map((ws, i) => {
             const members = byWs.get(ws.id) ?? [];
             return (
@@ -246,7 +236,7 @@ export function ProjectsPage({ ctx }: { ctx: PageCtx }) {
         </Panel>
         <div className="col">
           {sel ? (
-            <HarnessDetail sel={sel} ctx={ctx} />
+            <HarnessDetail sel={sel} />
           ) : (
             <Panel title="Harness 详情" en="SELECT A HARNESS">
               <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>

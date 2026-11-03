@@ -36,20 +36,11 @@ export interface CollectorStatus {
   error?: string;
 }
 
-export interface DriftGroup {
-  key: string;
-  workspace: string;
-  basename: string;
-  copies: number;
-  variants: Array<{ id: string; path: string; hash8: string; lines: number }>;
-}
-
 export interface Overview {
   counts: Record<string, number>;
   total: number;
   firstPartyTotal: number;
   health: { status: string; generatedAt?: string; redlineCount: number };
-  driftGroups: DriftGroup[];
   collectors: CollectorStatus[];
   diagnostics: Array<{ level: string; message: string; path?: string }>;
   lastCollectedAt: string;

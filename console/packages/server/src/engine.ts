@@ -3,7 +3,6 @@ import {
   applyRegistryOverlay,
   builtinCollectors,
   loadRegistryEntries,
-  computeDriftGroups,
   loadConfig,
   makeContext,
   mergeCollections,
@@ -28,7 +27,7 @@ export interface EngineOptions {
 }
 
 export class Engine {
-  state: RegistryState = { assets: [], relations: [], diagnostics: [], driftGroups: [], collectorStatus: [], lastCollectedAt: '' };
+  state: RegistryState = { assets: [], relations: [], diagnostics: [], collectorStatus: [], lastCollectedAt: '' };
   private collectors: Collector[];
   private timer?: ReturnType<typeof setInterval>;
   private watchers: Array<{ close: () => void }> = [];
@@ -100,7 +99,6 @@ export class Engine {
       ...this.state,
       assets: merged.assets,
       relations: merged.relations,
-      driftGroups: computeDriftGroups(merged.assets),
       lastCollectedAt: new Date().toISOString(),
     };
     this.sse.broadcast('registry', { reason: 'push', total: this.state.assets.length });
@@ -127,7 +125,6 @@ export class Engine {
       this.sse.broadcast('registry', {
         reason: 'collect',
         total: state.assets.length,
-        drift: state.driftGroups.length,
         failed: state.collectorStatus.filter((s) => !s.ok).map((s) => s.name),
       });
     } finally {
