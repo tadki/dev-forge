@@ -2,7 +2,7 @@
 # SEE-1330 P0: v2 idempotent installer test suite (SPEC-009)
 # All operations run against FIXTURE paths only — never the real
 # ~/.claude/settings.json or ~/.claude/hooks/.
-# Covers: render/patch 9-point registration, unrelated-field preservation,
+# Covers: render/patch 10-point registration, unrelated-field preservation,
 #         idempotency (2nd run diff=0), backup existence, rollback fidelity,
 #         per-phase v1 disable + rollback, runtime deploy idempotency,
 #         firelog unified-hook result line via fixture wrapper chain.
@@ -24,7 +24,7 @@ GLOBAL_HOOKS="$FIXTURE/home/.claude/hooks"
 
 trap 'rm -rf "$FIXTURE"' EXIT
 
-POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact)
+POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact PermissionRequest)
 V1_ALIASES_P1=(skill-check skill-check-post mention-check push-guard tscn-tres-guard gdformat-gdlint atlas-taskflow-mark-a atlas-taskflow-mark-b atlas-taskflow-exit-reminder)
 
 count_v2_entries() {
@@ -49,8 +49,8 @@ echo "============================================================"
 separator "Prerequisites"
 [ -f "$INSTALLER" ] && pass "install-hooks.sh exists" || { fail "installer MISSING"; exit 1; }
 [ -f "$MANIFEST" ] && pass "hooks-registration.json exists" || { fail "manifest MISSING"; exit 1; }
-node -e "const m=require('$MANIFEST'); if (m.hook_points.length !== 9) process.exit(1)" 2>/dev/null \
-    && pass "manifest declares 9 hook points" || fail "manifest hook_points != 9"
+node -e "const m=require('$MANIFEST'); if (m.hook_points.length !== 10) process.exit(1)" 2>/dev/null \
+    && pass "manifest declares 10 hook points" || fail "manifest hook_points != 10"
 
 # fixture：带无关字段 + v1 注册样本的用户级 settings
 mkdir -p "$(dirname "$SETTINGS")"
@@ -77,7 +77,7 @@ cp "$SETTINGS" "$FIXTURE/original-settings.json"
 pass "fixture settings prepared (v1 registrations + unrelated fields)"
 
 #####################################################################
-# 1. install P0：9 时点注册渲染 + 无关字段/v1 注册保留
+# 1. install P0：10 时点注册渲染 + 无关字段/v1 注册保留
 #####################################################################
 separator "1. install P0"
 bash "$INSTALLER" install --settings "$SETTINGS" --global-hooks "$GLOBAL_HOOKS" --repo-root "$REPO_ROOT" --phase P0 > "$FIXTURE/install1.log" 2>&1
@@ -133,7 +133,7 @@ fi
 BACKUP_COUNT_2=$(ls "$FIXTURE/home/.claude/" | grep -c "settings.json.bak-" || true)
 [ "$BACKUP_COUNT_2" -eq "$BACKUP_COUNT_1" ] && pass "2c: no extra backup on no-op run" || fail "2c: backup count $BACKUP_COUNT_1 → $BACKUP_COUNT_2"
 V2_N=$(count_v2_entries)
-[ "$V2_N" -eq 9 ] && pass "2d: no duplicate v2 entries (count=9)" || fail "2d: v2 entries = $V2_N (duplication?)"
+[ "$V2_N" -eq 10 ] && pass "2d: no duplicate v2 entries (count=10)" || fail "2d: v2 entries = $V2_N (duplication?)"
 
 # 无关临时文件无残留
 TMP_LEFT=$(ls "$FIXTURE/home/.claude/" | grep -c "tmp\." || true)
@@ -192,7 +192,7 @@ const keep2 = (s.hooks.SessionStart||[]).some(g => (g.hooks||[]).some(h => (h.co
 process.exit(keep1 && keep2 ? 0 : 1);
 " 2>/dev/null && pass "5c: P2/P3 v1 aliases (auto-pr, repo-checkout) untouched" || fail "5c: other-phase v1 aliases wrongly removed"
 V2_N=$(count_v2_entries)
-[ "$V2_N" -eq 9 ] && pass "5d: v2 entries intact after disable (9)" || fail "5d: v2 entries = $V2_N"
+[ "$V2_N" -eq 10 ] && pass "5d: v2 entries intact after disable (10)" || fail "5d: v2 entries = $V2_N"
 
 bash "$INSTALLER" rollback --settings "$SETTINGS" > /dev/null 2>&1
 cmp -s "$SETTINGS" "$FIXTURE/pre-disable-state.json" && pass "5e: rollback after disable-v1 restores pre-disable state" || fail "5e: rollback mismatch"

@@ -413,6 +413,10 @@ function createEvaluator(payload, opts) {
         const isSet = cur !== undefined && cur !== null && cur !== false;
         if (node.equals === true) return isSet && cur === true;
         if (node.equals === false) return !isSet;
+        // 字符串等值（plan-mode-allow 迁移引入）：字段存在且精确相等才命中；
+        // 缺失/类型不符 → false。此前字符串 equals 退化为 isSet，仅因 on.in 收窄
+        // 而未暴露（repo-checkout-mount），对 permission_mode 这类多值字段是致命歧义。
+        if (typeof node.equals === 'string') return cur === node.equals;
         return isSet;
       }
       case 'event': {

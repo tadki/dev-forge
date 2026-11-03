@@ -1,6 +1,6 @@
 #!/bin/bash
 # bootstrap.sh - one-shot first-install (SEE-1429 Phase 2)
-# 备份现 settings hooks 段 → 按 hooks-registration.json 渲染 9 时点注册行
+# 备份现 settings hooks 段 → 按 hooks-registration.json 渲染全部时点注册行
 # （绝对路径指向本检出）→ 幂等（重跑 diff=0）。运行期零部署动作：
 # 注册链直指本仓检出，本地改文件即生效（editable 单一真源）。
 set -euo pipefail
@@ -47,7 +47,7 @@ node "$SELF_DIR/registry-patch.js" merge --settings "$SETTINGS" \
 echo "bootstrap: verifying registration…"
 if node "$SELF_DIR/registry-patch.js" verify --settings "$SETTINGS" \
   --manifest "$MANIFEST" --global-hooks "$WRAPPER_DIR"; then
-  echo "bootstrap: OK — 9 hook points registered → $WRAPPER_DIR"
+  echo "bootstrap: OK — $(jq '.hook_points | length' "$MANIFEST") hook points registered → $WRAPPER_DIR"
 else
   echo "bootstrap: verify FAILED — rollback.sh can restore $BAK" >&2
   exit 1
