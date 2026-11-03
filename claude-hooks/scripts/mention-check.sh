@@ -8,11 +8,10 @@
 #   PHASE 0: Mention gate — no mention → BLOCK
 #   PHASE 1: Sentence extraction — extract mention-bearing sentences
 
-INPUT=""
-while IFS= read -r -t 3 line || [ -n "$line" ]; do
-    INPUT="${INPUT}${line}"$'\n'
-done
-INPUT="${INPUT%$'\n'}"
+# WSL-safe stdin read（SEE-1516 F3 单源：scripts/lib/read-stdin.lib.sh）
+_RS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/read-stdin.lib.sh"
+# shellcheck source=scripts/lib/read-stdin.lib.sh
+[ -f "$_RS_LIB" ] && . "$_RS_LIB" && hook_read_stdin
 
 # Chekky whitelist: skip mention-check entirely
 if [ "${MULTICA_AGENT_NAME:-}" = "Chekky" ]; then

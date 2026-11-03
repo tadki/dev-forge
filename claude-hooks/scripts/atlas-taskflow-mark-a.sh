@@ -3,12 +3,10 @@
 # Trigger: Skill tool (matcher: Skill)
 # Logic: write mark_a=true to state file if skill=taskflow, MULTICA_TASK_ID exists, and issue has comments
 
-# WSL-safe stdin read (3s timeout)
-INPUT=""
-while IFS= read -r -t 3 line || [ -n "$line" ]; do
-    INPUT="${INPUT}${line}"$'\n'
-done
-INPUT="${INPUT%$'\n'}"
+# WSL-safe stdin read (3s timeout) — SEE-1516 F3 单源：scripts/lib/read-stdin.lib.sh
+_RS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/read-stdin.lib.sh"
+# shellcheck source=scripts/lib/read-stdin.lib.sh
+[ -f "$_RS_LIB" ] && . "$_RS_LIB" && hook_read_stdin
 
 # Only for Atlas agent
 if [ "${MULTICA_AGENT_NAME:-}" != "Atlas" ]; then
@@ -20,17 +18,8 @@ if [ -z "${MULTICA_TASK_ID:-}" ]; then
     exit 0
 fi
 
-# Extract skill name from stdin JSON
-SKILL_NAME=$(printf '%s' "$INPUT" | node -e "
-  let d = '';
-  process.stdin.on('data', c => d += c);
-  process.stdin.on('end', () => {
-    try {
-      const i = JSON.parse(d);
-      process.stdout.write(i.tool_input?.skill || '');
-    } catch(e) { process.stdout.write(''); }
-  });
-" 2>/dev/null)
+# Extract skill name from stdin JSON (SEE-1516 F3 单源：hook_json_field)
+SKILL_NAME=$(printf '%s' "$INPUT" | hook_json_field tool_input.skill)
 
 # Only trigger for taskflow skill
 if [ "$SKILL_NAME" != "taskflow" ]; then
