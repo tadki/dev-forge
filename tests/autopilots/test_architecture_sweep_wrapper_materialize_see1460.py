@@ -387,7 +387,12 @@ def test_kill_switch_explicit_false_still_passed(run_env, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_space_form_execution_issue_id_captured(run_env, tmp_path):
+def test_dead_execution_issue_id_no_longer_forwarded(run_env, tmp_path):
+    """SEE-1516 F2: --execution-issue-id was a dead parameter (the Python
+    layer parsed it and never read it). Both sides dropped it; the wrapper
+    must no longer forward it, and passing it must not corrupt the arg
+    stream (the value is dropped together with the flag, never mistaken for
+    a positional workspace root)."""
     ws = tmp_path / "ws"
     _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
 
@@ -400,7 +405,8 @@ def test_space_form_execution_issue_id_captured(run_env, tmp_path):
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert "--execution-issue-id ISSUE-42" in _stub_args(run_env)
+    assert "--execution-issue-id" not in _stub_args(run_env)
+    assert f"--workspace-root {ws}" in _stub_args(run_env)
 
 
 def test_space_form_workspace_root_captured(run_env, tmp_path):
@@ -457,6 +463,6 @@ def test_equals_form_flags_captured(run_env, tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert (parent / REDLINE_DIR / "a.txt").is_file()
     stub_args = _stub_args(run_env)
-    assert "--execution-issue-id ISSUE-7" in stub_args
+    assert "--execution-issue-id" not in stub_args
     assert f"--workspace-root {ws}" in stub_args
     assert "--current-hash H2" in stub_args

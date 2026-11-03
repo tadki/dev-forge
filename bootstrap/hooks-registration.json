@@ -28,6 +28,7 @@
     "scripts/lib/gitlink-probe.sh",
     "scripts/lib/gitlink-sync-hint.sh",
     "scripts/lib/hook-fire-path.lib.sh",
+    "scripts/lib/read-stdin.lib.sh",
     "scripts/mcp-tool-presence.sh",
     "scripts/mention-check.sh",
     "scripts/plan-mode-allow.sh",

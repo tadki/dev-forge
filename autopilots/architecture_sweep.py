@@ -135,16 +135,23 @@ DEFAULT_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "configs", "kol.json"
 )
 
+# SEE-1516 F1: 巡检目标仓名单源。此前 "KingOfLikes-Godot" 字面量散落在
+# _slot_hosts_repo / _repo_candidates / _scan_workspace_slots /
+# _newest_junit_across_slots 四处；换目标 = 改四处。现收敛为单一常量，
+# config 键 `repo_name`（与 shell 侧 sweep_locate_repo 同源）可覆盖。
+DEFAULT_REPO_NAME = "KingOfLikes-Godot"
+REPO_NAME = DEFAULT_REPO_NAME
+
 
 def apply_config(path: str) -> None:
     """Override the red-line constants from a target config (best-effort).
 
-    Only two surfaces are wired (per SEE-1430c O1): `max_file_lines` and
-    `forbidden_identifiers`. SEE-1499 adds the third: `junit_stable_path`.
-    Any read/parse failure leaves the built-in defaults untouched
-    (behaviour-compatible).
+    Wired surfaces: `max_file_lines` and `forbidden_identifiers` (SEE-1430c
+    O1), `junit_stable_path` (SEE-1499) and `repo_name` (SEE-1516 F1, the
+    repo-location single source). Any read/parse failure leaves the built-in
+    defaults untouched (behaviour-compatible).
     """
-    global MAX_FILE_LINES, GAMESTATE_MIRROR_FIELDS, JUNIT_STABLE_PATH
+    global MAX_FILE_LINES, GAMESTATE_MIRROR_FIELDS, JUNIT_STABLE_PATH, REPO_NAME
     try:
         with open(path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
@@ -161,6 +168,9 @@ def apply_config(path: str) -> None:
     stable = cfg.get("junit_stable_path")
     if isinstance(stable, str):
         JUNIT_STABLE_PATH = stable
+    name = cfg.get("repo_name")
+    if isinstance(name, str) and name:
+        REPO_NAME = name
 
 
 # S1 (SEE-1226): cross-slot junit aggregation freshness window, aligned with
@@ -191,17 +201,29 @@ GUT_PARTIAL_RUN_TOLERANCE = 0.95
 # ---------------------------------------------------------------------------
 
 
+def _slot_repo_paths(host_dir: str) -> tuple[str, str]:
+    """SEE-1516 F1: the single source of the on-disk slot layout convention.
+
+    Returns the two paths under ``host_dir`` that may host the target repo,
+    in probe order: ``<host>/workdir/<repo>`` (hash-slot layout) then
+    ``<host>/<repo>`` (workspace-root layout). Previously these two joins
+    were re-encoded inline in _slot_hosts_repo, _repo_candidates,
+    _scan_workspace_slots and _newest_junit_across_slots; the layout is now
+    known in exactly one place, keyed by REPO_NAME (config `repo_name`).
+    """
+    return (
+        os.path.join(host_dir, "workdir", REPO_NAME),
+        os.path.join(host_dir, REPO_NAME),
+    )
+
+
 def _slot_hosts_repo(slot_dir: str) -> bool:
     """SEE-1476 SPEC-1: a slot counts only if it actually hosts the target
-    repo checkout (``<slot>/workdir/KingOfLikes-Godot`` or
-    ``<slot>/KingOfLikes-Godot``). A residual directory that merely contains
-    an empty-ish ``workdir/`` (e.g. an orphaned reply-scope md) must not
-    qualify, or it pushes the detected workspace root one level too high and
-    blinds the cross-slot junit scan."""
-    return (
-        os.path.isdir(os.path.join(slot_dir, "workdir", "KingOfLikes-Godot"))
-        or os.path.isdir(os.path.join(slot_dir, "KingOfLikes-Godot"))
-    )
+    repo checkout (``<slot>/workdir/<repo>`` or ``<slot>/<repo>``). A residual
+    directory that merely contains an empty-ish ``workdir/`` (e.g. an orphaned
+    reply-scope md) must not qualify, or it pushes the detected workspace root
+    one level too high and blinds the cross-slot junit scan."""
+    return any(os.path.isdir(p) for p in _slot_repo_paths(slot_dir))
 
 
 def _default_workspace_root() -> str:
@@ -302,11 +324,6 @@ def parse_args():
         "--l1",
         action="store_true",
         help="Force L1 weekly checks even if not scheduled",
-    )
-    parser.add_argument(
-        "--execution-issue-id",
-        default="",
-        help="Execution issue ID for reporting",
     )
     parser.add_argument(
         "--kill-switch",
@@ -1364,6 +1381,20 @@ def _junit_candidates(repo_root: str, gutconfig: dict) -> list[str]:
     return candidates
 
 
+def _slot_repo_paths_patrol(host_dir: str, reports_dir: str) -> tuple[str, str]:
+    """SEE-1516 F1: junit scan's slot layouts via the single layout source.
+
+    Returns the two probe locations ``<host>/workdir/<repo>/<reports_dir>``
+    first, then ``<host>/<repo>/<reports_dir>`` — the same two layouts as
+    _slot_repo_paths (SEE-1516 F1 single source) with the reports_dir appended.
+    """
+    wd, direct = _slot_repo_paths(host_dir)
+    return (
+        os.path.join(wd, reports_dir),
+        os.path.join(direct, reports_dir),
+    )
+
+
 def _newest_junit_across_slots(workspace_root: str, junit_rel: str, expected: int) -> tuple[str, int, float]:
     """Pick the best junit across sibling checkout slots (S1).
 
@@ -1387,8 +1418,9 @@ def _newest_junit_across_slots(workspace_root: str, junit_rel: str, expected: in
         return ("", 0, 0.0)
     threshold = int(expected * GUT_PARTIAL_RUN_TOLERANCE) if expected > 0 else 0
     for name in slot_names:
-        for layout in (os.path.join(name, "workdir"), name):
-            probe = os.path.join(workspace_root, layout, "KingOfLikes-Godot", reports_dir)
+        for probe in _slot_repo_paths_patrol(
+            os.path.join(workspace_root, name), reports_dir
+        ):
             if not os.path.isdir(probe):
                 continue
             try:
@@ -1752,50 +1784,47 @@ def _sweep_context(args):
     return workspace_root, current_hash, dry_run, fast_mode, force_l1, kill_switch
 
 
-def _repo_candidates(workspace_root: str, current_hash: str) -> list[str]:
-    # D8: multi-level fallback instead of a single hardcoded layout — explicit
-    # slot path, CWD walk-up, then a scan of workspace_root for any
-    # <hash>/workdir/<repo> (or <hash>/<repo>).
-    cands = []
+def _locate_repo_root(workspace_root: str, current_hash: str) -> str:
+    """Resolve the patrol repo checkout — the single-source locating chain.
+
+    SEE-1516 F1: this folded the former three spread helpers
+    (_repo_candidates / _scan_workspace_slots / _locate_repo_root) into one
+    chain. Resolution order is unchanged (D8 multi-level fallback, not one
+    hardcoded layout): explicit ``<ws>/<hash>/`` slot layout, then the direct
+    ``<ws>/`` layout, then a CWD walk-up, then a sorted scan of workspace_root
+    slots — all keyed by REPO_NAME (config `repo_name`, nothing hardcoded) and
+    probed via the single _slot_repo_paths layout source. CWD-walk-up and the
+    slot scan keep plain isdir probes: the SEE-1476 SPEC-1 slot-hosting gate
+    lives at the workspace-ROOT detection layer (_default_workspace_root),
+    which is the layer that must not be pushed too high.
+    """
+    cands: list[str] = []
     if current_hash:
-        cands.append(os.path.join(workspace_root, current_hash, "workdir", "KingOfLikes-Godot"))
-        cands.append(os.path.join(workspace_root, current_hash, "KingOfLikes-Godot"))
-    cands.append(os.path.join(workspace_root, "workdir", "KingOfLikes-Godot"))
-    cands.append(os.path.join(workspace_root, "KingOfLikes-Godot"))
+        cands.extend(_slot_repo_paths(os.path.join(workspace_root, current_hash)))
+    cands.extend(_slot_repo_paths(workspace_root))
     cwd = os.path.abspath(os.getcwd())
-    # Walk up from CWD: a directory containing KingOfLikes-Godot is a repo parent.
+    # Walk up from CWD: a directory containing the repo directly is a repo parent.
     current = cwd
     while current:
-        probe = os.path.join(current, "KingOfLikes-Godot")
+        probe = os.path.join(current, REPO_NAME)
         if os.path.isdir(probe):
             cands.append(probe)
         parent = os.path.dirname(current)
         if parent == current:
             break
         current = parent
-    return cands
-
-
-def _scan_workspace_slots(workspace_root: str) -> str:
+    for cand in cands:
+        if os.path.isdir(cand):
+            return cand
     # Last resort: scan workspace_root slots for the repo.
     try:
         for name in sorted(os.listdir(workspace_root)):
-            for sub in (
-                os.path.join(workspace_root, name, "workdir", "KingOfLikes-Godot"),
-                os.path.join(workspace_root, name, "KingOfLikes-Godot"),
-            ):
+            for sub in _slot_repo_paths(os.path.join(workspace_root, name)):
                 if os.path.isdir(sub):
                     return sub
     except OSError:
         pass
     return ""
-
-
-def _locate_repo_root(workspace_root: str, current_hash: str) -> str:
-    for cand in _repo_candidates(workspace_root, current_hash):
-        if os.path.isdir(cand):
-            return cand
-    return _scan_workspace_slots(workspace_root)
 
 
 def _run_l0_checks(repo_root: str, prod_gd, fast_mode: bool, dry_run: bool,

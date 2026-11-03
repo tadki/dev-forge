@@ -23,23 +23,19 @@ DRY_RUN_ARG=""
 L1_ARG=""
 SKIP_NEXT=""
 SKIP_TARGET=""
-EXECUTION_ISSUE_ID=""
 JUNIT_STABLE_PATH_ARG=""
 for ARG in "$@"; do
   if [ -n "$SKIP_NEXT" ]; then
     SKIP_NEXT=""
     # SEE-1460 决策 6' (AC-9): a space-form flag consumes AND captures its
     # value — dropping it here made the autopilot command line silently lose
-    # --execution-issue-id / --workspace-root / --current-hash values.
+    # --workspace-root / --current-hash values.
     case "$SKIP_TARGET" in
       workspace-root)
         WORKSPACE_ROOT="$ARG"
         ;;
       current-hash)
         CURRENT_HASH="$ARG"
-        ;;
-      execution-issue-id)
-        EXECUTION_ISSUE_ID="$ARG"
         ;;
       junit-stable-path)
         JUNIT_STABLE_PATH_ARG="$ARG"
@@ -77,13 +73,15 @@ for ARG in "$@"; do
       esac
       ;;
     --execution-issue-id|--execution-issue-id=*)
+      # SEE-1516 F2: dead parameter — the Python layer dropped it too (it was
+      # parsed there and never read). This case is a consume-and-drop shim so
+      # legacy command lines (SEE-1460 AC-9 space/equals forms) neither lose
+      # their positional stream nor leak the flag downstream; the value is
+      # intentionally discarded (no branch in the SKIP_TARGET consume case).
       case "$ARG" in
         --execution-issue-id)
           SKIP_NEXT=1
-          SKIP_TARGET=execution-issue-id
-          ;;
-        --execution-issue-id=*)
-          EXECUTION_ISSUE_ID="${ARG#--execution-issue-id=}"
+          SKIP_TARGET=execution-issue-id-drop
           ;;
       esac
       ;;
@@ -309,7 +307,7 @@ fi
 if [ -n "$CURRENT_HASH" ]; then
   PY_ARGS+=(--current-hash "$CURRENT_HASH")
 fi
-PY_ARGS+=(${FAST_ARG:-} ${DRY_RUN_ARG:-} ${L1_ARG:-} --execution-issue-id "$EXECUTION_ISSUE_ID")
+PY_ARGS+=(${FAST_ARG:-} ${DRY_RUN_ARG:-} ${L1_ARG:-})
 # SEE-1499: forward the explicit stable junit source when provided (an unset
 # flag omits it so the Python layer resolves config/env defaults itself).
 if [ -n "$JUNIT_STABLE_PATH_ARG" ]; then

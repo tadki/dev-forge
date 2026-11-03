@@ -571,26 +571,26 @@ def _run_wrapper_capture(tmp_path, extra_args):
 class TestWrapperJunitStablePathForwarding:
     def test_space_form_forwarded(self, tmp_path):
         proc, log_text = _run_wrapper_capture(tmp_path, [
-            "--dry-run", "--execution-issue-id", "X",
+            "--dry-run",
             "--junit-stable-path", "/p/a.xml"])
         assert proc.returncode == 0, proc.stderr
         assert "--junit-stable-path /p/a.xml" in log_text
 
     def test_equals_form_forwarded(self, tmp_path):
         proc, log_text = _run_wrapper_capture(tmp_path, [
-            "--dry-run", "--execution-issue-id", "X",
+            "--dry-run",
             "--junit-stable-path=/p/b.xml"])
         assert proc.returncode == 0, proc.stderr
         assert "--junit-stable-path /p/b.xml" in log_text
 
     def test_flag_absent_omitted_entirely(self, tmp_path):
         proc, log_text = _run_wrapper_capture(tmp_path, [
-            "--dry-run", "--execution-issue-id", "X"])
+            "--dry-run"])
         assert proc.returncode == 0, proc.stderr
         assert "--junit-stable-path" not in log_text
 
     def test_empty_equals_form_not_forwarded(self, tmp_path):
         proc, log_text = _run_wrapper_capture(tmp_path, [
-            "--dry-run", "--execution-issue-id", "X", "--junit-stable-path="])
+            "--dry-run", "--junit-stable-path="])
         assert proc.returncode == 0, proc.stderr
         assert "--junit-stable-path" not in log_text
