@@ -387,6 +387,7 @@
       "tags": [
         "blocking",
         "agent:Revy",
+        "repo:kol",
         "devforge"
       ],
       "enabled": true,
@@ -408,11 +409,23 @@
             "Revy"
           ]
         },
+        "repoGating": {
+          "in": [
+            "kol"
+          ]
+        },
         "oneShot": "MULTICA_AGENT_NAME × HOOK_ISSUE_ID",
-        "whenHuman": "命令(当前) ~multica issue comment add 且 非(已用技能 /revy-testing)",
+        "whenHuman": "命令(当前) ~multica issue comment add 且 非(已用技能 /revy-testing) 且 仓库 kol",
         "when": {
           "op": "all",
-          "args": []
+          "args": [
+            {
+              "op": "repo",
+              "in": [
+                "kol"
+              ]
+            }
+          ]
         },
         "actions": [
           {

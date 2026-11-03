@@ -51,6 +51,26 @@ function whenKindOf(rule: RuleDef): 'none' | 'payload' | 'ops' | 'mixed' {
   return hasPayload ? 'payload' : 'ops';
 }
 
+/** 提取 when op 树中的 repo 门控（RIPPLE：repos.json 注册表作用域），无则 undefined */
+export function repoGatingOf(when: unknown): { in?: string[]; registered?: boolean } | undefined {
+  if (!when || typeof when !== 'object') return undefined;
+  const n = when as Record<string, unknown>;
+  if (n.op === 'repo') {
+    return {
+      in: Array.isArray(n.in) ? n.in.filter((x): x is string => typeof x === 'string') : undefined,
+      registered: n.registered === true || undefined,
+    };
+  }
+  if (Array.isArray(n.args)) {
+    for (const a of n.args) {
+      const hit = repoGatingOf(a);
+      if (hit) return hit;
+    }
+  }
+  if (n.arg && typeof n.arg === 'object') return repoGatingOf(n.arg);
+  return undefined;
+}
+
 export const devforgeHooksCollector: Collector = {
   name: 'devforge-hooks',
   mode: 'watch',
@@ -90,6 +110,7 @@ export const devforgeHooksCollector: Collector = {
       const fileDesc = doc.description ?? '';
       for (const rule of doc.rules) {
         const whenHuman = rule.when ? humanizeWhen(rule.when) : '—（无 when，事件即触发）';
+        const repoGating = repoGatingOf(rule.when);
         assets.push(
           asset({
             id: `hook-rule:${rule.name}`,
@@ -114,6 +135,7 @@ export const devforgeHooksCollector: Collector = {
               on: rule.on?.in ?? rule.on?.except ?? [],
               onExcept: rule.on?.except,
               agents: rule.agents,
+              repoGating,
               oneShot: oneShotSummary(rule.one_shot),
               whenHuman,
               when: rule.when,
@@ -126,6 +148,7 @@ export const devforgeHooksCollector: Collector = {
             tags: [
               ...(rule.action?.some((a) => a.op === 'deny') ? ['blocking'] : []),
               ...(rule.agents?.include ?? []).map((a) => `agent:${a}`),
+              ...(repoGating?.in ?? []).map((r) => `repo:${r}`),
               'devforge',
             ],
           })

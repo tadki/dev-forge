@@ -103,6 +103,10 @@ export function humanizeWhen(node: unknown): string {
       return `已用技能 /${n.skill}`;
     case 'branch':
       return `分支 ${n.pattern ?? n.in ?? ''}`;
+    case 'repo':
+      if (Array.isArray(n.in) && n.in.length) return `仓库 ${n.in.join('/')}`;
+      if (n.registered === true) return '已注册仓库';
+      return '仓库（无约束）';
     default:
       return `${n.op}…`;
   }

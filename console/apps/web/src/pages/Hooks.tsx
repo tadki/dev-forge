@@ -14,6 +14,7 @@ interface RulePayload {
   actions: Array<{ op: string; message?: string; path?: string }>;
   overlay: boolean;
   agents?: { include?: string[]; except?: string[] };
+  repoGating?: { in?: string[]; registered?: boolean };
 }
 
 const HARNESS_LABELS: Record<string, string> = { 'claude-code': 'Claude Code' };
@@ -89,6 +90,16 @@ export function HooksPage(_props: { ctx: PageCtx }) {
             render: (r) => {
               const g = (r.payload as RulePayload).agents;
               return g?.include ? <Badge tone="ok">{g.include.join(',')}</Badge> : g?.except ? <Badge tone="warn">except {g.except.join(',')}</Badge> : <Badge title="无 agent 门控">all</Badge>;
+            },
+          },
+          {
+            key: 'repo',
+            head: 'REPO 门控',
+            render: (r) => {
+              const g = (r.payload as RulePayload).repoGating;
+              if (g?.in?.length) return <Badge tone="ok" title="仓库门控：repos.json 注册表 origin 作用域">{g.in.join(',')}</Badge>;
+              if (g?.registered) return <Badge tone="ok" title="仓库门控：任意已注册仓库">registered</Badge>;
+              return <Badge title="无仓库门控（作用域不限仓库）">all</Badge>;
             },
           },
           {
