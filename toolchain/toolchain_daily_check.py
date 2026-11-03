@@ -12,7 +12,8 @@ Scope (per Atlas trigger 2026-08-27):
   C hooks 体系       cc/git hooks 调用错误率 + 最近失败尾巴; 拦截分布; 三层链路由错误;
                      .claude/settings.json 权限漂移; 每-agent mcp-config 完整性 (含 timeout)
   E autopilots 健康  run 状态 / PID 锁残留 / workspace 锁残留 / watchdog 重启节流
-  F launch 脚本健康  toolchain-start.sh 硬编码路径 / systemd unit / repo_sync_daemon 存活
+  F launch 脚本健康  toolchain-start.sh 硬编码路径 / systemd unit 静态+运行态 /
+                     repo_sync_daemon 存活 (停摆 → 红线, SEE-1519 §SPEC-003/004)
   G 错误度量口径 (cross-cutting) 绝对失败计数 + 失败码分类 + 每-agent/port 归属 + 与昨日 delta;
                      阈值计数 (同失败码日增 >=2 / 周累计 >=3, 2σ 弃); 日志完整性 "应采 vs 实采"
                      双源并集 (注册端口 ∪ 活跃 lease)
@@ -98,6 +99,9 @@ KOL_CHECKOUT_ROOT = KOL_CHECKOUT_ROOT or "/mnt/d/GodotProjects/king-of-likes"
 LAUNCH_DIR_REL = os.path.join("addons", "godot_mcp", "launch")
 START_SH_REL = os.path.join("launch", "toolchain-start.sh")
 SYSTEMD_DIR_REL = os.path.join(DEV_FORGE_ROOT, "launch", "systemd")
+# SEE-1519 §SPEC-003: 运行态门判的 systemd unit 名（单源常量，测试与巡检共用，
+# 避免 unit 名在 F2 静态项与运行态门两处硬编码漂移）。
+TOOLCHAIN_UNIT_NAME = "toolchain-start-all"
 REPO_SYNC_DAEMON_REL = os.path.join(KOL_CHECKOUT_ROOT, ".dev", "repo-sync", "repo_sync_daemon.py")
 MCP_JSON_REL = ".mcp.json"
 PROJECT_GODOT_REL = "project.godot"
@@ -1203,11 +1207,65 @@ class DailyCheck:
         else:
             self.missing_input(unit_path, dim, "systemd unit 缺失")
 
+    def _systemctl_output(self, args):
+        """只读 systemctl 查询 → (stdout.strip(), returncode)。
+
+        systemctl 二进制不可用或调用失败 → (None, None)：调用方据此降级 warn，
+        不得在 CI / 非宿主机制造假阳性红线（SEE-1519 §SPEC-003 环境分档）。
+        is-active/is-enabled 为只读查询，无需 root。
+        """
+        if shutil.which("systemctl") is None:
+            return None, None
+        try:
+            r = subprocess.run(
+                ["systemctl"] + list(args),
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None, None
+        return r.stdout.strip(), r.returncode
+
+    def _check_f2_unit_runtime(self, dim, issues):
+        """F2 运行态门 (SEE-1519 §SPEC-003)：unit 已安装且状态非 active → 红线。
+
+        背景 (SEE-1518)：42h repo-sync 停摆期间 unit 处于 failed，本脚本 F 维度
+        只查 unit 文件存在、整体仍 GREEN —— 运行态门直接闭合该检测盲区。
+        环境分档：systemctl 不可用或 unit 未安装（CI / 非宿主机）→ warn 观测；
+        activating 等瞬态归入「不可判」warn，只有确定的 failed/inactive 才红线。
+        """
+        enabled_out, _enabled_rc = self._systemctl_output(
+            ["is-enabled", TOOLCHAIN_UNIT_NAME])
+        if enabled_out is None:
+            self.warn(dim, "unit_state_unavailable",
+                      "systemctl 不可用, F2 unit 运行态检查降级为观测")
+            issues.append("F2 systemctl 不可用, unit 运行态检查降级")
+            return
+        if "not-found" in enabled_out:
+            self.warn(dim, "unit_not_installed",
+                      "%s unit 未安装（非宿主机环境）, 运行态门不适用" % TOOLCHAIN_UNIT_NAME)
+            issues.append("F2 unit 未安装, 运行态检查不适用")
+            return
+        active_out, _active_rc = self._systemctl_output(
+            ["is-active", TOOLCHAIN_UNIT_NAME])
+        if active_out == "active":
+            self.ok(dim, "unit_active", "%s unit active" % TOOLCHAIN_UNIT_NAME)
+        elif active_out in ("failed", "inactive"):
+            self.fail(dim, "unit_not_active",
+                      "%s unit 运行态 %s — 工具链停摆（repo-sync 无拉起路径）"
+                      % (TOOLCHAIN_UNIT_NAME, active_out))
+            issues.append("F2 unit 运行态 %s" % active_out)
+        else:
+            # activating/reloading/空输出等瞬态或不可判态: 不红线不误报
+            self.warn(dim, "unit_state_unknown",
+                      "%s unit 运行态不可判 (%r), 不判红线" % (TOOLCHAIN_UNIT_NAME, active_out))
+            issues.append("F2 unit 运行态不可判 (%r)" % active_out)
+
     def dim_f(self):
         dim = "F"
         issues = []
         self._check_f1_start_sh_hardcode(dim, issues)
         self._check_f2_systemd_unit(dim, issues)
+        self._check_f2_unit_runtime(dim, issues)
 
         # F3/F4 (SEE-1440 / fingerprint 2a3c667e2c9a)：注册制 repos.d 单源巡检 —
         #   每个注册的 repo_sync_daemon 必须存活（pid_file 指向的进程存在）；
@@ -1218,7 +1276,8 @@ class DailyCheck:
         # F5 (SEE-1440 / fingerprint ba5ed5893ad9)：Kill Switch 单源一致性。
         self._check_kill_switch_single_source(dim, issues)
 
-        status = "warn" if issues else "ok"
+        dim_redlines = [r for r in self.redlines if r.get("dim") == dim]
+        status = REDLINE if dim_redlines else ("warn" if issues else "ok")
         self.section(dim, status, issues)
 
     def _check_registrations(self, dim, issues):
@@ -1236,10 +1295,13 @@ class DailyCheck:
             self.missing_input(repos_d, dim, "repo-sync 注册目录缺失/空")
         for name, cfg in regs:
             label = cfg.get("name") or os.path.splitext(name)[0]
-            self._check_registration_daemon(dim, issues, label, cfg)
+            # SEE-1519 §SPEC-004: 仅宿主机上下文（repo_path 真实存在）时，停摆升级为
+            # 红线；CI / 非宿主机（repo_path 不存在）降级 warn，严禁假阳性红线。
+            on_host = os.path.isdir(os.path.expanduser(str(cfg.get("repo_path", ""))))
+            self._check_registration_daemon(dim, issues, label, cfg, on_host)
             self._check_registration_checkout(dim, issues, label, cfg)
 
-    def _check_registration_daemon(self, dim, issues, label, cfg):
+    def _check_registration_daemon(self, dim, issues, label, cfg, on_host):
         pid_file = cfg.get("pid_file")
         if not pid_file:
             issues.append("F3 %s 注册未声明 pid_file" % label)
@@ -1248,9 +1310,16 @@ class DailyCheck:
         pid_path = os.path.expanduser(str(pid_file).replace("$HOME", HOME))
         pid_text = safe_read(pid_path)
         if not pid_text:
-            issues.append("F3 %s daemon pid 文件缺失: %s" % (label, pid_path))
-            self.warn(dim, "daemon_pid_missing",
-                      "%s daemon 未运行（pid 文件缺失: %s）" % (label, pid_path))
+            if on_host:
+                # SEE-1519 §SPEC-004: 宿主机上 pid 缺=守护停摆 → 红线（曾只 warn,
+                # 把 42h 停摆掩盖成 GREEN, SEE-1518）
+                self.fail(dim, "daemon_pid_missing",
+                          "%s repo-sync 守护停摆（pid 文件缺失: %s）" % (label, pid_path))
+                issues.append("F3 %s daemon pid 文件缺失: %s" % (label, pid_path))
+            else:
+                self.warn(dim, "daemon_pid_missing",
+                          "%s daemon 未运行（pid 文件缺失: %s）" % (label, pid_path))
+                issues.append("F3 %s daemon pid 文件缺失: %s" % (label, pid_path))
             return
         try:
             pid = int(pid_text.strip())
@@ -1263,8 +1332,13 @@ class DailyCheck:
             self.ok(dim, "f3", "%s daemon 存活 (pid=%d)" % (label, pid))
         else:
             issues.append("F3 %s daemon PID %d 不存在" % (label, pid))
-            self.warn(dim, "daemon_dead",
-                      "%s daemon PID %d 不存在（进程已退出/未启动）" % (label, pid))
+            if on_host:
+                # SEE-1519 §SPEC-004: 宿主机上 PID 不存活=守护停摆 → 红线
+                self.fail(dim, "daemon_dead",
+                          "%s repo-sync 守护停摆（PID %d 不存活）" % (label, pid))
+            else:
+                self.warn(dim, "daemon_dead",
+                          "%s daemon PID %d 不存在（进程已退出/未启动）" % (label, pid))
 
     def _check_registration_checkout(self, dim, issues, label, cfg):
         repo_path = cfg["repo_path"]
