@@ -3,21 +3,6 @@ import { dirname } from 'node:path';
 import type { Asset, Collection, Diagnostic, Relation } from '@forge/schema';
 import type { CollectContext, Collector } from './types.js';
 
-export interface DriftVariant {
-  id: string;
-  path: string;
-  hash8: string;
-  lines: number;
-}
-
-export interface DriftGroup {
-  key: string;
-  workspace: string;
-  basename: string;
-  copies: number;
-  variants: DriftVariant[];
-}
-
 export interface CollectorStatus {
   name: string;
   mode: string;
@@ -31,12 +16,11 @@ export interface RegistryState {
   assets: Asset[];
   relations: Relation[];
   diagnostics: Diagnostic[];
-  driftGroups: DriftGroup[];
   collectorStatus: CollectorStatus[];
   lastCollectedAt: string;
 }
 
-export function mergeCollections(collections: Collection[]): Omit<RegistryState, 'driftGroups' | 'collectorStatus' | 'lastCollectedAt'> {
+export function mergeCollections(collections: Collection[]): Omit<RegistryState, 'collectorStatus' | 'lastCollectedAt'> {
   const byId = new Map<string, Asset>();
   const relations: Relation[] = [];
   const diagnostics: Diagnostic[] = [];
@@ -56,42 +40,6 @@ export function mergeCollections(collections: Collection[]): Omit<RegistryState,
     a.kind === b.kind ? a.id.localeCompare(b.id) : a.kind.localeCompare(b.kind)
   );
   return { assets, relations, diagnostics };
-}
-
-export function computeDriftGroups(assets: Asset[]): DriftGroup[] {
-  const groups = new Map<string, Map<string, DriftVariant[]>>();
-  for (const a of assets) {
-    if (a.kind !== 'instruction') continue;
-    const payload = a.payload as { basename?: string; contentHash?: string; lines?: number };
-    if (!payload.basename || !payload.contentHash) continue;
-    const ws = a.applies?.workspaces?.[0] ?? '(未分组)';
-    const key = `${ws}:${payload.basename}`;
-    if (!groups.has(key)) groups.set(key, new Map());
-    const variant: DriftVariant = {
-      id: a.id,
-      path: a.source.path,
-      hash8: payload.contentHash.slice(0, 8),
-      lines: payload.lines ?? 0,
-    };
-    const byHash = groups.get(key)!;
-    byHash.set(payload.contentHash, [...(byHash.get(payload.contentHash) ?? []), variant]);
-  }
-  const out: DriftGroup[] = [];
-  for (const [key, byHash] of groups) {
-    const variants = [...byHash.values()];
-    const copies = variants.reduce((n, v) => n + v.length, 0);
-    if (byHash.size > 1 && copies > 1) {
-      const [workspace, basename] = key.split(':');
-      out.push({
-        key,
-        workspace,
-        basename,
-        copies,
-        variants: variants.map((v) => v[0]).sort((a, b) => b.lines - a.lines),
-      });
-    }
-  }
-  return out.sort((a, b) => b.copies - a.copies);
 }
 
 export async function runCollectors(
@@ -123,7 +71,6 @@ export async function runCollectors(
   const merged = mergeCollections(collections);
   return {
     ...merged,
-    driftGroups: computeDriftGroups(merged.assets),
     collectorStatus: status,
     lastCollectedAt: ctx.now.toISOString(),
   };

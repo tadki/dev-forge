@@ -94,7 +94,6 @@ export function createHandler(deps: AppDeps) {
           total: state.assets.length,
           firstPartyTotal: state.assets.filter((a) => a.provenance === 'first-party').length,
           health,
-          driftGroups: state.driftGroups,
           collectors: state.collectorStatus,
           diagnostics: state.diagnostics.slice(-30),
           lastCollectedAt: state.lastCollectedAt,

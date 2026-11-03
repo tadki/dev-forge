@@ -44,7 +44,7 @@ export function OverviewPage({ ctx }: { ctx: PageCtx }) {
       <div className={bannerCls}>
         <span className="banner-title">SYSTEM {health.status}</span>
         <span style={{ marginLeft: 12 }}>
-          {health.status === 'GREEN' ? '工具链日检通过' : health.status === 'REDLINE' ? `红线 ${health.redlineCount} 条` : '暂无日检报告'} · 采集器 {overview.collectors.filter((c) => c.ok).length}/{overview.collectors.length} 在线 · 漂移告警 {overview.driftGroups.length}
+          {health.status === 'GREEN' ? '工具链日检通过' : health.status === 'REDLINE' ? `红线 ${health.redlineCount} 条` : '暂无日检报告'} · 采集器 {overview.collectors.filter((c) => c.ok).length}/{overview.collectors.length} 在线
         </span>
       </div>
 
@@ -54,7 +54,6 @@ export function OverviewPage({ ctx }: { ctx: PageCtx }) {
         <StatBlock num={overview.counts['instruction'] ?? 0} label="指令" en="INSTRUCTIONS" />
         <StatBlock num={overview.counts['skill'] ?? 0} label="技能" en="SKILLS" />
         <StatBlock num={overview.counts['hook-rule'] ?? 0} label="钩子规则" en="HOOK RULES" />
-        <StatBlock num={overview.driftGroups.length} label="漂移告警" en="DRIFT" />
       </div>
 
       <div className="grid grid-2">
@@ -94,34 +93,6 @@ export function OverviewPage({ ctx }: { ctx: PageCtx }) {
           </div>
         </section>
       </div>
-
-      {overview.driftGroups.length > 0 && (
-        <>
-          <div className="sect">
-            <span className="no">!</span>
-            <span className="title">漂移告警</span>
-            <span className="en">DRIFT · 同名资产内容分叉</span>
-          </div>
-          <div className="grid grid-2">
-            {overview.driftGroups.map((g) => (
-              <div key={g.key} className="panel-flat">
-                <div className="row">
-                  <span className="tagline">{g.workspace} / {g.basename}</span>
-                  <span className="badge badge-warn">{g.copies} 副本 · {g.variants.length} 变体</span>
-                </div>
-                <ul style={{ margin: '8px 0 0 16px', fontSize: 'var(--fs-l1)' }}>
-                  {g.variants.map((v) => (
-                    <li key={v.id} className="mono">
-                      {v.hash8} · {v.lines} 行 · <span className="dim">{v.path}</span>
-                    </li>
-                  ))}
-                </ul>
-                <Link to="/instructions" className="btn btn-ghost small" style={{ marginTop: 8 }}>查看对比 →</Link>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
 
       {overview.collectors.some((c) => !c.ok) && (
         <>

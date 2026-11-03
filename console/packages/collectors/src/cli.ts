@@ -14,5 +14,4 @@ const byKind: Record<string, number> = {};
 for (const a of state.assets) byKind[a.kind] = (byKind[a.kind] ?? 0) + 1;
 console.error(`collected ${state.assets.length} assets from ${enabled.length} collectors -> ${snapshotPath}`);
 console.error(JSON.stringify(byKind, null, 2));
-console.error(`drift groups: ${state.driftGroups.length}`);
 for (const s of state.collectorStatus.filter((s) => !s.ok)) console.error(`FAILED collector: ${s.name}: ${s.error}`);

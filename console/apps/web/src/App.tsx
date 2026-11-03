@@ -88,7 +88,7 @@ function Shell() {
         <main className="main">
           <Routes>
             <Route path="/" element={<OverviewPage ctx={ctx} />} />
-            <Route path="/projects" element={<ProjectsPage ctx={ctx} />} />
+            <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/instructions" element={<InstructionsPage ctx={ctx} />} />
             <Route path="/skills" element={<SkillsPage ctx={ctx} />} />
             <Route path="/hooks" element={<HooksPage ctx={ctx} />} />
