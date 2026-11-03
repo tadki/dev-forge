@@ -4,7 +4,7 @@ import type { CollectorStatus } from '../types';
 const ITEMS: Array<{ to: string; icon: string; zh: string; en: string }> = [
   { to: '/', icon: '▣', zh: '总览', en: 'OVERVIEW' },
   { to: '/projects', icon: '▤', zh: '项目', en: 'PROJECTS' },
-  { to: '/instructions', icon: '▤', zh: '指令库', en: 'INSTRUCTIONS' },
+  { to: '/instructions', icon: '▤', zh: '指令', en: 'INSTRUCTIONS' },
   { to: '/skills', icon: '▥', zh: '技能', en: 'SKILLS' },
   { to: '/hooks', icon: '▦', zh: '钩子', en: 'HOOKS' },
   { to: '/agents', icon: '▧', zh: '智能体', en: 'AGENTS' },
