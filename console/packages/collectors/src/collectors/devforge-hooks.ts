@@ -10,7 +10,7 @@ interface RuleDef {
   one_shot?: boolean | { ids?: string[] } | { id?: string };
   enabled?: boolean;
   when?: unknown;
-  action?: Array<{ op: string; message?: string }>;
+  action?: Array<{ op: string; message?: string; path?: string }>;
   owner?: string;
   blocking?: boolean;
   version_note?: string;
@@ -27,7 +27,28 @@ function oneShotSummary(os: RuleDef['one_shot']): string {
 
 function actionSummary(actions: RuleDef['action']): string {
   if (!actions?.length) return '—';
-  return actions.map((a) => (a.op === 'deny' ? 'DENY' : a.op === 'context' ? 'CONTEXT' : a.op.toUpperCase())).join('+');
+  const labels: Record<string, string> = { deny: 'DENY', context: 'CONTEXT', run_script: 'SCRIPT' };
+  return actions.map((a) => labels[a.op] ?? a.op.toUpperCase()).join('+');
+}
+
+const WHEN_COMBINATORS = new Set(['all', 'any', 'not']);
+
+function collectWhenSourceOps(node: unknown, acc: Set<string>): void {
+  if (!node || typeof node !== 'object') return;
+  const n = node as Record<string, unknown>;
+  if (typeof n.op === 'string' && !WHEN_COMBINATORS.has(n.op)) acc.add(n.op);
+  if (Array.isArray(n.args)) for (const a of n.args) collectWhenSourceOps(a, acc);
+  if (n.arg && typeof n.arg === 'object') collectWhenSourceOps(n.arg, acc);
+}
+
+function whenKindOf(rule: RuleDef): 'none' | 'payload' | 'ops' | 'mixed' {
+  if (!rule.when) return 'none';
+  const ops = new Set<string>();
+  collectWhenSourceOps(rule.when, ops);
+  const hasPayload = ops.has('payload');
+  const hasOps = [...ops].some((o) => o !== 'payload');
+  if (hasPayload && hasOps) return 'mixed';
+  return hasPayload ? 'payload' : 'ops';
 }
 
 export const devforgeHooksCollector: Collector = {
@@ -89,13 +110,14 @@ export const devforgeHooksCollector: Collector = {
             source: { collector: 'devforge-hooks', path: file, locator: `$.rules[?(@.name=="${rule.name}")]`, sha256: undefined },
             payload: {
               harness: rule.harness ?? ['claude-code'],
+              whenKind: whenKindOf(rule),
               on: rule.on?.in ?? rule.on?.except ?? [],
               onExcept: rule.on?.except,
               agents: rule.agents,
               oneShot: oneShotSummary(rule.one_shot),
               whenHuman,
               when: rule.when,
-              actions: rule.action?.map((a) => ({ op: a.op, message: (a.message ?? '').slice(0, 300) })) ?? [],
+              actions: rule.action?.map((a) => ({ op: a.op, message: (a.message ?? '').slice(0, 300), path: a.path?.split('/').pop() })) ?? [],
               blocking: rule.blocking,
               versionNote: rule.version_note?.slice(0, 400),
               fileDeclaredScope: fileDesc.slice(0, 400),
