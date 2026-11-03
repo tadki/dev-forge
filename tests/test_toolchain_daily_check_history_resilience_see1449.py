@@ -149,8 +149,11 @@ def test_journal_write_confined_to_report_dir(env):
     c.persist(_report_for("2026-10-11", {"timeout": 4}))
     assert str(journal_file) == os.path.join(str(tmp_path), tdc.HISTORY_JOURNAL_NAME)
     assert journal_file.exists()
+    # SEE-1516 §SPEC-010 (C3): persist/backfill 互斥锁 sidecar 常驻 report_dir
+    # (0 字节 flock 文件), 属预期的报告目录内产物 — 与 journal 同 confinement。
     assert set(os.listdir(str(tmp_path))) == {
-        "latest.json", "history.json", tdc.HISTORY_JOURNAL_NAME}, os.listdir(str(tmp_path))
+        "latest.json", "history.json", tdc.HISTORY_JOURNAL_NAME,
+        ".persist.lock"}, os.listdir(str(tmp_path))
 
 
 def test_journal_compaction_keeps_last_30_days(env):

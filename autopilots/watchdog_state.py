@@ -2,9 +2,14 @@
 
 import json
 import os
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+
+# Add autopilots/ (repo-relative) to path for multica_helpers import
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from multica_helpers import utc_now_iso  # noqa: E402
 
 try:
     import fcntl
@@ -96,7 +101,7 @@ class WatchdogState:
         self.records.append({
             "issue_id": issue_id,
             "task_id": task_id,
-            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "timestamp": utc_now_iso(),
         })
         self._save()
 

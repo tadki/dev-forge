@@ -2,18 +2,42 @@
 
 import json
 import os
-import time
-from datetime import datetime, timezone
-
-# Add autopilots/ (repo-relative) to path for multica_helpers import
 import sys
 
+# Add autopilots/ (repo-relative) to path for multica_helpers import
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from multica_helpers import AGENT_MAP, multica_stdin_cmd
+from multica_helpers import AGENT_MAP, multica_cli, multica_stdin_cmd, utc_now_iso
 
 
 REPORT_MARKER = "<!-- agent_watchdog_report -->"
+
+
+def find_marker_comment(issue_id: str, processing_log: list[str]) -> dict | None:
+    """在既有评论中查找 REPORT_MARKER 报告 (§SPEC-009 / 69823a273535)。
+
+    返回 {id, revision} 供 edit 复用; 查询失败/无命中返回 None (失败显式记
+    processing_log, 不静默 — 查询失败退回 add 语义, 至多多一条评论而非丢报告)。
+    """
+    ok, raw = multica_cli(
+        f"multica issue comment list {issue_id} --output json", timeout=15)
+    if not ok:
+        processing_log.append(
+            f"report_dedup_list_failed: issue={issue_id} error={raw}")
+        return None
+    try:
+        comments = json.loads(raw)
+    except json.JSONDecodeError:
+        processing_log.append(f"report_dedup_list_json_error: issue={issue_id}")
+        return None
+    if isinstance(comments, dict):
+        comments = comments.get("comments", [])
+    if not isinstance(comments, list):
+        return None
+    for c in comments:
+        if isinstance(c, dict) and REPORT_MARKER in (c.get("content") or ""):
+            return {"id": c.get("id"), "revision": c.get("revision")}
+    return None
 
 
 def generate_json_report(
@@ -29,7 +53,7 @@ def generate_json_report(
 ) -> dict:
     """Generate terminal JSON output structure."""
     summary = {
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp": utc_now_iso(),
         "dry_run": dry_run,
         "kill_switch": kill_switch,
         "total_agents_scanned": len(agents_scanned),
@@ -122,9 +146,24 @@ def post_report_comment(
     dry_run: bool,
     processing_log: list[str],
 ) -> dict:
-    """Send report comment to the specified issue."""
+    """Send report comment to the specified issue (marker 查重, 命中改 edit)。"""
     result = {"issue_id": issue_id, "sent": False, "dry_run": dry_run}
     if not issue_id or dry_run:
+        return result
+
+    # §SPEC-009: 同 marker 已有报告 → 更新该条, 不重复追加 (原每轮 add 累积)
+    prior = find_marker_comment(issue_id, processing_log)
+    if prior and prior.get("id") and isinstance(prior.get("revision"), int):
+        cmd = (f"multica issue comment update {prior['id']} --content-stdin "
+               f"--expected-revision {prior['revision']}")
+        ok, out = multica_stdin_cmd(cmd, content, timeout=15)
+        result["sent"] = ok
+        result["updated"] = True
+        result["comment_id"] = prior["id"]
+        result["error"] = None if ok else out
+        processing_log.append(
+            f"report_comment_{'updated' if ok else 'update_failed'}: "
+            f"issue={issue_id} comment={prior['id']}")
         return result
 
     base_cmd = f"multica issue comment add {issue_id} --content-stdin"

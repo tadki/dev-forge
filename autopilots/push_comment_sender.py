@@ -17,8 +17,7 @@ import sys
 # Add autopilots/ (repo-relative) to path for multica_helpers import
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from multica_helpers import AGENT_MAP, ATLAS_ID, multica_stdin_cmd
-import time as _time
+from multica_helpers import AGENT_MAP, ATLAS_ID, multica_cli, multica_stdin_cmd, utc_now_iso
 
 # --- Constants ---
 
@@ -30,6 +29,9 @@ SKIP_STATUSES = frozenset({"in_review", "done", "cancelled"})
 # SEE-956 H3: no_assignee pings are rate-limited to once per cooldown so a
 # lingering unassigned issue does not spam @Atlas on every cron run.
 NO_ASSIGNEE_PING_COOLDOWN_HOURS = 24
+# SEE-1516 §SPEC-009 (fingerprint 69823a273535): need_push*/decision 催促同款
+# 24h 冷却, 同状态两轮不重复 @。
+PUSH_COOLDOWN_HOURS = 24
 
 
 def _is_within_hours(timestamp_str: str, hours: float) -> bool:
@@ -123,33 +125,26 @@ KILL_SWITCH_ALERT_TEMPLATE = (
 # --- Helper functions ---
 
 
-def _run_shell(cmd: str, timeout: int = 15) -> str:
-    """Run a multica CLI command and return stdout (stripped). Returns empty string on failure."""
-    import shlex
-    import subprocess
-    try:
-        args = shlex.split(cmd) if isinstance(cmd, str) else cmd
-        r = subprocess.run(
-            args, shell=False, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
-        )
-        return r.stdout.strip()
-    except Exception:
-        return ""
-
-
 def is_issue_in_terminal_status(issue_id: str, processing_log: list) -> bool:
     """Re-check issue status before sending a push comment.
 
     Guards against the race where an issue transitions to in_review/done/cancelled
     between Phase 1 (scan) and Phase 5 (send).
     """
-    raw = _run_shell(f"multica issue get {issue_id} --output json")
-    if not raw:
-        # If we can't confirm, assume NOT terminal (safer to skip but log it)
+    # §SPEC-012 (fingerprint 64e6ca36dc97): 走 multica_cli 统一重试, 失败显式
+    # 记录错误文本 — 原 _run_shell 裸 subprocess `except Exception: return ""`
+    # 把 CLI 瞬时失败折算成「空 issue」下游失真。
+    ok, raw = multica_cli(f"multica issue get {issue_id} --output json", timeout=15)
+    if not ok:
         processing_log.append(
             f"phase5_status_reconfirm_failed: issue={issue_id} "
-            f"assuming_not_terminal"
+            f"error={raw} assuming_not_terminal"
+        )
+        return False
+    if not raw:
+        processing_log.append(
+            f"phase5_status_reconfirm_failed: issue={issue_id} "
+            f"error=empty_output assuming_not_terminal"
         )
         return False
     try:
@@ -255,21 +250,6 @@ def render_push_template(template: str, entry: dict, mention_target: str) -> str
     return template.format(**context)
 
 
-def send_push_comments(
-    categories: dict,
-    processing_log: list,
-    state: dict,
-    dry_run: bool = False,
-    max_errors_ratio: float = 0.3,
-) -> dict:
-    """Phase 5: Send push comments to classified issues.
-
-    In dry-run mode: computes push_actions with sent=False, no actual sending.
-    In non-dry-run, non-kill-switch mode: sends comments via multica_stdin_cmd.
-    Tracks errors and triggers kill_switch if error ratio exceeds threshold.
-
-    Returns dict with push_actions list and push_actions_summary.
-    """
 def _send_push_comment(issue_id: str, comment_content: str, identifier: str,
                        action: str, mention_target_name: str, processing_log: list) -> tuple:
     base_cmd = f"multica issue comment add {issue_id} --content-stdin"
@@ -373,6 +353,24 @@ def send_push_comments(
             if _no_assignee_rate_limited(entry, action, should_send, identifier, processing_log):
                 should_send = False
 
+            # §SPEC-009 (fingerprint 69823a273535): need_push/need_push_decision
+            # 与 no_assignee 同款 24h 冷却 — 同状态两轮不重复 @ (原仅 no_assignee
+            # 有 rate-limit, need_push 每轮 cron 重复催促)。
+            if (
+                should_send
+                and action in ("need_push", "need_push_first", "need_push_second",
+                               "need_push_decision")
+                and _is_within_hours(
+                    entry.get("latest_push_reminder_at", ""),
+                    PUSH_COOLDOWN_HOURS,
+                )
+            ):
+                processing_log.append(
+                    f"phase5_push_cooldown: issue={identifier} "
+                    f"action={action} cooldown_hours={PUSH_COOLDOWN_HOURS}"
+                )
+                should_send = False
+
             if should_send:
                 total_attempted += 1
                 ok, out = _send_push_comment(
@@ -445,7 +443,7 @@ def send_kill_switch_alert(
 
     Returns dict with sent status, or None if skipped.
     """
-    timestamp = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+    timestamp = utc_now_iso()
     content = KILL_SWITCH_ALERT_TEMPLATE.format(
         atlas_id=ATLAS_ID,
         trigger_phase=trigger_phase,

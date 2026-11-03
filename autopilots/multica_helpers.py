@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 # --- Agent maps ---
 
@@ -60,6 +61,15 @@ PROJECT_ID = "f0db1de0-e7b8-4fc9-b839-5a6abba0ee86"
 ATLAS_ID = "fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
 
 BACKOFF_DELAYS = [1, 2, 4]
+
+
+def utc_now_iso() -> str:
+    """统一 UTC ISO 时间戳单源 (SEE-1516 §SPEC-012 收编时间戳两派)。
+
+    替代 datetime.now(timezone.utc).strftime 与 time.strftime(gmtime) 两派
+    手拼; 新代码一律经此取机器时间戳。
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # --- Persistent state home ---
 # Autopilot state must survive reboots, so it lives under ~/.multica rather

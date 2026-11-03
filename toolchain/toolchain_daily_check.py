@@ -271,6 +271,36 @@ def journal_compact(journal_file, keep_days=MAX_HISTORY):
         raise
 
 
+class _ReportMutex:
+    """report_dir 级 advisory flock (fingerprint 13d0bbd59690)。
+
+    persist 与 backfill 都是 history.json 读-改-写, 并发时 last-writer-wins
+    丢当日计数; 同仓 WorkspaceMutex 在 autopilots/, 日检保持 standalone 自带
+    等价 flock (spec 允许「WorkspaceMutex 或等价 flock」)。阻塞获取; win32
+    (无 fcntl) 退化为不锁, 依赖 persist 既有 os.replace 原子性。
+    """
+
+    def __init__(self, report_dir):
+        self.path = os.path.join(report_dir, ".persist.lock")
+
+    def __enter__(self):
+        if fcntl is None:
+            return self
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        self._fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)  # blocking: 串行化读改写窗口
+        return self
+
+    def __exit__(self, *exc):
+        if fcntl is None:
+            return False
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self._fd)
+        return False
+
+
 def evict_daily(daily, max_days=MAX_HISTORY):
     """滑动窗口淘汰 (原地): 只删最旧 key 至 <= max_days (30 天淘汰语义唯一定义点)。"""
     for old_day in sorted(daily.keys()):
@@ -349,6 +379,12 @@ def backfill_history_failures(days, report_dir=None, allow_empty=False):
     返回 (backfilled {day: codes}, backup_path)。
     """
     history_file = os.path.join(report_dir or REPORT_ROOT, "history.json")
+    report_root = os.path.dirname(history_file) or "."
+    with _ReportMutex(report_root):  # 与 persist 互斥 (fingerprint 13d0bbd59690)
+        return _backfill_locked(days, history_file, report_root, allow_empty)
+
+
+def _backfill_locked(days, history_file, report_root, allow_empty):
     history, _recovered = load_history_with_recovery(history_file)
     daily = history.get("daily")
     if not isinstance(daily, dict):
@@ -1208,15 +1244,27 @@ class DailyCheck:
             self.ok(dim, "e1", "无 watchdog 状态文件 (尚未运行过)")
 
     def _check_e2_pid_lock_residue(self, dim, issues):
-        # E2: PID 锁残留 — watchdog_state.json.lock 或相关 .lock
-        lock_files = []
-        for cand in (WATCHDOG_STATE + ".lock", os.path.join(MULTICA_HOME, "watchdog.lock"),
-                     os.path.join(MULTICA_HOME, "agent_watchdog.lock")):
-            if os.path.exists(cand):
-                lock_files.append(cand)
-        if lock_files:
+        # E2: PID 锁残留 — flock 口径 (fingerprint d441deebc01d): 写锁文件不代
+        # 表持有。候选 = 真实 /tmp pid 文件 (PidFileLock release 即删, 存在即
+        # 持锁或崩溃残留) + watchdog_state 常驻 sidecar (创建后不删, flock 探
+        # 测判定)。三态: flock 被占=存活并存(ok); flock 空闲且 PID 已死=残留
+        # (warn); 文件不存在/空文件=无锁或已释放态(ok)。原 watchdog.lock /
+        # agent_watchdog.lock 全仓无创建者, 不再探测 (恒假来源)。
+        tmp = tempfile.gettempdir()
+        candidates = [WATCHDOG_STATE + ".lock"] + [
+            os.path.join(tmp, name) for name in
+            ("agent_watchdog.pid", "version_check.pid", "issue_status_check.pid")]
+        residues = []
+        for cand in candidates:
+            if not os.path.exists(cand):
+                continue
+            holder_pid, live = _lock_holder(cand)
+            if live or holder_pid is None:
+                continue  # 存活并存, 或无 PID 文本的已释放态 → 非残留
+            residues.append("%s (死 PID %d)" % (cand, holder_pid))
+        if residues:
             self.warn(dim, "pid_lock_residue",
-                      "发现 PID 锁残留文件: %s" % ", ".join(lock_files))
+                      "PID 锁残留 (flock 空闲且持有者已死): %s" % "; ".join(residues))
             issues.append("E2 PID 锁残留")
         else:
             self.ok(dim, "e2", "无 PID 锁残留")
@@ -1470,6 +1518,11 @@ class DailyCheck:
         for label, entry in entries.items():
             p = entry.get("port")
             agent = entry.get("agent") or label
+            if not isinstance(p, int) and not entry.get("agent"):
+                # 残骸条目 (无 port 无 agent, 仅 heartbeat_at 占位, 如 Old-slot1)
+                # 无运行时身份 → 不构成应采日志源; 计入 per_agent 会喂出
+                # 「缺失 old-slot1」恒真 warn (fingerprint 9b9de0b89cdb)
+                continue
             if isinstance(p, int):
                 registered_ports.add(p)
             per_agent[agent]["registered"] += 1
@@ -1765,9 +1818,13 @@ class DailyCheck:
     def persist(self, report):
         """只写本地报告目录 (默认 ~/.multica/toolchain-reports/), 绝不写共享树。"""
         report_root = self.report_dir
+        os.makedirs(report_root, exist_ok=True)
+        with _ReportMutex(report_root):
+            self._persist_locked(report, report_root)
+
+    def _persist_locked(self, report, report_root):
         report_file = os.path.join(report_root, "latest.json")
         history_file = os.path.join(report_root, "history.json")
-        os.makedirs(report_root, exist_ok=True)
         tmp_fd, tmp_path = tempfile.mkstemp(dir=report_root, prefix=".report-", suffix=".tmp")
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
