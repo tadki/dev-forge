@@ -186,7 +186,7 @@ test('custom: REST push accepted and appears', async ({ page }) => {
 test('services: OWN badge on first-party name', async ({ page }) => {
   await page.goto('/services');
   const grepaiRow = page.locator('tr', { hasText: 'grepai-watch' }).first();
-  await expect(grepaiRow.getByText('◆ 自建').first()).toBeVisible();
+  await expect(grepaiRow.getByText('OWN', { exact: true }).first()).toBeVisible();
 });
 
 test('registry: mgmt section shows declared/undeclared/unmatched', async ({ page }) => {
@@ -208,7 +208,7 @@ test('registry: stats table + first-party inventory', async ({ page }) => {
 
 test('services: EXT badge on third-party, toggle only on first-party user units', async ({ page }) => {
   await page.goto('/services');
-  await expect(page.getByText('◇ EXT 外部').first()).toBeVisible();
+  await expect(page.getByText('EXT', { exact: true }).first()).toBeVisible();
   const extRow = page.locator('tr', { hasText: 'external-agent' });
   await expect(extRow.locator('.badge-off', { hasText: '开关' })).toBeVisible();
   const grepaiRow = page.locator('tr', { hasText: 'grepai-watch' });

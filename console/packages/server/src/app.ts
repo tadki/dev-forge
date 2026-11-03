@@ -159,9 +159,14 @@ export function createHandler(deps: AppDeps) {
         if (asset.provenance !== 'first-party') {
           return json(res, 403, { error: '外部/第三方服务不做启停（仅限自建）', unit });
         }
+        const isRepoSync = asset.id.startsWith('service:repo-sync-');
         const scope = (asset.payload as { scope?: string }).scope;
-        if (scope !== 'user') {
+        if (!isRepoSync && scope !== 'user') {
           return json(res, 403, { error: `system 级单元需要 root（scope=${scope}）`, unit });
+        }
+        if (!isRepoSync) {
+          const okPath = asset.source.path === `systemd://user/${unit}` || asset.source.path.startsWith('systemd://user/');
+          if (!okPath) return json(res, 403, { error: '非受管来源', unit });
         }
         const result = await deps.serviceAction(unit, action as 'start' | 'stop' | 'restart');
         deps.onAfterAction?.();

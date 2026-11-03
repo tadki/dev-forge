@@ -166,7 +166,7 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
   display: inline-block;
   font-family: var(--font-mono);
   font-size: var(--fs-label);
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
   padding: 1px 6px;
   border: var(--bw-thin) solid var(--ink);
   background: var(--paper-warm);
