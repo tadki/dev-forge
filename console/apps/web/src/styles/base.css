@@ -25,7 +25,7 @@ input, select, textarea { font: inherit; color: var(--ink); }
 /* ===== 布局 ===== */
 .app { display: flex; flex-direction: column; height: 100vh; }
 .app-body { display: flex; flex: 1; min-height: 0; }
-.main { flex: 1; overflow: auto; padding: var(--sp-4) var(--sp-5) var(--sp-5); }
+.main { flex: 1; overflow: auto; scrollbar-gutter: stable; padding: var(--sp-4) var(--sp-5) var(--sp-5); }
 
 /* 顶栏（墨底） */
 .topbar {

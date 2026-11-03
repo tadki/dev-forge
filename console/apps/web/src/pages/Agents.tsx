@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { apiGet } from '../api';
 import type { AssetLite } from '../types';
-import { Badge, DataTable, KV, Panel, SectionHeader, StatusBadge } from '../components/ui';
+import { Badge, DataTable, Panel, SectionHeader, StatusBadge } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import type { PageCtx } from './ctx';
 
@@ -50,7 +50,7 @@ function AgentCard({ a, selId, depsOf, onSelect }: {
         <span className="avatar">{a.name.slice(0, 2).toUpperCase()}</span>
         <div>
           <h3>{a.name}</h3>
-          <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{p.model ?? ''}</span>
+          <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{[p.model, p.thinkingLevel].filter(Boolean).join(' · ')}</span>
         </div>
         <span style={{ marginLeft: 'auto' }}>{mc?.payload ? <StatusBadge status={(mc.payload as DeploymentPayload).status ?? '?'} /> : null}</span>
       </div>
@@ -135,24 +135,7 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
         </div>
 
         <div className="col">
-          <div className="panel">
-            <div className="panel-title">
-              AGENT 构成 <span className="en">ANATOMY · {selected?.name ?? '—'}</span>
-            </div>
-            <KV
-              items={[
-                ['模型', <span className="mono">{selPayload.model ?? '—'} · thinking {selPayload.thinkingLevel ?? '—'}</span>],
-                ['部署', selDeps.length > 0
-                  ? <span className="row" style={{ gap: 4 }}>{selDeps.map((d) => {
-                      const dp = d.payload as DeploymentPayload;
-                      return <Badge key={d.id} tone={d.enabled ? 'ok' : 'off'} title={dp.status}>{dp.platform}{dp.status ? ` · ${dp.status}` : ''}</Badge>;
-                    })}</span>
-                  : <span className="dim">未部署（本体待部署）</span>],
-              ]}
-            />
-          </div>
-
-          <SectionHeader no="01" title="指令 instructions" en={`${(selPayload.instructions ?? '').length} 字符`} />
+          <SectionHeader no="01" title="指令 instructions" en={`${selected?.name ?? '—'} · ${(selPayload.instructions ?? '').length} 字符`} />
           <div className="panel-flat" style={{ maxHeight: 260, overflow: 'auto' }}>
             {selPayload.instructions ? <Markdown text={selPayload.instructions} /> : <div className="dim">（subagent 定义见项目 .claude/agents/）</div>}
           </div>
