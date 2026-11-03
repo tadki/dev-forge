@@ -126,11 +126,11 @@ test('skills: first-party vs dependencies tabs', async ({ page }) => {
   await expect(page.getByText('deep-research').first()).toBeVisible();
 });
 
-test('projects: matrix rows and workspace dot', async ({ page }) => {
+test('projects: matrix rows, harness badge, workspace grouping', async ({ page }) => {
   await page.goto('/projects');
   await expect(page.getByText('king-of-likes').first()).toBeVisible();
-  await expect(page.getByText('144 行').first()).toBeVisible();
-  await expect(page.getByText('godot-mcp').first()).toBeVisible();
+  await expect(page.getByText('CLAUDE', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('King of Likes').first()).toBeVisible();
 });
 
 test('migration: coverage, gaps, export script', async ({ page }) => {

@@ -6,7 +6,8 @@ workspaces:
   - id: kol
     name: King of Likes
     projects:
-      - /e2e/king-of-likes
+      - path: /e2e/king-of-likes
+        harnesses: [claude]
     residents: [Fronti, Revy]
 multica:
   enabled: false

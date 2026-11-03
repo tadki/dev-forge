@@ -81,8 +81,8 @@ beforeAll(async () => {
     getState: () => state,
     token: TOKEN,
     sse,
-    workspaces: [
-      { id: 'kol', name: 'King of Likes', projects: ['/mnt/d/GodotProjects/king-of-likes'], residents: ['Fronti'] },
+    workspaces: () => [
+      { id: 'kol', name: 'King of Likes', projects: [{ path: '/mnt/d/GodotProjects/king-of-likes', harnesses: ['claude'] }], residents: ['Fronti'] },
       { id: 'devforge', name: 'dev-forge 工具链', projects: [] },
     ],
     pushAssets: (a) => pushed.push(...a),
@@ -131,7 +131,7 @@ describe('api endpoints', () => {
     expect(body.workspaces[0]).toEqual({
       id: 'kol',
       name: 'King of Likes',
-      projects: ['/mnt/d/GodotProjects/king-of-likes'],
+      projects: [{ path: '/mnt/d/GodotProjects/king-of-likes', harnesses: ['claude'] }],
       residents: ['Fronti'],
     });
     expect(body.workspaces[1].residents).toEqual([]);

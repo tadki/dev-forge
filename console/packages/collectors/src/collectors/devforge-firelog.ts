@@ -57,7 +57,7 @@ export const devforgeFirelogCollector: Collector = {
     ];
     // 已知项目的 firelog（复用 workspace 注册表 + 常见 worktree）
     for (const ws of ctx.config.workspaces) {
-      for (const p of ws.projects) logs.push({ repo: p.split('/').pop() ?? p, path: join(p, '.claude', 'hook-fire.log') });
+      for (const p of ws.projects ?? []) logs.push({ repo: p.path.split('/').pop() ?? p.path, path: join(p.path, '.claude', 'hook-fire.log') });
     }
 
     const events: FireEvent[] = [];
