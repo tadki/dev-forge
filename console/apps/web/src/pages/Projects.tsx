@@ -52,7 +52,10 @@ function HarnessDetail({ sel, ctx }: { sel: SelHarness; ctx: PageCtx }) {
   const claudeMd = (instructions.data?.assets ?? []).find((a) => a.id === `instruction:${sel.project}/CLAUDE.md`);
   const hookRows = (hooks.data?.assets ?? []).filter((a) => a.id.startsWith(`hook-script:project-${sel.project}-`));
   const skillRows = (skills.data?.assets ?? []).filter((a) => a.id.startsWith(`skill:project-${sel.project}-`));
-  const agentRows = (agents.data?.assets ?? []).filter((a) => a.id.startsWith(`agent:sub-${sel.project}-`));
+  const agentRows = (agents.data?.assets ?? []).filter((a) => {
+    const p = a.payload as { subagent?: boolean; project?: string };
+    return p.subagent && p.project === sel.project;
+  });
   const mcpRows = (mcp.data?.assets ?? []).filter((a) => a.id.startsWith(`mcp-endpoint:project-${sel.project}-`));
   const headings = (claudeMd?.payload as { headings?: Array<{ text: string }> } | undefined)?.headings ?? [];
   const drift = ctx.overview.data?.driftGroups ?? [];

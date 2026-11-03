@@ -44,6 +44,8 @@ export const claudeProjectsCollector: Collector = {
   async collect(ctx: CollectContext) {
     const assets: Asset[] = [];
     const relations: Relation[] = [];
+    // agent 本体身份 = 名字（Owner 原则 2026-11-03：与项目/平台解耦）；同名首见优先，重名告警
+    const agentNamesSeen = new Set<string>();
 
     for (const { path: dir, ws, def } of registeredProjects(ctx)) {
       const name = dir.split('/').filter(Boolean).pop() ?? dir;
@@ -169,16 +171,21 @@ export const claudeProjectsCollector: Collector = {
         const md = (await readText(join(dotClaude, 'agents', a))) ?? '';
         const fmName = md.match(/^name:\s*(.+)$/m)?.[1] ?? a.replace(/\.md$/, '');
         const desc = md.match(/^description:\s*(.+)$/m)?.[1] ?? '';
+        if (agentNamesSeen.has(fmName.toLowerCase())) {
+          ctx.diagnostics.push({ level: 'warn', message: `[claude-projects] agent 本体重名（${fmName}，${name} 的 .claude/agents 跳过）` });
+          continue;
+        }
+        agentNamesSeen.add(fmName.toLowerCase());
         assets.push(
           asset({
-            id: `agent:sub-${name}-${fmName}`,
+            id: `agent:${fmName.toLowerCase()}`,
             kind: 'agent',
             name: fmName,
             summary: desc.slice(0, 100),
             attach: { level: 'project', ref: dir },
             applies: { workspaces: [ws.id], origin: 'native' },
             enforcement: 'advisory',
-            payload: { subagent: true, frontmatter: md.split('---')[1]?.trim() ?? '', bodyLines: md.split('\n').length },
+            payload: { subagent: true, project: name, frontmatter: md.split('---')[1]?.trim() ?? '', bodyLines: md.split('\n').length },
             source: { collector: 'claude-projects', path: join(dotClaude, 'agents', a), sha256: sha256(md) },
             tags: ['subagent', 'claude-code'],
           })
