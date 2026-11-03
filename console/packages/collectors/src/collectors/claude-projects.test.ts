@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeProjectsCollector } from './claude-projects.js';
@@ -107,6 +108,32 @@ describe('claude-projects collector（注册制 + harness 声明制）', () => {
     expect(projs).toHaveLength(1);
     expect(projs[0].payload).toMatchObject({ workspace: 'first' });
     expect(r.diagnostics.some((d) => d.level === 'warn' && d.message.includes('重复注册'))).toBe(true);
+  });
+
+  it('声明 git → git 是仓库身份：payload 透传，同 git 不同路径去重（首个胜出）', async () => {
+    const gitUrl = 'https://github.com/tadki/same-repo.git';
+    const ctx = ctxFor([
+      { id: 'wsa', name: 'WS A', projects: [{ git: gitUrl, path: join(root, 'ws-a', 'proj-alpha'), harnesses: ['claude'] }] },
+      { id: 'wsz', name: 'WS Z', projects: [{ git: gitUrl, path: join(root, 'ws-b', 'proj-bare'), harnesses: ['claude'] }] },
+    ]);
+    const r = await claudeProjectsCollector.collect(ctx);
+    const projs = r.assets.filter((a) => a.kind === 'project');
+    expect(projs).toHaveLength(1);
+    expect(projs[0].payload).toMatchObject({ git: gitUrl, workspace: 'wsa' });
+    expect(r.diagnostics.some((d) => d.level === 'warn' && d.message.includes('仓库身份重复注册'))).toBe(true);
+  });
+
+  it('未声明 git → 自动探测 origin remote 作为仓库身份', async () => {
+    const repo = join(root, 'ws-git', 'proj-git');
+    await mkdir(repo, { recursive: true });
+    await writeFile(join(repo, 'CLAUDE.md'), '# Git\n');
+    execFileSync('git', ['-C', repo, 'init', '-q']);
+    execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/tadki/detected-repo.git']);
+    const ctx = ctxFor([{ id: 'wsg', name: 'WS G', projects: [{ path: repo, harnesses: ['claude'] }] }]);
+    const r = await claudeProjectsCollector.collect(ctx);
+    const proj = r.assets.find((a) => a.id === 'project:proj-git');
+    expect(proj).toBeDefined();
+    expect(proj!.payload).toMatchObject({ git: 'https://github.com/tadki/detected-repo.git' });
   });
 
   it('watchPaths 返回注册路径且不产生诊断副作用', () => {
