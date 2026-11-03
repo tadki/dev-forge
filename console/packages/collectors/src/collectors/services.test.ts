@@ -35,6 +35,13 @@ function fakeExec(cmd: string, args: string[]) {
     return Promise.resolve({ ok: true, stdout: SHOW_TOOLCHAIN, stderr: '' });
   }
   if (cmd === 'ps') return Promise.resolve({ ok: true, stdout: PS_OUT, stderr: '' });
+  if (cmd.includes('schtasks')) {
+    const tn = args[args.indexOf('/tn') + 1] ?? '';
+    if (tn === 'multica-daemon') {
+      return Promise.resolve({ ok: false, stdout: '', stderr: 'ERROR: The system cannot find the file specified.' });
+    }
+    return Promise.resolve({ ok: true, stdout: `Folder: \\\nTaskName     Next Run   Status\n=========    ========   ======\nwsl-keepalive N/A Running\n`, stderr: '' });
+  }
   return Promise.resolve({ ok: false, stdout: '', stderr: 'not implemented' });
 }
 
@@ -65,10 +72,15 @@ describe('services collector（假 exec 驱动）', () => {
     expect((grepai!.payload as { scope: string }).scope).toBe('user');
   });
 
-  it('windows bridges carry trigger windows-logon', async () => {
+  it('windows bridge status is PROBED via schtasks（机制而非手工标注）', async () => {
     const r = await servicesCollector.collect(ctxWithFakeExec());
-    const bridge = r.assets.find((a) => a.id === 'service:winbridge-wsl-keepalive');
-    expect(bridge).toBeDefined();
-    expect((bridge!.payload as { trigger: string }).trigger).toBe('windows-logon');
+    const keep = r.assets.find((a) => a.id === 'service:winbridge-wsl-keepalive');
+    expect(keep).toBeDefined();
+    expect((keep!.payload as { active: string }).active).toBe('active'); // fake: Running
+    expect((keep!.payload as { taskStatus: string }).taskStatus).toBe('Running');
+    expect((keep!.payload as { trigger: string }).trigger).toBe('windows-logon');
+    // 已删除的任务（multica-daemon：任务不存在）不再产生 legacy 行
+    const ghost = r.assets.filter((a) => (a.payload as { active?: string }).active === 'legacy');
+    expect(ghost).toHaveLength(0);
   });
 });
