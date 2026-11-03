@@ -20,7 +20,8 @@ Scope (per Atlas trigger 2026-08-27):
   (无 D 维度: 原 D = skills 版本健康, Owner 2026-08-27 指示从日检范围移除, 编号不复用)
 
 HARD SAFETY: 本脚本完全不产生任何写操作 —— 无 spawn、无 bridge 持有、无对共享/工作树的写入、
-零 token (只读本地文件 + tcp connect 探测 + 只读 multica CLI 查询)、不运行 agent。所有输出落在本地报告目录
+零 token (只读本地文件 + tcp connect 探测 + 只读 multica/gh CLI 查询，gh 仅 pr list 读查询)、
+不运行 agent。所有输出落在本地报告目录
 (默认 ~/.multica/toolchain-reports/), 绝不推送到共享分支。
 
 用法:
