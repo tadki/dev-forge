@@ -27,6 +27,22 @@ import toolchain_daily_check as tdc  # noqa: E402
 UNIT = tdc.TOOLCHAIN_UNIT_NAME
 
 
+def test_f2_unit_name_constant_is_pinned(check, monkeypatch, tmp_path):
+    # hardener 补测：F2 运行态门判的 unit 名偏离开 1 字符即无法命中真 unit，
+    # 会被「is-enabled → not-found → warn 降级」吞成假 GREEN（正是 SEE-1518
+    # 盲区）。钉扎常量等于 F2 静态项读出的落盘 unit —— 变异在此存活即被杀伤。
+    unit_file = tdc.os.path.join(tdc.DEV_FORGE_ROOT, "launch", "systemd",
+                                 "toolchain-start-all.service")
+    if not tdc.os.path.exists(unit_file):
+        return  # 仅当含 unit 副本的环境作为宿主上下文判据行（CI/非宿主无副本则跳过）
+    unit_text = tdc.safe_read(unit_file)
+    if not unit_text:
+        return
+    # 落盘 unit 的 ExecStart 必须指回 TOOLCHAIN_UNIT_NAME 命中的启动脚本
+    assert "toolchain-start.sh" in unit_text
+    assert UNIT == "toolchain-start-all"  # 单名常量=落盘 unit 名（本批 README/任务约定）
+
+
 @pytest.fixture()
 def check(tmp_path):
     c = tdc.DailyCheck(

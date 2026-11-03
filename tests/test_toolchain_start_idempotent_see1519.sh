@@ -44,7 +44,7 @@ EOF
 }
 
 # stub multica: 按模式回放 daemon status / start 行为, 记录全部调用
-write_multica_stub() { # $1=mode (running|notrunning|garbage)
+write_multica_stub() { # $1=mode (running|notrunning|garbage|starting|stopped0|garbage_running)
     local MODE="$1"
     cat > "$SANDBOX/bin/multica" <<EOF
 #!/bin/bash
@@ -58,8 +58,21 @@ case "\$1 \$2" in
         N=\$((N + 1)); echo "\$N" > "\$STUB_STATUS_COUNT"
         if [ "\$N" -ge "\${FLIP_AFTER:-2}" ]; then echo '{"status":"stopped","pid":0}'; exit 1; fi
         echo '{"status":"running","pid":424242}'; exit 0 ;;
+      # SEE-1519 hardener: starting 是 CLI 契约内的「启动中」态, 必须按已运行处理
+      # （驻留而非 exec）。删掉 starting 接受集会让该态落回 exec→exit1 旧失败路径。
+      starting)
+        N=\$(cat "\$STUB_STATUS_COUNT" 2>/dev/null || echo 0)
+        N=\$((N + 1)); echo "\$N" > "\$STUB_STATUS_COUNT"
+        if [ "\$N" -ge "\${FLIP_AFTER:-2}" ]; then echo '{"status":"stopped","pid":0}'; exit 1; fi
+        echo '{"status":"starting","pid":424242}'; exit 0 ;;
+      # SEE-1519 hardener: exit 0 但 status 明确为 stopped —— 未运行, 必须 exec。
+      # 若把 stopped 混入接受集会误驻留, 让 unit 假 active 而链路已死。
+      stopped0)   echo '{"status":"stopped","pid":0}'; exit 0 ;;
       notrunning) echo 'daemon not running'; exit 1 ;;
       garbage)    echo 'not json at all'; exit 0 ;;
+      # SEE-1519 hardener: exit-0 输出含 "running" 字样但无 status 键 —— 不得被
+      # 子串匹配误判为运行（键名校验不可省）。
+      garbage_running) echo 'daemon backend is running (no status field)'; exit 0 ;;
     esac ;;
   "daemon start")
     # 模拟前台 daemon: 阻塞至测试放行, 退出码回传 FLIP_EXIT
@@ -130,6 +143,34 @@ write_multica_stub notrunning
 DAEMON_HOLD=0 DAEMON_START_EXIT=1 run_script "$SANDBOX/out-d.log"
 RC=$(cat "$SANDBOX/exit-code")
 if [ "$RC" = "1" ]; then pass "D: daemon start 失败时脚本如实回传非零"; else fail "D: daemon start 失败未回传 (exit=$RC)"; fi
+
+# =============== E. starting 态: CLI 契约内的「启动中」= 已运行 ===============
+# hardener 补测：接受集若删掉 starting，该态会落回 exec→exit1 旧失败路径。
+setup_sandbox
+write_multica_stub starting
+run_script "$SANDBOX/out-e.log"
+RC=$(cat "$SANDBOX/exit-code")
+CALLS=$(cat "$SANDBOX/stub-calls.log")
+if [ "$RC" = "0" ]; then pass "E: starting 态脚本幂等驻留 exit 0"; else fail "E: starting 态 exit=$RC (期望 0, 删 starting 接受集的变异应被杀)"; fi
+if echo "$CALLS" | grep -q "daemon start"; then fail "E: starting 态不得 exec daemon start"; else pass "E: starting 态未 exec daemon start"; fi
+
+# =============== F. exit-0 但 status=stopped: 未运行 → 必须 exec ===============
+# hardener 补测：把 stopped 混入接受集会让脚本误判运行而假驻留。
+setup_sandbox
+write_multica_stub stopped0
+DAEMON_HOLD=0 run_script "$SANDBOX/out-f.log"
+RC=$(cat "$SANDBOX/exit-code")
+CALLS=$(cat "$SANDBOX/stub-calls.log")
+if echo "$CALLS" | grep -q "daemon start --foreground"; then pass "F: exit-0+stopped 判未运行并 exec foreground"; else fail "F: stopped0 态未 exec foreground (混入接受集的变异应被杀)"; fi
+
+# =============== G. exit-0 无 status 键但含 running 字样: 不得误判 ===============
+# hardener 补测：键名校验不可省——子串匹配 running 会把垃圾输出误判为运行。
+setup_sandbox
+write_multica_stub garbage_running
+DAEMON_HOLD=0 run_script "$SANDBOX/out-g.log"
+RC=$(cat "$SANDBOX/exit-code")
+CALLS=$(cat "$SANDBOX/stub-calls.log")
+if echo "$CALLS" | grep -q "daemon start --foreground"; then pass "G: 无 status 键含 running 字样判未运行并 exec foreground"; else fail "G: 键名校验缺失的变异应被杀 (垃圾输出被误判运行)"; fi
 
 echo ""
 echo "============================================"
