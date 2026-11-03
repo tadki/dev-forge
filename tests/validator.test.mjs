@@ -86,13 +86,14 @@ test('transSchema: 非对象/缺 name/坏 enabled 均 INVALID', () => {
 });
 
 test('transOn: 缺省=全时点; in/except 互斥 INVALID; 未知时点 INVALID; except 求补', () => {
-  assert.equal(V.transOn('SCHEMA_OK', undefined).S_on.size, 9);
+  assert.equal(V.HOOK_POINTS.length, 10); // plan-mode-allow 迁移新增第 10 时点
+  assert.equal(V.transOn('SCHEMA_OK', undefined).S_on.size, 10);
   const bad = V.transOn('SCHEMA_OK', { in: [PRE], except: ['Stop'] });
   assert.equal(bad.ok, false);
   assert.equal(bad.path, 'on');
   assert.ok(V.transOn('SCHEMA_OK', { in: ['Nope'] }).ok === false);
   const ex = V.transOn('SCHEMA_OK', { except: ['Stop'] });
-  assert.equal(ex.S_on.size, 8);
+  assert.equal(ex.S_on.size, 9);
   assert.ok(!ex.S_on.has('Stop'));
 });
 

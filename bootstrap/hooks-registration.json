@@ -13,7 +13,8 @@
     "SubagentStop",
     "UserPromptSubmit",
     "Notification",
-    "PreCompact"
+    "PreCompact",
+    "PermissionRequest"
   ],
   "runtime_artifacts": [
     "dispatcher.sh",
@@ -29,11 +30,13 @@
     "scripts/lib/hook-fire-path.lib.sh",
     "scripts/mcp-tool-presence.sh",
     "scripts/mention-check.sh",
+    "scripts/plan-mode-allow.sh",
     "scripts/push-guard.sh",
     "scripts/repo-checkout.sh",
     "unified/engine.js",
     "unified/rules-v2.json",
     "unified/repos.json",
+    "unified/rules.d/plan-mode-auto-allow.json",
     "unified/rules.d/push-guard-gates.json",
     "unified/rules.d/runscript-mounts.json",
     "unified/unified-hook.sh",

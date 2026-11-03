@@ -10,6 +10,7 @@
 const HOOK_POINTS = [
   'PreToolUse', 'PostToolUse', 'SessionStart', 'SessionEnd',
   'Stop', 'SubagentStop', 'UserPromptSubmit', 'Notification', 'PreCompact',
+  'PermissionRequest',
 ];
 const ALL_POINTS = new Set(HOOK_POINTS);
 // Points whose payload carries no tool_name / tool_input.command / file_path

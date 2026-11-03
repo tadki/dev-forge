@@ -12,9 +12,9 @@
 ### 1.1 调用链路（v2 单轨）
 
 ```
-CC hook 事件（9 时点 × matcher *）
+CC hook 事件（10 时点 × matcher *）
   ↓
-settings.json（全局 ~）：9 时点统一注册
+settings.json（全局 ~）：10 时点统一注册
   "hook-wrapper.sh <HookType> unified-hook"
 hook-wrapper.sh（记录日志 + exec dispatcher.sh unified-hook）
   ↓
@@ -27,6 +27,7 @@ unified/engine.js（配置驱动求值：on → agents → when → action）
   └─ action: run_script               → 挂载执行业务脚本（全 env 透传，stdout 协议直通）
                                          如 push-guard.sh / mention-check.sh / gdformat-gdlint.sh
                                          / atlas-taskflow-* / auto-pr-on-stop.sh / repo-checkout.sh
+                                         / plan-mode-allow.sh（PermissionRequest 时点）
 ```
 
 三层职责分离：
@@ -56,7 +57,7 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 | Multica Agent 在 workdir 运行 | 全局 `~/.claude/settings.json` | 同上；全局位缺失时以 checkout 内 `.claude/hooks/unified/` 兜底 |
 | 其他项目 / workdir 无代码 | 全局 `~/.claude/settings.json` | dispatcher 静默跳过（透传） |
 
-> **注意**：项目级 `.claude/settings.json` 不定义 hooks；settings 注册唯一真源为仓库 `.claude/hooks/hooks-registration.json`（声明式清单），由安装器渲染到全局 `~/.claude/settings.json`。9 时点 = PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / SubagentStop / UserPromptSubmit / Notification / PreCompact，matcher 全 `*`，触发面收敛在引擎内 when 树。
+> **注意**：项目级 `.claude/settings.json` 不定义 hooks；settings 注册唯一真源为仓库 `.claude/hooks/hooks-registration.json`（声明式清单），由安装器渲染到全局 `~/.claude/settings.json`。10 时点 = PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / SubagentStop / UserPromptSubmit / Notification / PreCompact / PermissionRequest，matcher 全 `*`，触发面收敛在引擎内 when 树。
 
 ---
 
@@ -100,7 +101,7 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 }
 ```
 
-> **v2 终态形态**：9 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `.claude/hooks/hooks-registration.json`，由幂等安装器渲染（原子写 + 备份 + 回滚，`install-hooks.sh install/verify/disable-v1/rollback`）。
+> **v2 终态形态**：10 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `.claude/hooks/hooks-registration.json`，由幂等安装器渲染（原子写 + 备份 + 回滚，`install-hooks.sh install/verify/disable-v1/rollback`）。PermissionRequest 时点于 2026-11-03 增补（plan-mode 自动放行迁移，见 §5.1）。
 >
 > **路径说明**：生产环境使用绝对路径（如 `/home/jerry/.claude/hooks/...`），避免 WSL 中 `~` 展开不一致的问题。上例使用 `~` 仅为可读性。
 
@@ -113,14 +114,14 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
    command 只写脚本路径 + 参数，不要添加 bash 前缀或引号嵌套。
 
 2. **每个 command 携带两个参数：HookType + Alias**
-   - `HookType`（$1）：CC 官方事件名（9 时点）
+   - `HookType`（$1）：CC 官方事件名（10 时点）
    - `Alias`（$2）：v2 终态恒为 `unified-hook`（dispatcher 仅路由该 alias）
 
 3. **matcher 全 `*`（v2 语义反转）**
    - v1 按 hook 拆多个注册项并在 matcher 层按工具过滤；v2 全时点统一 `*`，触发窗口收敛到引擎内 `when` 树（tool op / file op / command op / payload op / branch op 等组合）——单一注册 + 配置驱动，规则增删零 settings 变更
 
 4. **注册真源为声明式清单**
-   - `hooks-registration.json`：9 时点列表 + runtime_artifacts 部署清单 + per-phase 启用/禁用语义（P0–P3 历史 cutover 留档）
+   - `hooks-registration.json`：10 时点列表 + runtime_artifacts 部署清单 + per-phase 启用/禁用语义（P0–P3 历史 cutover 留档）
    - 任何 hooks 变更先改清单，再由安装器落地；禁止手工直改 settings
 
 ### 2.3 规则配置真源（v2 新增）
@@ -129,6 +130,7 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 |---|---|---|
 | `.claude/hooks/unified/rules-v2.json` | 13 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
 | `.claude/hooks/unified/rules.d/runscript-mounts.json` | 8 条 run_script 挂载规则（push-guard / mention-check / gdformat-gdlint / taskflow×3 / auto-pr / repo-checkout）：`deny_exit_codes` / `on_fail` / `timeout_ms` | 挂载 lane 与 rules-v2 规则段互不交叉编辑 |
+| `.claude/hooks/unified/rules.d/plan-mode-auto-allow.json` | 1 条 PermissionRequest 挂载规则（plan 模式自动放行，2026-11-03 自 Mac 全局 settings jq 一行式迁入）：payload op 字符串等值 + run_script 协议直通 | 同上；引擎侧依赖 validate-rules.js HOOK_POINTS 第 10 时点 + when-ops.js payload 字符串等值 |
 | `.claude/hooks/hooks-registration.json` | settings 注册声明式真源 + runtime_artifacts 部署清单 | 见 §2.1 |
 
 ---
@@ -324,6 +326,7 @@ v2 单轨下「注册项」与「脚本」解耦：settings 仅 9 条 unified-ho
 | `gdformat-gdlint-mount` | PostToolUse | tool Write\|Edit × file *.gd | `gdformat-gdlint.sh` | **是**（exit 2 + stderr 直通，fail-close；含 SEE-1142 mcp-mouse-lint 追加规则） | Bachi（GDScript 代码质量） |
 | `auto-pr-stop-mount` | Stop | payload stop_hook_active equals false（+ 脚本内第二道防线） | `auto-pr-on-stop.sh` | 否（自动 commit/push/draft PR；恒 fail-open 不阻塞 Stop） | Bachi（SEE-1129 活跃维护） |
 | `repo-checkout-mount` | SessionStart | payload hook_event_name equals SessionStart | `repo-checkout.sh` | 否（session 启动自动 checkout 工作分支，additionalContext hint） | Bachi（SEE-1117 活跃维护） |
+| `plan-mode-permission-allow`（rules.d/plan-mode-auto-allow.json） | PermissionRequest | payload permission_mode equals "plan"（字符串精确等值） | `plan-mode-allow.sh` | 否（allow 放行；非 plan 输出为空 → 透传原审批流；脚本失败 fail-open 降级手动审批） | Owner（jerry，Mac 原始裁定 2026-10-29，2026-11-03 迁入） |
 
 说明：
 
@@ -362,7 +365,7 @@ v2 下 skill-check 语义由统一引擎承载：规则声明在 `unified/rules-
 | `file` | file_path glob 匹配（`patterns` 多值） | `{"op":"file","patterns":["*.gd"]}` |
 | `command` | Bash 命令段匹配（`scope:current` + `keyword`/`pattern`，`has_flag`） | `{"op":"command","scope":"current","keyword":"multica issue comment add"}` |
 | `content` | 正文内容正则匹配（--content-file→--content→tool_input.content 链） | `{"op":"content","pattern":"..."}` |
-| `payload` | 载荷字段读取（单值 `equals`/`isSet`） | `{"op":"payload","path":"stop_hook_active","equals":false}` |
+| `payload` | 载荷字段读取（单值 `equals`/`isSet`；`equals` 为字符串时精确等值，如 plan-mode 门控的 `permission_mode`） | `{"op":"payload","path":"stop_hook_active","equals":false}`、`{"op":"payload","path":"permission_mode","equals":"plan"}` |
 | `branch` | 当前分支匹配（`in` 多值，可 `not` 包裹） | `{"op":"branch","in":["main","master"]}` |
 | `used_skill` | 会话已用 skill 判定 | `{"op":"used_skill","in":["doc-edit"]}` |
 | 逻辑组合 | `all` / `any` / `not`（args 递归） | `{"op":"not","arg":{...}}` |
@@ -482,7 +485,8 @@ INPUT="${INPUT%$'\n'}"
 
 ---
 
-*文档版本：2026-09-20（SEE-1330 v2 单轨架构终态）*
+*文档版本：2026-11-03（PermissionRequest 第 10 时点增补）*
+*更新记录：2026-11-03 — plan-mode-permission-allow 迁移（Owner 指令，源 = Mac 全局 settings 的 PermissionRequest jq 一行式钩子，原始裁定 2026-10-29）：HOOK_POINTS 增至 10 时点；§2.3 新增 rules.d/plan-mode-auto-allow.json 行；§5.1 清单新增该规则；§6.1 payload op 补字符串精确等值语义（plan-mode 门控前提）；§1/§2 时点计数同步 10。引擎侧配套：validate-rules.js HOOK_POINTS + when-ops.js payload 字符串 equals + scripts/plan-mode-allow.sh（协议 stdout 直通）；测试 tests/test_plan_mode_permission_allow.sh*
 *更新记录：SEE-1330 S22 终审 — 全文按 v2 终态重写：§1 调用链改为「wrapper → dispatcher（仅 unified-hook，全局优先）→ unified-hook.sh → engine.js 配置驱动 / run_script 挂载」；§2.1 配置快照改为 9 时点 × matcher `*` 统一注册 + 声明式注册真源（hooks-registration.json），新增 §2.3 规则配置真源；§4.1 dispatcher 代码更新为单 alias case；§5 清单改挂载/规则视角（规则配置与挂载 lane 为同步对象），§5.2 退役清单含 v1 死文件（待物理删除裁定见迁移清单 §7.2）；§6 重写为 v2 when 词表（v1 bash_executed 算子历史参考降级）*
 *更新记录：SEE-1185 F2 — §5 清单表按全局 settings.json 实际 11 个注册项重写（六列含是否阻断/owner），清除 rebase / revy-testing-reminder / mem-search-context / doc-reminder 四个已删钩子残留；补入 mention-check / skill-check(-post) / atlas-taskflow-\* 现役钩子；附「本表与 settings.json 同步更新」维护条款。§2.1 配置示例、§4.1 dispatcher 代码、§4.2 搜索顺序、§4.4 维护条款同步对齐 F1（rebase 死路由清理、双副本以 repo 为真源）与 F4（约定式路由）改动*
 *更新记录：SEE-781 firelog 路径从全局 `~/.claude/hook-fire.log` 改为仓库级 `.claude/hook-fire.log`（hook-wrapper.sh 动态检测 + dispatcher.sh 复用 PROJECT_ROOT），非仓库场景回退全局路径*

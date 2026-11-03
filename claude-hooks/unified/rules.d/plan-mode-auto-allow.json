@@ -1,0 +1,15 @@
+{
+  "description": "PermissionRequest 时点 plan 模式自动放行（2026-11-03 自 Mac 全局 settings jq 一行式钩子迁入 v2 引擎；Mac 原始裁定 2026-10-29：PermissionRequest 载荷 permission_mode == 'plan' 时直接返回 allow，其余模式输出为空 → 引擎 fail-open 透传，原审批行为完全不受影响）。字符串等值判定在引擎 payload op 与挂载脚本内双道承载（脚本自检保真 Mac 原语义，引擎 when 为声明式审计面）。脚本失败/超时缺省 on_fail=open → 放行语义静默降级为手动审批，绝不阻塞权限流。",
+  "rules": [
+    {
+      "name": "plan-mode-permission-allow",
+      "version_note": "Mac 原实现等价迁移：jq -c 'if .permission_mode == \"plan\" then {hookSpecificOutput:{hookEventName:\"PermissionRequest\",decision:{behavior:\"allow\"}}} else empty end'。引擎侧新增 PermissionRequest 时点（HOOK_POINTS 第 10 时点）与 payload op 字符串等值；协议经 run_script stdout 直通（decision.behavior=allow 为 PermissionRequest 专有协议，与 PreToolUse permissionDecision 不同形）。",
+      "on": { "in": ["PermissionRequest"] },
+      "enabled": true,
+      "when": { "op": "all", "args": [
+        { "op": "payload", "path": "permission_mode", "equals": "plan" }
+      ] },
+      "action": [{ "op": "run_script", "path": "${HOOKS_DIR}/scripts/plan-mode-allow.sh", "timeout_ms": 5000 }]
+    }
+  ]
+}
