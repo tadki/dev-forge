@@ -43,6 +43,26 @@ netsh advfirewall firewall add rule name="forge-console-7310" dir=in action=allo
 
 > 注意：portproxy/防火墙规则持久于注册表，WSL 重启不影响；但 WSL 服务本身由 systemd user 单元拉起。
 
+## 开发模式（HMR 实时热更，5173）
+
+前端改动即时生效，无需 `pnpm build`（7310 始终展示最近一次构建产物，5173 始终展示当前源码）：
+
+```bash
+cp deploy/forge-console-dev.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now forge-console-dev
+```
+
+vite dev server 监听 `0.0.0.0:5173`，`/api`、`/healthz` 代理至本机 7310（后端 `forge-console.service` 需在跑，单元已声明 Wants 依赖）。Windows 浏览器直接开 `http://localhost:5173`；Mac/手机 需在 Windows 管理员 PowerShell 加 portproxy（同 7310 套路）：
+
+```
+netsh interface portproxy add v4tov4 listenport=5173 listenaddress=0.0.0.0 connectport=5173 connectaddress=<WSL_IP>
+netsh advfirewall firewall add rule name="forge-console-dev-5173" dir=in action=allow protocol=TCP localport=5173
+```
+
+> 实际部署的 portproxy（2222/8890/7310/5173）都指向 WSL eth0 IP（当前 `172.17.196.205`，`hostname -I` 可查）；WSL 重启后 IP 若变，这些规则需同步更新。
+
+token 按 origin 存 localStorage：`localhost:5173` 与 `192.168.1.105:5173` 各输一次。不用时 `systemctl --user stop forge-console-dev`。
+
 ## 结构
 
 | 路径 | 职责 |

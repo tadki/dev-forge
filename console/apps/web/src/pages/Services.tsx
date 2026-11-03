@@ -25,9 +25,15 @@ function unitOf(a: AssetLite): string {
   return a.source.path.split('/').pop() ?? '';
 }
 
+function unitOfRs(a: AssetLite): string {
+  return a.id.replace('service:repo-sync-', '');
+}
+
 function canToggle(a: AssetLite): boolean {
   const p2 = a.payload as ServicePayload;
-  return a.provenance === 'first-party' && p2.scope === 'user' && a.source.path.startsWith('systemd://user/');
+  if (a.provenance !== 'first-party') return false;
+  if (a.id.startsWith('service:repo-sync-')) return true;
+  return p2.scope === 'user' && a.source.path.startsWith('systemd://user/');
 }
 
 function MetaChips({ meta }: { meta?: AssetLite['meta'] }) {
@@ -50,7 +56,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
   const [actionMsg, setActionMsg] = useState<Record<string, string>>({});
 
   async function runAction(a: AssetLite, action: 'start' | 'stop' | 'restart'): Promise<void> {
-    const unit = unitOf(a);
+    const unit = a.id.startsWith('service:repo-sync-') ? `repo-sync-${unitOfRs(a)}` : unitOf(a);
     const isConsole = unit.startsWith('forge-console');
     const tip =
       action === 'stop' && isConsole
@@ -85,7 +91,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '1.2fr 1fr' }}>
+      <div className="grid" style={{ gridTemplateColumns: '1.8fr 0.75fr' }}>
         <div className="col">
           <Panel title="服务树" en="SERVICE TREE · 状态 20s 刷新">
             <DataTable
@@ -100,11 +106,9 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
                     <span className="row" style={{ gap: 4 }}>
                       <span className="mono">{r.name}</span>
                       {r.provenance === 'first-party' ? (
-                        <Badge tone="ok" title={`自建${r.meta?.owner ? ` · owner ${r.meta.owner}` : ''}`}>
-                          ◆ 自建{r.meta?.criticality === 'high' ? ' ⚑' : ''}
-                        </Badge>
+                        <Badge tone="ok" title={`own${r.meta?.owner ? ` · owner ${r.meta.owner}` : ''}`}>OWN</Badge>
                       ) : (
-                        <Badge tone="off">◇ EXT 外部</Badge>
+                        <Badge tone="off">EXT</Badge>
                       )}
                     </span>
                   ),
@@ -121,7 +125,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
                     if (msg) return <span className="badge badge-plain">{msg}</span>;
                     if (!canToggle(r)) {
                       const p = r.payload as ServicePayload;
-                      const why = r.provenance !== 'first-party' ? '外部服务' : p.scope !== 'user' ? 'system 级需 root' : '非 systemd 来源';
+                      const why = r.provenance !== 'first-party' ? 'EXT 外部' : p.scope !== 'user' ? 'system 级需 root' : '非受管来源';
                       return <span className="badge badge-off" title={why}>开关 {why}</span>;
                     }
                     const running = (r.payload as ServicePayload).active === 'active';

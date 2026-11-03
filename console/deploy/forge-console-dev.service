@@ -1,0 +1,19 @@
+[Unit]
+Description=forge-console-dev · vite dev server（HMR 实时前端，5173 代理至 7310）
+After=forge-console.service
+Wants=forge-console.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tools/dev-forge/console/apps/web
+ExecStart=/usr/bin/node %h/tools/dev-forge/console/apps/web/node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5173 --strictPort
+Restart=on-failure
+RestartSec=3
+
+# dev 单元从轻：只读 home，node_modules 放行写入（.vite 缓存 + .vite-temp 配置打包）
+NoNewPrivileges=true
+ProtectHome=read-only
+ReadWritePaths=%h/tools/dev-forge/console/apps/web/node_modules
+
+[Install]
+WantedBy=default.target

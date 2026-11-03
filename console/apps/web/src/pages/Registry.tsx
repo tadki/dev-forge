@@ -135,7 +135,7 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
                 <span className="row" style={{ gap: 2 }}>
                   {r.meta?.category && <Chip>{r.meta.category}</Chip>}
                   {r.meta?.lifecycle && <Chip>{r.meta.lifecycle}</Chip>}
-                  {r.meta?.criticality && <Chip>{r.meta.criticality === 'high' ? '⚑ high' : r.meta.criticality}</Chip>}
+                  {r.meta?.criticality && <Chip>{r.meta.criticality}</Chip>}
                   {r.meta?.runtime && <Chip>{r.meta.runtime}</Chip>}
                   {(r.payload as { registry?: { declared?: boolean } }).registry?.declared === false && <Badge tone="warn">未登记</Badge>}
                 </span>
