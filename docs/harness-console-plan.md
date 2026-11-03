@@ -263,7 +263,7 @@ hook 引擎已有一套比五层格**更细**的作用域 DSL（`on` / `agents` 
 | `when.command / tool / content / used_skill / branch` | **内容条件，不进作用域格**——展示为触发条件，不硬塞 lattice | ●（条件 ≠ 作用域） |
 | 规则 `description` 里的适用性声明（如 push-guard-gates 写"三库 KOL/GQT/dev-forge 适用"） | ◐ 约定作用域 | 无强制——console 专门标注 |
 
-**「声明 vs 强制」偏差提示是一等公民功能**：活例——push-guard-gates 的 description 声明"三库适用"，但其 `when` 条件**不判仓库**，实际对任何仓库的 main/master push 都拦。console 把这类"description 说的"与"条件实际强制的"差异亮出来，比急着重构引擎更有价值。若确需仓库级强制门控，扩展点是给引擎新增 `repo` 条件 op（M3 可选评估），而非 console 侧作用域。
+**「声明 vs 强制」偏差提示是一等公民功能**：活例——push-guard-gates 的 description 声明"三库适用"，但其 `when` 条件**不判仓库**，实际对任何仓库的 main/master push 都拦。console 把这类"description 说的"与"条件实际强制的"差异亮出来，比急着重构引擎更有价值。~~若确需仓库级强制门控，扩展点是给引擎新增 `repo` 条件 op（M3 可选评估），而非 console 侧作用域。~~ → **已落地（2026-11-03）**：引擎新增 `repo` op（凭 `claude-hooks/unified/repos.json` 注册表 origin git URL 判定会话仓库）+ `cwd` op；push-guard-gates 两条门禁已改 `repo in [kol,gqt]` 作用域，声明与强制合一。
 
 **hook 注册的挂载层级（实况）**：CC 侧全部注册在 **user 层**（`~/.claude/settings.json` 9 挂载点 → dev-forge wrapper + hindsight 旁挂 3 点）；multica **无原生 hook 机制**，靠同一 user 层注册在 multica 派生的 headless claude 会话里继续生效；项目级 `.claude/hooks/` 脚本由 dispatcher 自动发现（KOL worktree 的 11–15 个脚本走此路）= project 层挂载、◇ 位置型。
 
