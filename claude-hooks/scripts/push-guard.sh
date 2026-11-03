@@ -93,19 +93,29 @@ PHASE1_OUTPUT=$(printf '%s' "$INPUT" | node -e "
       // --force-with-lease and it does not pass through push-guard.
       // SEE-954 LOW-1: also catch combined short clusters (-fn, -uf, -fo) and
       // --force=<v>. --no-force is an explicit opt-out and must NOT be blocked.
+      // SEE-1516 §SPEC-022 (fingerprint 7501c09c15a4): +refspec 加号 force 形态
+      // （+HEAD:refs/heads/x、+main）纳入结构化判定 —— 原短簇枚举两层均漏检。
       let isForce = false;
+      let noForce = false;
       for (const t of afterPush) {
+        if (t === '--') continue;
         if (t.startsWith('--')) {
+          if (t === '--no-force' || t.startsWith('--no-force=')) { noForce = true; continue; }
           if (t === '--force' || t.startsWith('--force=') ||
               t === '--force-with-lease' || t.startsWith('--force-with-lease=')) {
             isForce = true; break;
           }
-        } else if (t.startsWith('-') && t !== '-') {
+          continue;
+        }
+        if (t.startsWith('-') && t !== '-') {
           // Short option cluster: force if it contains 'f' (e.g. -f, -fn, -uf, -fo).
           if (t.indexOf('f') !== -1) { isForce = true; break; }
+          continue;
         }
+        // Positional refspec: leading '+' = force form (+main, +HEAD:refs/heads/x)
+        if (t.startsWith('+')) { isForce = true; break; }
       }
-      if (isForce) {
+      if (isForce && !noForce) {
         if (cmdGitRoot) process.stdout.write('CMD_GIT_ROOT=' + cmdGitRoot + '\n');
         process.stdout.write('FORCE_PUSH');
         return;
@@ -126,16 +136,15 @@ PHASE1_OUTPUT=$(printf '%s' "$INPUT" | node -e "
       }
 
       // Check if any token targets master/main
+      // SEE-1516 §SPEC-022 (fingerprint 7501c09c15a4): token 级精确匹配 ——
+      // \b(master|main)\b 曾对 master-branch/main-docs 类分支名 FP（\b 在连
+      // 字符处成立）；strip 加号前缀与 refs/heads/ 后 remote 侧整词等值判定，
+      // 且 HEAD:master 无空格前缀形态不再漏检（FN 修复）。
       let isMasterPush = false;
       for (const token of pushArgs) {
-        if (token.includes(':')) {
-          // Format: local:remote — check remote part
-          const remote = token.split(':').pop();
-          if (/\b(master|main)\b/.test(remote)) {
-            isMasterPush = true;
-            break;
-          }
-        } else if (/^(master|main)$/.test(token)) {
+        const remote = token.replace(/^\+/, '').split(':').pop()
+          .replace(/^refs\/heads\//, '').replace(/^[\"']|[\"']$/g, '');
+        if (remote === 'master' || remote === 'main') {
           isMasterPush = true;
           break;
         }

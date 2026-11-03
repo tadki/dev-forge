@@ -347,6 +347,84 @@ function createEvaluator(payload, opts) {
     return false;
   }
 
+  // ---- push-refspec 结构化解析（SEE-1516 §SPEC-022 / fingerprint 7501c09c15a4）----
+  // gates keyword 子串（` master`/` main`/`:refs/heads/master`）与 force 短簇枚举
+  // 的 FP/FN 根治：token 级解析 git push refspecs，取代裸子串/枚举。
+  //   master 形态 token 级精确匹配（`main-branch`/`maintenance` 分支名不再误拦 FP）
+  //   refspec 形态全覆盖（`HEAD:master`/`+HEAD:refs/heads/master` 不再漏检 FN）
+  //   force 短簇全簇判定（含 -nf/-vf/句尾 -f，--no-force 显式豁免）
+  function parseGitPushTokens(seg) {
+    const tokens = tokenize(seg);
+    for (let idx = 0; idx < tokens.length; idx++) {
+      if (tokens[idx] !== 'git') continue;
+      let j = idx + 1;
+      while (j < tokens.length && tokens[j].startsWith('-') && tokens[j] !== '--') {
+        // -C <dir> 等带值短旗标：跳旗标 + 值（FN 修复：`git -C dir push` 曾被
+        // 声明式 pattern `git(\s+-[A-Za-z-]+)*\s+push` 漏检）
+        if (tokens[j].length === 2 && j + 1 < tokens.length && tokens[j + 1] !== '-') {
+          j += 2;
+          continue;
+        }
+        j++;
+      }
+      if (tokens[j] === 'push') return tokens.slice(j + 1);
+    }
+    return null;
+  }
+
+  function evalPushRefspec(node) {
+    if (!cmd) return false;
+    const kind = node.kind === 'force' ? 'force' : 'master';
+    let segments = extractCommands(cmd);
+    if (typeof node.exclude === 'string' && node.exclude !== '') {
+      const re = safeRegex(node.exclude);
+      if (re) segments = segments.filter(s => !re.test(s));
+    }
+    for (const seg of segments) {
+      const after = parseGitPushTokens(seg);
+      if (!after) continue;
+      if (kind === 'force') {
+        let noForce = false;
+        let force = false;
+        for (const t of after) {
+          if (t === '--') continue;
+          if (t.startsWith('--')) {
+            if (t === '--no-force' || t.startsWith('--no-force=')) { noForce = true; continue; }
+            if (t === '--force' || t.startsWith('--force=') ||
+                t === '--force-with-lease' || t.startsWith('--force-with-lease=')) {
+              force = true;
+            }
+            continue;
+          }
+          if (t.startsWith('-')) {
+            // 短簇全簇判定：任何含 f 的短簇（-f/-nf/-vf/-fo/-uf）皆 force
+            if (t.indexOf('f') !== -1) force = true;
+            continue;
+          }
+          if (t.startsWith('+')) force = true; // +refspec 加号 force 形态
+        }
+        if (force && !noForce) return true;
+        continue;
+      }
+      // kind === 'master'：refspec remote 侧 token 级精确匹配
+      const positionals = [];
+      for (const t of after) {
+        if (t === '--' || t.startsWith('-')) continue;
+        positionals.push(t);
+      }
+      // 首 positional 为 remote 名（≥2 positionals 时），其余为 refspecs
+      const refs = positionals.length >= 2 ? positionals.slice(1) : positionals;
+      for (const raw of refs) {
+        const remote = raw.replace(/^\+/, '')
+          .split(':').pop()
+          .replace(/^refs\/heads\//, '')
+          .replace(/^["']|["']$/g, '');
+        if (remote === 'master' || remote === 'main') return true;
+      }
+    }
+    return false;
+  }
+
   function evalCommandRun(node) {
     loadTranscript();
     if (!transcriptAvailable) return false;
@@ -434,6 +512,9 @@ function createEvaluator(payload, opts) {
       }
       case 'command':
         return node.scope === 'run' ? evalCommandRun(node) : evalCommandCurrent(node);
+      case 'push_refspec':
+        // SEE-1516 §SPEC-022：git push refspec 结构化判定（token 级，替代 keyword 子串）
+        return evalPushRefspec(node);
       case 'file':
         return evalFile(node);
       case 'content': {
