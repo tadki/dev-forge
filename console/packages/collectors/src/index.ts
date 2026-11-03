@@ -36,5 +36,6 @@ export * from './effective.js';
 export * from './migration.js';
 export { fixtureCollector } from './collectors/fixture.js';
 export { servicesCollector } from './collectors/services.js';
+export { devforgeLaunchCollector } from './collectors/devforge-launch.js';
 export { parseFirelogLine } from './collectors/devforge-firelog.js';
 export { loadExternalCollectors } from './external.js';

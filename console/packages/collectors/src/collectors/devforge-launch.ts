@@ -16,15 +16,14 @@ export const devforgeLaunchCollector: Collector = {
       const cfg = await readJson<Record<string, unknown>>(join(reposD, f));
       if (!cfg) continue;
       const name = String(cfg.name ?? f.replace(/\.json$/, ''));
+      // pid 文件缺失 = 守护未运行（退出时自清理）→ dead；字段缺失才算 unknown
       let active = 'unknown';
       const pidFile = String(cfg.pid_file ?? '');
       if (pidFile) {
+        active = 'dead';
         const pidText = await readText(pidFile);
         const pid = Number((pidText ?? '').trim());
-        if (pid > 0) {
-          const alive = await exists(`/proc/${pid}`);
-          active = alive ? 'active' : 'dead';
-        }
+        if (pid > 0 && (await exists(`/proc/${pid}`))) active = 'active';
       }
       assets.push(
         asset({
