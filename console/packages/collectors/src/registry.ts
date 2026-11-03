@@ -51,7 +51,11 @@ export function mergeCollections(collections: Collection[]): Omit<RegistryState,
     }
     relations.push(...c.relations);
   }
-  return { assets: [...byId.values()], relations, diagnostics };
+  // 确定性顺序：采集是并发的，合并顺序否则随完成次序漂移 → 前端列表闪动
+  const assets = [...byId.values()].sort((a, b) =>
+    a.kind === b.kind ? a.id.localeCompare(b.id) : a.kind.localeCompare(b.kind)
+  );
+  return { assets, relations, diagnostics };
 }
 
 export function computeDriftGroups(assets: Asset[]): DriftGroup[] {

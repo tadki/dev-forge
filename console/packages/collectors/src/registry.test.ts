@@ -49,6 +49,22 @@ describe('mergeCollections', () => {
   });
 });
 
+describe('merge order stability（修前端闪动）', () => {
+  it('同输入不同完成次序 → 输出顺序一致（kind+id 排序）', () => {
+    const make = (ids: string[]) => ({
+      collector: 'x',
+      collectedAt: '',
+      assets: ids.map((id) => instr(id, `/${id}/CLAUDE.md`, 'h1')),
+      relations: [],
+      diagnostics: [],
+    });
+    const a = mergeCollections([make(['instruction:b/CLAUDE.md', 'instruction:a/CLAUDE.md'])]);
+    const b = mergeCollections([make(['instruction:a/CLAUDE.md', 'instruction:b/CLAUDE.md'])]);
+    expect(a.assets.map((x) => x.id)).toEqual(['instruction:a/CLAUDE.md', 'instruction:b/CLAUDE.md']);
+    expect(a.assets.map((x) => x.id)).toEqual(b.assets.map((x) => x.id));
+  });
+});
+
 describe('computeDriftGroups', () => {
   it('flags same-basename instructions with different hashes inside one workspace', () => {
     const assets = [

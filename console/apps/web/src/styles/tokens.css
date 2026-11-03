@@ -1,5 +1,16 @@
 /* forge-console 设计 tokens — 方案 E「紫调夜幕」（KOL SEE-1220 D2 定稿 + 效果图采样验证）
-   形制：Neo-Brutalism × 打字机档案风。圆角恒 0。禁散值 hex：一切色值只在此文件出现。 */
+   形制：Neo-Brutalism × 像素档案风。圆角恒 0。禁散值 hex：一切色值只在此文件出现。 */
+
+/* 全局像素字体：中文 + 拉丁均由 Fusion Pixel 承载（OFL，见 public/fonts/）。
+   单一字重声明 100-900，粗体由浏览器合成，保证任何字重都命中本字体。 */
+@font-face {
+  font-family: "Fusion Pixel 12px Prop zh_hans";
+  src: url("/fonts/fusion-pixel-12px-proportional-zh_hans.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* 色板 */
   --paper: #edeaf2;
@@ -43,9 +54,9 @@
   --shadow-panel-hover: 3px 3px 0 var(--accent);
   --shadow-widget-hover: 2px 2px 0 var(--accent);
 
-  /* 字体 */
-  --font-mono: "Courier New", "Courier Prime", ui-monospace, "Cascadia Mono", monospace;
-  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  /* 字体：中英文统一像素字体，全部面板继承；后备栈降级回原打字机/黑体 */
+  --font-mono: "Fusion Pixel 12px Prop zh_hans", "Courier New", ui-monospace, monospace;
+  --font-sans: "Fusion Pixel 12px Prop zh_hans", "PingFang SC", "Microsoft YaHei", sans-serif;
 
   /* 布局 */
   --topbar-h: 44px;
