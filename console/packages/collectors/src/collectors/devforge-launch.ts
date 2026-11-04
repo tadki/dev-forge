@@ -16,15 +16,18 @@ export const devforgeLaunchCollector: Collector = {
       const cfg = await readJson<Record<string, unknown>>(join(reposD, f));
       if (!cfg) continue;
       const name = String(cfg.name ?? f.replace(/\.json$/, ''));
-      // pid 文件缺失 = 守护未运行（退出时自清理）→ dead；字段缺失才算 unknown
-      let active = 'unknown';
+      const disabled = cfg.enabled === false;
+      // 停用优先于 pid：Owner 主动关闭是中性状态，残留进程也不得把它改回 active/dead。
+      let active = disabled ? 'disabled' : 'unknown';
       const pidFile = String(cfg.pid_file ?? '');
-      if (pidFile) {
+      if (!disabled && pidFile) {
+        // pid 文件缺失 = 守护未运行（退出时自清理）→ dead；字段缺失才算 unknown
         active = 'dead';
         const pidText = await readText(pidFile);
         const pid = Number((pidText ?? '').trim());
         if (pid > 0 && (await exists(`/proc/${pid}`))) active = 'active';
       }
+      const trigger = disabled ? '已手动停用（enabled=false）' : '随 toolchain-start-all 启动';
       assets.push(
         asset({
           id: `service:repo-sync-${name}`,
@@ -33,7 +36,7 @@ export const devforgeLaunchCollector: Collector = {
           summary: `${String(cfg.repo_path ?? '')} @ ${String(cfg.branch ?? '')}`,
           attach: { level: 'project', ref: String(cfg.repo_path ?? '') },
           enforcement: 'enforced',
-          payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, active, trigger: '随 toolchain-start-all 启动' },
+          payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, active, trigger },
           source: { collector: 'devforge-launch', path: join(reposD, f) },
           tags: ['repo-sync', 'devforge'],
         })

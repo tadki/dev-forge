@@ -114,21 +114,22 @@ export const servicesCollector: Collector = {
       );
     }
 
-    // multica daemon 进程行（third-party 软件进程；toolchain-start-all 的前台子进程）
+    // multica daemon 独立进程；toolchain 负责缺失补拉与驻留监督。
     {
       const psAll = await ctx.exec('ps', ['-eo', 'args', '--no-headers'], 10_000);
       const daemonAlive = /multica daemon start/.test(psAll.stdout);
+      const lifecycle = '独立 daemon；toolchain 缺失补拉并驻留监督';
       assets.push(
         asset({
           id: 'service:proc-multica-daemon',
           kind: 'service',
           name: 'multica daemon',
-          summary: daemonAlive ? '进程在运行（toolchain-start-all 前台子进程）' : '进程未运行',
+          summary: daemonAlive ? `进程在运行（${lifecycle}）` : `进程未运行（${lifecycle}）`,
           attach: { level: 'user' },
           provenance: 'third-party',
           enforcement: 'enforced',
           enabled: true,
-          payload: { active: daemonAlive ? 'active' : 'dead', trigger: '随 toolchain-start-all（前台 exec）', process: 'multica daemon start' },
+          payload: { active: daemonAlive ? 'active' : 'dead', trigger: 'toolchain-start-all 驻留监督，daemon 缺失时补拉', process: 'multica daemon start' },
           source: { collector: 'services', path: 'proc://multica-daemon' },
           tags: ['multica', 'process'],
         })

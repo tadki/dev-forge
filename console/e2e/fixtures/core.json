@@ -623,7 +623,7 @@
           {
             "pid": 333,
             "up": "15h",
-            "args": "multica daemon start --foreground"
+            "args": "multica daemon start"
           },
           {
             "pid": 373,
@@ -961,6 +961,93 @@
         "sub": "running",
         "enabled": "enabled",
         "trigger": "boot(user)"
+      }
+    },
+    {
+      "id": "service:repo-sync-devforge",
+      "kind": "service",
+      "name": "repo-sync · devforge",
+      "summary": "/e2e/devforge @ main",
+      "attach": {
+        "level": "project",
+        "ref": "/e2e/devforge"
+      },
+      "enforcement": "enforced",
+      "platforms": [
+        "claude-code"
+      ],
+      "provenance": "first-party",
+      "tags": [
+        "repo-sync",
+        "devforge"
+      ],
+      "enabled": false,
+      "source": {
+        "collector": "fixture",
+        "path": "/e2e/devforge/repo-sync/repos.d/devforge.json"
+      },
+      "payload": {
+        "daemon": "repo_sync_daemon.py",
+        "active": "disabled",
+        "trigger": "已手动停用（enabled=false）"
+      }
+    },
+    {
+      "id": "service:repo-sync-gqt",
+      "kind": "service",
+      "name": "repo-sync · gqt",
+      "summary": "/e2e/gqt @ main",
+      "attach": {
+        "level": "project",
+        "ref": "/e2e/gqt"
+      },
+      "enforcement": "enforced",
+      "platforms": [
+        "claude-code"
+      ],
+      "provenance": "first-party",
+      "tags": [
+        "repo-sync",
+        "devforge"
+      ],
+      "enabled": true,
+      "source": {
+        "collector": "fixture",
+        "path": "/e2e/devforge/repo-sync/repos.d/gqt.json"
+      },
+      "payload": {
+        "daemon": "repo_sync_daemon.py",
+        "active": "dead",
+        "trigger": "随 toolchain-start-all 启动"
+      }
+    },
+    {
+      "id": "service:repo-sync-kol",
+      "kind": "service",
+      "name": "repo-sync · kol",
+      "summary": "/e2e/kol @ main",
+      "attach": {
+        "level": "project",
+        "ref": "/e2e/kol"
+      },
+      "enforcement": "enforced",
+      "platforms": [
+        "claude-code"
+      ],
+      "provenance": "first-party",
+      "tags": [
+        "repo-sync",
+        "devforge"
+      ],
+      "enabled": true,
+      "source": {
+        "collector": "fixture",
+        "path": "/e2e/devforge/repo-sync/repos.d/kol.json"
+      },
+      "payload": {
+        "daemon": "repo_sync_daemon.py",
+        "active": "active",
+        "trigger": "随 toolchain-start-all 启动"
       }
     }
   ],

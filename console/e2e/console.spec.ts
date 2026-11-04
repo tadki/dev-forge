@@ -103,7 +103,7 @@ test('hooks: pipeline, rules table, firelog', async ({ page }) => {
 test('services: tree and detail', async ({ page }) => {
   await page.goto('/services');
   await expect(page.getByText('toolchain-start-all').first()).toBeVisible();
-  await page.locator('tr', { hasText: 'toolchain-start-all' }).first().click();
+  await page.locator('tr').filter({ has: page.getByText('toolchain-start-all', { exact: true }) }).first().click();
   await expect(page.getByText('/bin/bash -l /home/jerry/tools/dev-forge/launch/toolchain-start.sh')).toBeVisible();
   await expect(page.getByText('#333').first()).toBeVisible();
 });
@@ -218,6 +218,28 @@ test('services: EXT badge on third-party, toggle only on first-party user units'
   // system 级禁用
   const sysRow = page.locator('tr', { hasText: 'toolchain-start-all' });
   await expect(sysRow.getByText('system 级需 root')).toBeVisible();
+});
+
+test('services: disabled repo-sync is neutral and has no start/restart', async ({ page }) => {
+  await page.goto('/services');
+  const disabled = page.locator('tr', { hasText: 'repo-sync · devforge' }).first();
+  await expect(disabled.getByText('disabled', { exact: true })).toBeVisible();
+  await expect(disabled.getByText('已手动停用（enabled=false）')).toBeVisible();
+  await expect(disabled.locator('.badge-off').first()).toBeVisible();
+  await expect(disabled.locator('button')).toHaveCount(0);
+
+  const dead = page.locator('tr', { hasText: 'repo-sync · gqt' }).first();
+  await expect(dead.getByText('dead', { exact: true })).toBeVisible();
+  await expect(dead.getByRole('button', { name: '▶ 启动' })).toBeVisible();
+  await expect(dead.getByRole('button', { name: '↻' })).toBeVisible();
+  page.on('dialog', (d) => d.accept());
+  await dead.getByRole('button', { name: '▶ 启动' }).click();
+  await expect(dead.getByText('start ✓')).toBeVisible({ timeout: 10_000 });
+
+  const active = page.locator('tr', { hasText: 'repo-sync · kol' }).first();
+  await expect(active.getByText('active', { exact: true })).toBeVisible();
+  await expect(active.getByRole('button', { name: '■ 停止' })).toBeVisible();
+  await expect(active.getByRole('button', { name: '↻' })).toBeVisible();
 });
 
 test('services: dry-run stop returns ok message', async ({ page }) => {
