@@ -1,20 +1,21 @@
 #!/bin/bash
 # test_push_guard_atlas_whitelist_see1069.sh
-# Regression test for SEE-1069: push-guard.sh Atlas force-push whitelist + audit log.
+# SEE-1069 Atlas force-push whitelist RETIREMENT regression suite.
 #
-# Background: when reconciling squash-merge divergence on a shared branch, Atlas
-# (Leader agent) needs to force-push but was hard-blocked by the FORCE_PUSH guard
-# (exit 2). SEE-1069 adds an agent_id whitelist: when MULTICA_AGENT_ID matches
-# Atlas's UUID, the force-push is allowed and an audit line is appended to
-# .claude/push-guard-force-audit.log.
+# 背景（退役裁定，SEE-1516 §SPEC-021 / Owner「方案一 + B」2026-11-04）：原
+# SEE-1069 为 squash-merge 分歧场景给 Atlas 加了 agent_id 白名单 + 审计日志。
+# 团队 PR 实际一直走 rebase merge（线性历史），squash 前提不成立——白名单是
+# 用不到的历史遗留特权，且被 gates push-guard-force-push-gate 无差别 deny 覆盖
+# 而死亡（双轨）。E1 单轨收编按 Owner 裁决删除白名单与审计链：force-push 拦截
+# 唯一防线 = gates（无任何 agent 豁免，含 Atlas）。
 #
-# Coverage:
-#   S1: Atlas + force form → exit 0 + audit log line written
-#   S2: other / empty agent_id + force form → exit 2 (existing block preserved)
-#   S3: Atlas + non-force / non-push → original flow, NO audit line
-#   S4: audit log line format (iso ts + agent + name + cmd)
+# Coverage（按新契约改写）：
+#   R1: 源码不再含 ATLAS_AGENT_ID 白名单常量与审计日志路径
+#   R2: Atlas 身份 + force 形态 → 脚本不再特判（无审计文件产生；透传进后续检查）
+#   R3: 非 Atlas / 空 agent_id + force 形态 → 同上（脚本层不再 exit 2，deny 归 gates）
+#   R4: 任何路径均不产生 push-guard-force-audit.log
 #
-# Related Issue: SEE-1069
+# Related Issue: SEE-1069（退役）→ SEE-1516 §SPEC-021
 # Author: Bachi
 
 set -uo pipefail
@@ -33,20 +34,21 @@ fail() { echo -e "  ${RED}[FAIL]${NC} $1"; FAIL=$((FAIL + 1)); }
 WORKTREE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK_SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/push-guard.sh"
 ATLAS_ID="fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
-# dev-forge 豁免（Owner 指令 2026-11-03）后 push-guard 按 PWD 解析目标仓库；
-# 本套件断言 force 白名单/审计语义（与仓库策略无关），从中性非 git 目录执行
-# （PROJECT_ROOT 仍指审计目录，供白名单审计落点），豁免不参与结果。
+# git 仓 fixture 内执行：force 走普通 Phase 3 管线（空仓无 upstream → 各检查
+# 自然跳过 → exit 0 透传），证明无白名单特判；PROJECT_ROOT 指向受控临时目录，
+# 供断言「审计文件不再产生」。
 NEUTRAL_DIR="$(mktemp -d /tmp/pgw-neutral.XXXXXX)"
+GITFIX="$NEUTRAL_DIR/repo"
+git init -q -b master "$GITFIX"
+git -C "$GITFIX" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git init -q --bare "$NEUTRAL_DIR/origin.git"
+git -C "$GITFIX" remote add origin "$NEUTRAL_DIR/origin.git"
+git -C "$GITFIX" push -q -u origin master 2>/dev/null
 
 echo "============================================"
-echo "  SEE-1069: push-guard.sh Atlas force-push whitelist + audit"
+echo "  SEE-1069 whitelist retirement (SEE-1516 §SPEC-021)"
 echo "  Hook: $HOOK_SCRIPT"
 echo "============================================"
-
-# -------------------------------------------------------
-# Pre-check: file existence + whitelist source presence
-# -------------------------------------------------------
-echo -e "${CYAN}--- Pre-check ---${NC}"
 
 if [ ! -f "$HOOK_SCRIPT" ]; then
   fail "push-guard.sh not found at $HOOK_SCRIPT"
@@ -54,20 +56,29 @@ if [ ! -f "$HOOK_SCRIPT" ]; then
 fi
 pass "push-guard.sh exists"
 
-if grep -q 'ATLAS_AGENT_ID="fac3e3a1-dcda-498d-8613-e8c2811f3ef5"' "$HOOK_SCRIPT"; then
-  pass "source: Atlas agent_id whitelist present"
+# -------------------------------------------------------
+# R1: 源码退役面断言
+# -------------------------------------------------------
+echo -e "${CYAN}--- R1 source retirement assertions ---${NC}"
+
+if grep -q 'ATLAS_AGENT_ID' "$HOOK_SCRIPT"; then
+  fail "R1-1: ATLAS_AGENT_ID 白名单常量仍在源码中"
 else
-  fail "source: Atlas agent_id whitelist missing"
+  pass "R1-1: 源码无 ATLAS_AGENT_ID 白名单常量"
 fi
-if grep -q 'push-guard-force-audit.log' "$HOOK_SCRIPT"; then
-  pass "source: audit log path present"
+if grep -q 'AUDIT_LOG=' "$HOOK_SCRIPT"; then
+  fail "R1-2: 活动审计代码（AUDIT_LOG=）仍在源码中"
 else
-  fail "source: audit log path missing"
+  pass "R1-2: 源码无活动审计代码（退役注释中的路径字样为意向保留）"
+fi
+if grep -q 'PUSH_RESULT" = "FORCE_PUSH" ]; then' "$HOOK_SCRIPT"; then
+  fail "R1-3: FORCE_PUSH 拦截块仍在源码中"
+else
+  pass "R1-3: 源码无 FORCE_PUSH 拦截块"
 fi
 
 # -------------------------------------------------------
-# Helper: run the hook with a controlled PROJECT_ROOT (so the
-# audit log lands in a temp dir we own) and capture exit/stderr.
+# Helper: run the hook with a controlled PROJECT_ROOT and capture exit.
 # Sets MULTICA_TASK_ID="" to skip working-branch resolution.
 # -------------------------------------------------------
 run_hook() {
@@ -84,7 +95,7 @@ run_hook() {
   stderr_file=$(mktemp /tmp/pgw-err.XXXXXX)
 
   (
-    cd "$NEUTRAL_DIR" || exit 99
+    cd "$GITFIX" || exit 99
     unset TARGET_REPO_ROOT GIT_ROOT
     export MULTICA_AGENT_ID="$agent_id"
     export MULTICA_AGENT_NAME="$agent_name"
@@ -104,185 +115,71 @@ run_hook() {
 }
 
 # ========================================================
-# Section 1: Atlas + force form → exit 0 + audit log
+# R2: Atlas 身份 + force 形态 → 白名单特判消失
 # ========================================================
 echo ""
-echo -e "${CYAN}=== Section 1: Atlas + force form → allowed + audited ===${NC}"
+echo -e "${CYAN}=== R2: Atlas + force form → no special-case ===${NC}"
 
-AUDIT_DIR_S1=$(mktemp -d /tmp/pgw-audit-s1.XXXXXX)
+AUDIT_DIR_R2=$(mktemp -d /tmp/pgw-audit-r2.XXXXXX)
 
-# Atlas --force-with-lease → exit 0, audit log written with the cmd
 OUT=$(run_hook "$ATLAS_ID" "Atlas" \
   "git push --force-with-lease origin HEAD:refs/heads/shared/SEE-1067" \
-  "$AUDIT_DIR_S1")
+  "$AUDIT_DIR_R2")
 EXIT=$(echo "$OUT" | head -1)
-LOG_FILE="$AUDIT_DIR_S1/.claude/push-guard-force-audit.log"
-if [ "$EXIT" -eq 0 ] && [ -f "$LOG_FILE" ]; then
-  pass "S1-1: Atlas --force-with-lease → exit 0 + audit file created"
+if [ "$EXIT" -eq 0 ] && ! grep -q "Atlas whitelist" <<<"$OUT"; then
+  pass "R2-1: Atlas --force-with-lease → 脚本无白名单特判（exit 0 透传）"
 else
-  fail "S1-1: expected exit 0 + audit file, got exit=$EXIT file=$LOG_FILE"
+  fail "R2-1: 预期 exit 0 且无白名单文案，got exit=$EXIT"
 fi
-if [ -f "$LOG_FILE" ] && grep -q "cmd=git push --force-with-lease" "$LOG_FILE"; then
-  pass "S1-1b: audit line records the forced command"
-else
-  fail "S1-1b: audit line missing forced cmd (log=$(cat "$LOG_FILE" 2>/dev/null))"
-fi
-
-# Atlas --force and -f also allowed + audited
-OUT=$(run_hook "$ATLAS_ID" "Atlas" \
-  "git push --force origin HEAD:refs/heads/shared/SEE-1067" "$AUDIT_DIR_S1")
-EXIT=$(echo "$OUT" | head -1)
-[ "$EXIT" -eq 0 ] && pass "S1-2: Atlas --force → exit 0" || fail "S1-2: got exit=$EXIT"
+[ -f "$AUDIT_DIR_R2/.claude/push-guard-force-audit.log" ] \
+  && fail "R2-2: 审计文件不应再产生" \
+  || pass "R2-2: 无审计文件产生"
 
 OUT=$(run_hook "$ATLAS_ID" "Atlas" \
-  "git push -f origin HEAD:refs/heads/shared/SEE-1067" "$AUDIT_DIR_S1")
+  "git push --force origin HEAD:refs/heads/shared/SEE-1067" "$AUDIT_DIR_R2")
 EXIT=$(echo "$OUT" | head -1)
-[ "$EXIT" -eq 0 ] && pass "S1-3: Atlas -f → exit 0" || fail "S1-3: got exit=$EXIT"
+[ "$EXIT" -eq 0 ] && pass "R2-3: Atlas --force → 脚本不再特判" || fail "R2-3: got exit=$EXIT"
 
-# Audit file should have accumulated 3 lines (one per allowed force-push)
-LINE_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-if [ "$LINE_COUNT" -eq 3 ]; then
-  pass "S1-4: audit log appended 3 lines (one per force-push)"
+# ========================================================
+# R3: 非 Atlas / 空 agent_id + force 形态 → 同路径（deny 归 gates）
+# ========================================================
+echo ""
+echo -e "${CYAN}=== R3: non-Atlas + force → same path (gates own deny) ===${NC}"
+
+AUDIT_DIR_R3=$(mktemp -d /tmp/pgw-audit-r3.XXXXXX)
+
+OUT=$(run_hook "other-agent-uuid" "Bachi" \
+  "git push --force origin HEAD:refs/heads/shared/SEE-1067" "$AUDIT_DIR_R3")
+EXIT=$(echo "$OUT" | head -1)
+if [ "$EXIT" -eq 0 ]; then
+  pass "R3-1: 非 Atlas force → 脚本不再 exit 2（deny 归 gates 层，见 B7/E2 套件）"
 else
-  fail "S1-4: expected 3 audit lines, got $LINE_COUNT"
+  fail "R3-1: 预期脚本透传（exit 0），got exit=$EXIT"
 fi
 
-rm -rf "$AUDIT_DIR_S1"
+OUT=$(run_hook "" "" "git push -f origin feature/x" "$AUDIT_DIR_R3")
+EXIT=$(echo "$OUT" | head -1)
+[ "$EXIT" -eq 0 ] && pass "R3-2: 空 agent_id force → 脚本透传" || fail "R3-2: got exit=$EXIT"
 
 # ========================================================
-# Section 2: other / empty agent_id + force → exit 2
+# R4: 全路径无审计文件
 # ========================================================
+echo -e "${CYAN}=== R4: no audit file anywhere ===${NC}"
+FOUND=0
+for d in "$AUDIT_DIR_R2" "$AUDIT_DIR_R3" "$NEUTRAL_DIR"; do
+  [ -e "$d/.claude/push-guard-force-audit.log" ] && FOUND=1
+done
+[ "$FOUND" -eq 0 ] && pass "R4: 全路径无 push-guard-force-audit.log" || fail "R4: 审计文件仍被产生"
+
+# --- Summary ---
+rm -rf "$NEUTRAL_DIR" "$AUDIT_DIR_R2" "$AUDIT_DIR_R3"
 echo ""
-echo -e "${CYAN}=== Section 2: non-Atlas + force form → blocked (exit 2) ===${NC}"
-
-assert_force_blocked() {
-  local agent_id="$1" agent_name="$2" cmd="$3" label="$4"
-  local audit_dir
-  audit_dir=$(mktemp -d /tmp/pgw-blk.XXXXXX)
-  local out exit_code stderr_content
-  out=$(run_hook "$agent_id" "$agent_name" "$cmd" "$audit_dir")
-  exit_code=$(echo "$out" | head -1)
-  stderr_content=$(echo "$out" | sed -n '/---STDERR---/,$p' | tail -n +2)
-  local log_file="$audit_dir/.claude/push-guard-force-audit.log"
-
-  if [ "$exit_code" -eq 2 ] && echo "$stderr_content" | grep -q "禁止 force-push"; then
-    pass "$label (exit 2)"
-  else
-    fail "$label — got exit=$exit_code (stderr: $stderr_content)"
-  fi
-  # Audit log must NOT have been written for a blocked force-push
-  if [ -f "$log_file" ]; then
-    fail "$label — audit log unexpectedly written (security: blocked push must not audit as allowed)"
-  else
-    pass "$label — no audit file (blocked push not recorded as allowed)"
-  fi
-  rm -rf "$audit_dir"
-}
-
-assert_force_blocked "a5c250e8-7257-466e-b45a-03f995c7206c" "Bachi" \
-  "git push --force-with-lease origin HEAD:refs/heads/shared/SEE-1067" \
-  "S2-1: Bachi --force-with-lease → exit 2"
-assert_force_blocked "2660961d-6add-4d15-8d1b-dea446142a94" "Revy" \
-  "git push --force origin HEAD:refs/heads/shared/SEE-1067" \
-  "S2-2: Revy --force → exit 2"
-assert_force_blocked "23354e78-8322-418b-b44d-375287a0650c" "Fronti" \
-  "git push -f origin HEAD:refs/heads/shared/SEE-1067" \
-  "S2-3: Fronti -f → exit 2"
-# Atlas NAME but wrong/non-matching agent_id → still blocked (whitelist is by ID)
-assert_force_blocked "00000000-0000-0000-0000-000000000000" "Atlas" \
-  "git push --force-with-lease origin HEAD:refs/heads/shared/SEE-1067" \
-  "S2-4: name=Atlas but foreign agent_id → exit 2 (whitelist is by ID, not name)"
-# Empty agent_id → blocked
-assert_force_blocked "" "" \
-  "git push --force-with-lease origin HEAD:refs/heads/shared/SEE-1067" \
-  "S2-5: empty agent_id → exit 2"
-
-# ========================================================
-# Section 3: Atlas + non-force / non-push → original flow, NO audit
-# ========================================================
+echo -e "${CYAN}--- Results Summary ---${NC}"
 echo ""
-echo -e "${CYAN}=== Section 3: Atlas non-force → unaffected by whitelist ===${NC}"
-
-run_atlas_non_force() {
-  local cmd="$1" label="$2"
-  local audit_dir
-  audit_dir=$(mktemp -d /tmp/pgw-nf.XXXXXX)
-  local out exit_code log_file
-  out=$(run_hook "$ATLAS_ID" "Atlas" "$cmd" "$audit_dir")
-  exit_code=$(echo "$out" | head -1)
-  log_file="$audit_dir/.claude/push-guard-force-audit.log"
-
-  # Must NOT be force-blocked (no "禁止 force-push" error)
-  local force_blocked=0
-  if [ "$exit_code" -eq 2 ] && echo "$out" | grep -q "禁止 force-push"; then
-    force_blocked=1
-  fi
-  if [ "$force_blocked" -eq 0 ]; then
-    pass "$label — not force-blocked (exit=$exit_code)"
-  else
-    fail "$label — unexpectedly force-blocked"
-  fi
-  # No audit line for a non-force command
-  if [ -f "$log_file" ]; then
-    fail "$label — audit log unexpectedly written (whitelist must only audit force-pushes)"
-  else
-    pass "$label — no audit file (whitelist did not trigger)"
-  fi
-  rm -rf "$audit_dir"
-}
-
-run_atlas_non_force "git status" \
-  "S3-1: Atlas git status (NOT_PUSH passthrough)"
-run_atlas_non_force "ls -la" \
-  "S3-2: Atlas ls -la (not a push)"
-run_atlas_non_force "git push origin HEAD:refs/heads/shared/SEE-1067" \
-  "S3-3: Atlas plain safe push (no force flag)"
-run_atlas_non_force "git push origin --delete old-branch" \
-  "S3-4: Atlas delete push (DELETE_PUSH bypass)"
-
-# ========================================================
-# Section 4: audit log line format
-# ========================================================
-echo ""
-echo -e "${CYAN}=== Section 4: audit log format ===${NC}"
-
-AUDIT_DIR_S4=$(mktemp -d /tmp/pgw-fmt.XXXXXX)
-run_hook "$ATLAS_ID" "Atlas" \
-  "git push --force-with-lease origin HEAD:refs/heads/shared/SEE-1067" \
-  "$AUDIT_DIR_S4" >/dev/null
-LOG_FILE_S4="$AUDIT_DIR_S4/.claude/push-guard-force-audit.log"
-
-# ISO-8601 timestamp prefix (date -Iseconds → YYYY-MM-DDTHH:MM:SS+ZZ:ZZ)
-if grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' "$LOG_FILE_S4"; then
-  pass "S4-1: line starts with ISO-8601 timestamp"
-else
-  fail "S4-1: bad timestamp prefix (log=$(cat "$LOG_FILE_S4" 2>/dev/null))"
-fi
-grep -q "agent=$ATLAS_ID" "$LOG_FILE_S4" \
-  && pass "S4-2: line contains agent=<atlas-id>" \
-  || fail "S4-2: agent field missing/wrong"
-grep -q "name=Atlas" "$LOG_FILE_S4" \
-  && pass "S4-3: line contains name=Atlas" \
-  || fail "S4-3: name field missing/wrong"
-grep -Eq 'cmd=git push --force-with-lease origin HEAD:refs/heads/shared/SEE-1067' "$LOG_FILE_S4" \
-  && pass "S4-4: line contains cmd=<forced command>" \
-  || fail "S4-4: cmd field missing/wrong (log=$(cat "$LOG_FILE_S4" 2>/dev/null))"
-
-rm -rf "$AUDIT_DIR_S4"
-
-# ========================================================
-# Summary
-# ========================================================
-rm -rf "$NEUTRAL_DIR"
-echo ""
-echo "============================================"
-echo -e "${CYAN}Results:${NC} ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
-echo "============================================"
-
-if [ "$FAIL" -eq 0 ]; then
-  echo -e "${GREEN}Overall: PASS${NC}"
-  exit 0
-else
-  echo -e "${RED}Overall: FAIL ($FAIL failures)${NC}"
+echo "Total: $((PASS + FAIL)) | PASS: $PASS | FAIL: $FAIL"
+if [ "$FAIL" -gt 0 ]; then
+  echo -e "${RED}$FAIL TEST(S) FAILED${NC}"
   exit 1
 fi
+echo -e "${GREEN}ALL TESTS PASSED${NC}"
+exit 0

@@ -261,31 +261,14 @@ if [ -n "$GIT_ROOT" ]; then
   fi
 fi
 
-# Force push (C3/SC5): blocked for agents by default. The §B auto-rebase in
-# repo-checkout (SessionStart) uses --force-with-lease but does not pass through
-# push-guard, so any agent-typed --force / --force-with-lease / -f is a mistake
-# that would overwrite another agent's commits on the shared branch.
-# SEE-1069: Atlas (Leader agent) is whitelisted by agent_id so it can force-push
-# to reconcile squash-merge divergence on a shared branch. Every whitelisted
-# force-push is appended to an audit log for traceability. Non-force pushes are
-# unaffected — this only short-circuits the force-push block below.
-if [ "$PUSH_RESULT" = "FORCE_PUSH" ]; then
-  ATLAS_AGENT_ID="fac3e3a1-dcda-498d-8613-e8c2811f3ef5"
-  if [ "${MULTICA_AGENT_ID:-}" = "$ATLAS_AGENT_ID" ]; then
-    AUDIT_LOG="${PROJECT_ROOT:-.}/.claude/push-guard-force-audit.log"
-    FORCED_CMD=$(printf '%s' "$INPUT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{process.stdout.write((JSON.parse(d).tool_input?.command||'').trim())}catch(e){}})" 2>/dev/null || true)
-    # Best-effort audit: a logging failure (missing dir, read-only fs) must never
-    # break the authorized push decision, hence mkdir -p + `|| true`.
-    mkdir -p "$(dirname "$AUDIT_LOG")" 2>/dev/null || true
-    { echo "$(date -Iseconds) agent=${MULTICA_AGENT_ID:-unknown} name=${MULTICA_AGENT_NAME:-unknown} cmd=${FORCED_CMD}"; } >> "$AUDIT_LOG" 2>/dev/null || true
-    echo "[push-guard] Atlas whitelist: force-push allowed, audit logged to ${AUDIT_LOG}" >&2
-    echo "$INPUT"; exit 0
-  fi
-  echo "[push-guard] 错误：禁止 force-push（--force / --force-with-lease / -f）" >&2
-  echo "[push-guard] 多 agent 共享分支场景下 force-push 会覆盖他人 commit。" >&2
-  echo "[push-guard] 请改用：git fetch origin && git rebase origin/<working_branch>，然后普通推送。" >&2
-  exit 2
-fi
+# FORCE_PUSH / MASTER_PUSH 判定段已退役（SEE-1516 §SPEC-021，Owner「方案一 + B」
+# = 无白名单豁免）：force-push 拦截与 master/main 直推门禁由声明式 gates
+# （rules.d/push-guard-gates.json 两条 deny，无一例外含 Atlas）承接为唯一防线；
+# 于此删除脚本侧 force 拦截（含 SEE-1069 Atlas 白名单 + push-guard-force-audit.log
+# 审计链——审计链随白名单一并退役）与 master/main 门禁段（含 Atlas/Archi 白名单 +
+# run_sidecar_guard）。Check 3-8（祖先/NO_REFSPEC/shared-branch/draft/sidecar/
+# gitlink）保留不动；dev-forge 豁免（上方 Phase 1b）口径不变。FORCE_PUSH 结果
+# 仅用于日志，不再作拦截决策。
 
 # SEE-1117 Direction 3 + SEE-1240 WS-8 retirement note: the per-worktree MCP
 # lease lives in a sidecar at <worktree>/.godot/mcp-lease.json (gitignored —
@@ -390,43 +373,9 @@ resolve_gqt_host_root() {
   return 1
 }
 
-# Check 2a: if pushing to master/main, only Atlas/Archi allowed (always blocks, regardless of CWD).
-# SEE-1268 (2-library split): this master block is KOL's OWNAGENT-workflow policy,
-# scoped to the KingOfLikes host worktree repo. Companion standalone libraries
-# (godot-qa-toolkit, the godot-mcp fork, addons submodules) have their own
-# development flow (fork PR / standalone master) and must NOT be master-gated by
-# KOL. Only when the push's git root is the KOL worktree do we enforce the block.
-# SEE-1406 追加: the GQT CANONICAL checkout joins the host set (same whitelist);
-# GQT *task* checkouts elsewhere stay companion (path must equal toplevel probe).
-if [ "$PUSH_RESULT" = "MASTER_PUSH" ]; then
-  resolve_git_root || true
-  HOST_REPO=""
-  if [ -n "$PROJECT_ROOT" ] && git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    HOST_REPO="$PROJECT_ROOT"
-  elif [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/.claude/hooks" ]; then
-    HOST_REPO="$GIT_ROOT"
-  fi
-  IS_HOOK_HOST=false
-  if [ -n "$HOST_REPO" ] && [ "$HOST_REPO" = "$GIT_ROOT" ]; then
-    IS_HOOK_HOST=true
-  elif [ -n "$GIT_ROOT" ] && resolve_gqt_host_root && [ "$GIT_ROOT" = "$GQT_HOST_ROOT" ]; then
-    IS_HOOK_HOST=true
-  fi
-  if [ "$IS_HOOK_HOST" = "true" ]; then
-    case "${MULTICA_AGENT_NAME:-}" in
-      Atlas|Archi)
-        # Even Atlas/Archi must not push a leaked .godot/mcp-lease.json onto master.
-        [ -n "$GIT_ROOT" ] && run_sidecar_guard master
-        echo "$INPUT"; exit 0 ;;
-      *)
-        echo "[push-guard] 错误：禁止直接推送到 master 分支" >&2
-        echo "[push-guard] 请在feature分支上开发，通过PR合并" >&2
-        exit 2
-        ;;
-    esac
-  fi
-  # Non-host repo (companion library): its own dev flow governs; not KOL-master-gated.
-fi
+# Check 2a（master/main 直推门禁）已退役（SEE-1516 §SPEC-021，Owner「方案一 + B」）：
+# 该职责由 gates push-guard-master-gate 唯一承接（repo op kol/gqt 作用域，无任何
+# agent 白名单）。脚本侧对 MASTER_PUSH 不再拦——直接落入 Phase 3 通用检查。
 
 # --- Phase 3: Guard checks that require being inside a git repo ---
 
@@ -501,18 +450,17 @@ if [ "$CURRENT_UPSTREAM" != "origin/${WORKING_BRANCH}" ]; then
   fi
 fi
 
-# Check 4: NO_REFSPEC + current branch is master/main — block non-Atlas/Archi
+# Check 4: NO_REFSPEC + current branch is master/main — block everyone.
+# SEE-1516 §SPEC-021（Owner「方案一 + B」）：原 Atlas/Archi 白名单属 master 直推
+# 豁免，随 Check 2a 一并退役——gates refspec op 看不到无 refspec 的裸 push，
+# 本检查是裸 push 直推 master 的唯一拦截点，「直推必拦（含 Atlas）」由本检查
+# 无白名单化达成。
 if [ "$PUSH_RESULT" = "NO_REFSPEC" ]; then
   CURRENT_BRANCH=$(git -C "$GIT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
   if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
-    case "${MULTICA_AGENT_NAME:-}" in
-      Atlas|Archi) echo "$INPUT"; exit 0 ;;
-      *)
-        echo "[push-guard] 错误：禁止直接推送到 master 分支" >&2
-        echo "[push-guard] 请在feature分支上开发，通过PR合并" >&2
-        exit 2
-        ;;
-    esac
+    echo "[push-guard] 错误：禁止直接推送到 master 分支" >&2
+    echo "[push-guard] 请在feature分支上开发，通过PR合并" >&2
+    exit 2
   fi
 fi
 

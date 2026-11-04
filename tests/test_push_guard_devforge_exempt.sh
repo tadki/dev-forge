@@ -111,7 +111,9 @@ git -C "$FIX/work" -c user.email=t@t -c user.name=t commit -q --allow-empty -m i
 git init -q --bare "$FIX/origin.git"
 git -C "$FIX/work" remote add origin "$FIX/origin.git"
 git -C "$FIX/work" push -q -u origin master 2>/dev/null
-sa "A6 非 dev-forge 仓 force-push → 2（仍拦截）" "$FIX/work" "git push --force origin master" 2
+# E1 单轨改约：force 拦截唯一防线 = gates（脚本 force 段已删）——脚本层对
+# 非 dev-forge 仓 force-push 不再拦（透传），deny 由引擎 gates 层承担（见 B7）。
+sa "A6 非 dev-forge 仓 force-push → 0+透传（拦截归 gates，E1 单轨）" "$FIX/work" "git push --force origin master" 0 pt
 
 # URL 锚点组：workdir 检出（根 ≠ 部署位），origin URL 含 dev-forge → 豁免
 git init -q -b master "$FIX/work2"
