@@ -1,6 +1,7 @@
 {
-    "_comment": "SEE-1430b 仓库级注册层：每仓一份注册文件，loader 扫 repos.d/*.json 合并。repo_path 直写实值。新增仓库 = 落一份新 JSON，无需改脚本。dev-forge 自身注册（Owner 2026-10-19 指令）——注意：daemon 若跑在本仓检出内，拉取时工作树可能脏（agent 工作目录），stash_on_dirty=true 已兜底。",
+    "_comment": "SEE-1430b 仓库级注册层：每仓一份注册文件，loader 扫 repos.d/*.json 合并。repo_path 直写实值。新增仓库 = 落一份新 JSON，无需改脚本。dev-forge 自身注册（Owner 2026-10-19 指令）——注意：daemon 若跑在本仓检出内，拉取时工作树可能脏（agent 工作目录），stash_on_dirty=true 已兜底。SEE-1519（Owner 2026-11-04 语义裁定）：devforge 同步由 Owner 手动停用，经 enabled=false 声明持久——start.sh 跳过拉起、日检 F3 记 info 观测，unit 重启不强行拉起。",
     "name": "devforge",
+    "enabled": false,
     "repo_path": "/home/jerry/tools/dev-forge",
     "remote": "origin",
     "branch": "main",
