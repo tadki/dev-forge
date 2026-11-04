@@ -115,3 +115,20 @@ def test_e2_wd_sidecar_empty_flock_ok(tmp_path, checker, monkeypatch):
     issues, codes = _run_e2(c, tmp_path)
     assert codes == [], codes
     assert issues == [], issues
+
+
+def test_e2_wd_sidecar_dead_holder_warns(tmp_path, checker, monkeypatch):
+    """sidecar flock 空闲且文件含死 PID → warn 残留。
+
+    hardener 补测：候选集删 sidecar (watchdog_state.json.lock) 的变异只在
+    「sidecar 死残留」形态下可检——空 flock sidecar 两种实现都判 ok。
+    """
+    s = tmp_path / "wd.json"
+    Path(str(s) + ".lock").write_text("424242", encoding="utf-8")
+    monkeypatch.setattr(tdc, "WATCHDOG_STATE", str(s))
+    monkeypatch.setattr(tdc.tempfile, "gettempdir", lambda: str(tmp_path / "notmp"))
+    (tmp_path / "notmp").mkdir(parents=True)
+    _force_fcntl(monkeypatch, holder_alive=False)
+    c, _ = checker
+    issues, codes = _run_e2(c, tmp_path)
+    assert "pid_lock_residue" in codes, codes

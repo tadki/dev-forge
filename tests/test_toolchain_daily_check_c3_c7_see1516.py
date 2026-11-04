@@ -84,7 +84,12 @@ def test_backfill_runs_under_same_mutex(checker, monkeypatch):
 
 
 def test_registry_tombstone_not_expected(checker):
-    """无 port 无 agent 的占位条目 (Old-slot1 形态) → 不进 per_agent 应采集合。"""
+    """无 port 无 agent 的占位条目 (Old-slot1 形态) → 不进 per_agent 应采集合。
+
+    hardener 补强: G1 侧以 agent.lower() 生成期望集, 原断言只查小写形态
+    "old-slot1" — 过滤整体删除的变异让原始 key "Old-slot1" 进入 per_agent
+    而小写断言恒真。补扎原始 key。
+    """
     c, _ = checker
     entries = {
         "Old-slot1": {"heartbeat_at": "2024-01-01T00:00:00Z"},
@@ -92,6 +97,7 @@ def test_registry_tombstone_not_expected(checker):
     }
     registered_ports, per_agent = c._g_registry_inventory(entries)
     assert "old-slot1" not in per_agent, per_agent
+    assert "Old-slot1" not in per_agent, per_agent  # hardener: 原始 key 同步钉扎
     assert "Bachi" in per_agent, per_agent
     assert registered_ports == {6560}
 
@@ -111,3 +117,60 @@ def test_agent_without_port_still_expected(checker):
     entries = {"Revy-live": {"agent": "Revy"}}
     _, per_agent = c._g_registry_inventory(entries)
     assert "Revy" in per_agent
+
+
+# --- C3 硬化补测: persist/backfill 必须真持锁 (互斥面行为判定) ------------------
+# 并发双线程测试对「锁退化成 no-op」的变异只有概率判别力 (线程时序可碰巧串行);
+# 下面两例用外部持 flock + 阻塞窗口判定, 确定性杀伤锁缺失/绕锁变异。
+
+def test_persist_blocks_while_mutex_held(checker):
+    """外部持 .persist.lock 期间 persist 阻塞, 释放后完成且计数落盘。"""
+    import fcntl
+    c, report_dir = checker
+    os.makedirs(str(report_dir), exist_ok=True)
+    lock_path = os.path.join(str(report_dir), ".persist.lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)  # 外部持锁: persist 必须等待
+    done = []
+    t = threading.Thread(
+        target=lambda: (c.persist(_report(c, "2026-11-03", {"error": 1})),
+                        done.append(True)))
+    t.start()
+    t.join(1.5)
+    assert not done, "persist 在外部持锁窗口内完成 = 未真获互斥锁 (变异存活)"
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+    t.join(15)
+    assert done, "释放锁后 persist 未完成"
+    history = json.load(open(os.path.join(str(report_dir), "history.json"),
+                             encoding="utf-8"))
+    assert history["daily"]["2026-11-03"] == {"error": 1}, history["daily"]
+
+
+def test_backfill_blocks_while_mutex_held(checker, monkeypatch):
+    """外部持锁期间 backfill 阻塞, 释放后完成 (与 persist 同一把锁)。"""
+    import fcntl
+    from collections import Counter
+    c, report_dir = checker
+    monkeypatch.setattr(tdc, "scan_launcher_failures",
+                        lambda day: {"port-1": Counter({"error": 2})})
+    c.persist(_report(c, "2026-11-01", {"timeout": 1}))  # 播种 history.json
+    os.makedirs(str(report_dir), exist_ok=True)
+    lock_path = os.path.join(str(report_dir), ".persist.lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    done = []
+    t = threading.Thread(
+        target=lambda: (tdc.backfill_history_failures(
+            ["2026-11-03"], str(report_dir), allow_empty=True),
+            done.append(True)))
+    t.start()
+    t.join(1.5)
+    assert not done, "backfill 在外部持锁窗口内完成 = 未走同一把锁 (变异存活)"
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+    t.join(15)
+    assert done, "释放锁后 backfill 未完成"
+    history = json.load(open(os.path.join(str(report_dir), "history.json"),
+                             encoding="utf-8"))
+    assert history["daily"]["2026-11-03"] == {"error": 2}, history["daily"]

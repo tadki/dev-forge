@@ -70,6 +70,31 @@ echo "$HOOK_STDOUT" | grep -q "DENY-A-MESSAGE" \
     && pass "T1: deny 文案输出保留" \
     || fail_ "T1: deny 文案丢失"
 
+# --- T1b: 同一规则内 deny 先于 run_script → 动作内短路同样跳过脚本 --------------
+# hardener 补测：evaluateActions 内 `if (result.denied) break` 删除的变异会被
+# 跨规则形态（T1）的 opts.skipScripts 掩护——本例必须是**独立单规则**
+# （无前置 deny 规则），使同规则 [deny, run_script] 只有动作内短路一条防线。
+PROBE="$BASE/probe-t1b"
+rm -f "$PROBE"
+node -e '
+const [out, probe] = process.argv.slice(1);
+require("fs").writeFileSync(out, JSON.stringify({ rules: [
+  { name: "rule-ab", on: { in: ["PreToolUse"] }, enabled: true,
+    when: { op: "tool", in: ["Bash"] },
+    action: [ { op: "deny", message: "DENY-AB-MESSAGE" },
+              { op: "run_script", path: probe, timeout_ms: 5000, on_fail: "open" } ] },
+]}));
+' "$BASE/rules-t1b.json" "$BASE/probe.sh"
+PROBE_FILE="$PROBE" run_engine "$BASE/rules-t1b.json"
+if [ -e "$PROBE" ]; then
+    fail_ "T1b: 同规则 deny 后 run_script 仍执行（动作内短路缺失）"
+else
+    pass "T1b: 同规则 deny 后 run_script 跳过（动作内短路保留）"
+fi
+echo "$HOOK_STDOUT" | grep -q "DENY-AB-MESSAGE" \
+    && pass "T1b: deny 文案输出保留" \
+    || fail_ "T1b: deny 文案丢失"
+
 # --- T2: 多规则 config deny 文案聚合 -------------------------------------------
 make_rules "$BASE/rules-t2.json" 1 '{"rules":[{"name":"rule-b-deny","on":{"in":["PreToolUse"]},"enabled":true,"when":{"op":"tool","in":["Bash"]},"action":[{"op":"deny","message":"DENY-B-MESSAGE"}]}]}'
 run_engine "$BASE/rules-t2.json"

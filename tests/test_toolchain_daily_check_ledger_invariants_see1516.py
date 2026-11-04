@@ -67,6 +67,21 @@ def test_f6_warns_on_mismatch_with_both_values(checker):
     assert any("F6" in i and "21" in i and "20" in i for i in issues), issues
 
 
+def test_f6_warns_on_reverse_mismatch(checker):
+    """台账落后 main（台账 19 / nth 20）→ 同样 warn。
+
+    hardener 补测：`!=` 放宽为 `>=`/`>` 的变异只在 max>nth 形态下可检，
+    台账落后形态（台账回填/重跑慢于计数器）在此存活。
+    """
+    c, ledger_dir = checker
+    _write_ledger(ledger_dir, "2026-10.md", [19])
+    _write_state(ledger_dir, 20)
+    issues = []
+    c._check_f6_ledger_nth("F", issues)
+    assert "ledger_nth_mismatch" in _codes(c), c.findings
+    assert any("F6" in i and "19" in i and "20" in i for i in issues), issues
+
+
 def test_f6_quiet_when_consistent(checker):
     """正常场景（台账最大期号 == nth）→ ok 不误报。"""
     c, ledger_dir = checker
@@ -155,6 +170,40 @@ def test_f7_quiet_when_no_open_ledger_pr(checker, monkeypatch):
     c._check_f7_open_ledger_pr("F", issues)
     assert "open_ledger_pr" not in _codes(c), c.findings
     assert issues == [], issues
+
+
+def test_f7_quiet_emits_ok_code(checker, monkeypatch):
+    """无 open 台账 PR → ok 码 f7 落痕，不落「扫描不可用」info。
+
+    hardener 补测：`prs is None` 放宽为 `not prs` 会把「扫描成功但空表」
+    与「扫描失败」混进同一 info 分支，正常场景的 ok 证据丢失。
+    """
+    c, _ledger_dir = checker
+    monkeypatch.setattr(tdc, "origin_repo_slug", lambda root: "tadki/dev-forge")
+    monkeypatch.setattr(tdc, "open_ledger_prs", lambda slug, now=None: [])
+    issues = []
+    c._check_f7_open_ledger_pr("F", issues)
+    codes_ok = {f["code"] for f in c.findings if f["level"] == tdc.OK}
+    assert "f7" in codes_ok, c.findings
+    assert "ledger_pr_scan_unavailable" not in _codes(c, level=tdc.INFO), c.findings
+    assert issues == [], issues
+
+
+def test_open_ledger_prs_pins_stale_days(monkeypatch):
+    """滞留天数 = createdAt~now 整日数（附 PR 号排序输出）。
+
+    hardener 补测：age 恒 0 / 误用 .seconds 的变异只在「附天数」字样存在时
+    不可检，直接钉扎 open_ledger_prs 返回值形状。
+    """
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 4, 18, 45, 41, tzinfo=timezone.utc)
+    payload = [{"number": 42, "title": "第 21 期台账", "createdAt": "2026-11-02T18:45:41Z"}]
+    monkeypatch.setattr(
+        tdc.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=json.dumps(payload), stderr=""))
+    prs = tdc.open_ledger_prs("tadki/dev-forge", now=now)
+    assert prs == [(42, "第 21 期台账", 2)], prs
 
 
 def test_f7_degrades_to_info_when_gh_unavailable(checker, monkeypatch):
