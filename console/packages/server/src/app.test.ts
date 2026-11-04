@@ -101,7 +101,8 @@ beforeAll(async () => {
     serviceAction: async (unit, action) => {
       actionLog.push({ unit, action });
       if (unit === 'repo-sync-devforge' && action !== 'stop') {
-        return { ok: false, output: `repo-sync-devforge 已手动停用（enabled=false），拒绝 ${action}` };
+        const detail = 'launcher stderr '.repeat(40);
+        return { ok: false, output: `repo-sync-devforge 已手动停用（enabled=false），拒绝 ${action}；${detail}请检查 journalctl --user --since '-5 min'` };
       }
       return { ok: true, output: `fake ${action} ${unit}` };
     },
@@ -255,6 +256,8 @@ describe('api endpoints', () => {
     const deniedBody = await denied.json();
     expect(deniedBody).toMatchObject({ ok: false, unit: 'repo-sync-devforge', action: 'start' });
     expect(deniedBody.output).toContain('enabled=false');
+    expect(deniedBody.output).toContain("journalctl --user --since '-5 min'");
+    expect(deniedBody.output.length).toBeLessThanOrEqual(400);
   });
 
   it('unknown path 404s as json', async () => {

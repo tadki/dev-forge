@@ -63,8 +63,17 @@ export function ServiceSwitch({ row, actionMsg, onAction }: ServiceSwitchProps) 
   );
 }
 
+const ACTION_MESSAGE_LIMIT = 400;
+const ACTION_MESSAGE_HEAD = 160;
+
+function clipActionText(text: string): string {
+  if (text.length <= ACTION_MESSAGE_LIMIT) return text;
+  const tailLength = ACTION_MESSAGE_LIMIT - ACTION_MESSAGE_HEAD - 1;
+  return `${text.slice(0, ACTION_MESSAGE_HEAD)}…${text.slice(-tailLength)}`;
+}
+
 export function formatActionMessage(action: 'start' | 'stop' | 'restart', result: { ok: boolean; output?: string }): string {
-  return result.ok ? `${action} ✓` : `${action} ✕ ${result.output?.trim() || '未知错误'}`.slice(0, 160);
+  return result.ok ? `${action} ✓` : `${action} ✕ ${clipActionText(result.output?.trim() || '未知错误')}`;
 }
 
 function MetaChips({ meta }: { meta?: AssetLite['meta'] }) {

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { matchesRepoSyncDaemonCmdline } from '@forge/collectors';
 
 export interface ExecResult {
   ok: boolean;
@@ -85,9 +86,7 @@ async function inspectPid(cfg: Registration, cfgPath: string, exec: RepoSyncExec
   if (pid <= 0) return { pid: 0, status: 'missing' };
   const proc = await exec('cat', [`/proc/${pid}/cmdline`], 3000);
   if (!proc.ok) return { pid, status: 'stale' };
-  const args = proc.stdout.split('\0');
-  const scriptIndex = args.findIndex((arg) => arg === 'repo_sync_daemon.py' || arg.endsWith('/repo_sync_daemon.py'));
-  const matches = scriptIndex >= 0 && args[scriptIndex + 1] === '--config' && args[scriptIndex + 2] === cfgPath;
+  const matches = matchesRepoSyncDaemonCmdline(proc.stdout, cfgPath);
   return { pid, status: matches ? 'running' : 'mismatch' };
 }
 

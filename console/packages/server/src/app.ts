@@ -21,6 +21,14 @@ export interface AppDeps {
 }
 
 const SERVICE_ACTIONS = new Set(['start', 'stop', 'restart']);
+const SERVICE_OUTPUT_LIMIT = 400;
+const SERVICE_OUTPUT_HEAD = 160;
+
+function clipServiceOutput(text: string): string {
+  if (text.length <= SERVICE_OUTPUT_LIMIT) return text;
+  const tailLength = SERVICE_OUTPUT_LIMIT - SERVICE_OUTPUT_HEAD - 1;
+  return `${text.slice(0, SERVICE_OUTPUT_HEAD)}…${text.slice(-tailLength)}`;
+}
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
@@ -182,7 +190,7 @@ export function createHandler(deps: AppDeps) {
         }
         const result = await deps.serviceAction(unit, action as 'start' | 'stop' | 'restart');
         deps.onAfterAction?.();
-        return json(res, 200, { ok: result.ok, unit, action, output: result.output.slice(0, 400) });
+        return json(res, 200, { ok: result.ok, unit, action, output: clipServiceOutput(result.output) });
       }
 
       if (path === '/api/custom/assets' && req.method === 'POST') {
