@@ -36,6 +36,33 @@ function canToggle(a: AssetLite): boolean {
   return p2.scope === 'user' && a.source.path.startsWith('systemd://user/');
 }
 
+interface ServiceSwitchProps {
+  row: AssetLite;
+  actionMsg?: string;
+  onAction: (row: AssetLite, action: 'start' | 'stop' | 'restart') => void;
+}
+
+export function ServiceSwitch({ row, actionMsg, onAction }: ServiceSwitchProps) {
+  const payload = row.payload as ServicePayload;
+  if (actionMsg) return <span className="badge badge-plain">{actionMsg}</span>;
+  if (payload.active === 'disabled') {
+    return <span className="badge badge-off" title={payload.trigger ?? '已手动停用（enabled=false）'}>已停用（enabled=false）</span>;
+  }
+  if (!canToggle(row)) {
+    const why = row.provenance !== 'first-party' ? 'EXT 外部' : payload.scope !== 'user' ? 'system 级需 root' : '非受管来源';
+    return <span className="badge badge-off" title={why}>开关 {why}</span>;
+  }
+  const running = payload.active === 'active';
+  return (
+    <span className="row" style={{ gap: 4 }}>
+      <button className={`btn small ${running ? 'btn-amber' : 'btn-mint'}`} onClick={(e) => { e.stopPropagation(); onAction(row, running ? 'stop' : 'start'); }}>
+        {running ? '■ 停止' : '▶ 启动'}
+      </button>
+      <button className="btn small btn-ghost" onClick={(e) => { e.stopPropagation(); onAction(row, 'restart'); }}>↻</button>
+    </span>
+  );
+}
+
 function MetaChips({ meta }: { meta?: AssetLite['meta'] }) {
   if (!meta) return <span className="dim">—</span>;
   return (
@@ -120,31 +147,14 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
                 {
                   key: 'switch',
                   head: '启停开关',
-                  render: (r) => {
-                    const msg = actionMsg[r.id];
-                    if (msg) return <span className="badge badge-plain">{msg}</span>;
-                    if (!canToggle(r)) {
-                      const p = r.payload as ServicePayload;
-                      const why = r.provenance !== 'first-party' ? 'EXT 外部' : p.scope !== 'user' ? 'system 级需 root' : '非受管来源';
-                      return <span className="badge badge-off" title={why}>开关 {why}</span>;
-                    }
-                    const running = (r.payload as ServicePayload).active === 'active';
-                    return (
-                      <span className="row" style={{ gap: 4 }}>
-                        <button className={`btn small ${running ? 'btn-amber' : 'btn-mint'}`} onClick={(e) => { e.stopPropagation(); void runAction(r, running ? 'stop' : 'start'); }}>
-                          {running ? '■ 停止' : '▶ 启动'}
-                        </button>
-                        <button className="btn small btn-ghost" onClick={(e) => { e.stopPropagation(); void runAction(r, 'restart'); }}>↻</button>
-                      </span>
-                    );
-                  },
+                  render: (r) => <ServiceSwitch row={r} actionMsg={actionMsg[r.id]} onAction={(a, action) => void runAction(a, action)} />,
                 },
               ]}
             />
           </Panel>
           <div className="panel-flat" style={{ fontSize: 'var(--fs-l1)' }}>
             <div className="tagline mb">说明 NOTES</div>
-            常驻树根 = <span className="mono">toolchain-start-all.service</span>（系统级）→ repo-sync ×3 → multica daemon（前台 exec）。{' '}
+            常驻树根 = <span className="mono">toolchain-start-all.service</span>（系统级，驻留监督）→ repo-sync（按注册 enabled 开关，缺失补拉）＋独立 multica daemon。{' '}
             Windows 桥由登录计划任务触发 <span className="mono">wsl.exe</span>；hindsight 不常驻（走 CC hook 按事件触发）。
             <div className="row mt">
               <Badge tone="ok">running</Badge>

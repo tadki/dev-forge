@@ -39,6 +39,36 @@ describe('devforge-launch repo-sync 判活', () => {
     expect((a!.payload as { active: string }).active).toBe('unknown');
   });
 
+  it('enabled=false 且 pid 缺失 → disabled（不因缺 pid 报 dead）', async () => {
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: false, pid_file: join(root, 'disabled-gone.pid') }));
+    const r = await devforgeLaunchCollector.collect(ctx());
+    const payload = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string; trigger: string };
+    expect(payload.active).toBe('disabled');
+    expect(payload.trigger).toBe('已手动停用（enabled=false）');
+  });
+
+  it('enabled=false 且 pid 存活 → disabled（进程残留也不改停用语义）', async () => {
+    const pidFile = join(root, 'disabled-live.pid');
+    await writeFile(pidFile, String(process.pid));
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: false, pid_file: pidFile }));
+    const r = await devforgeLaunchCollector.collect(ctx());
+    const payload = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string; trigger: string };
+    expect(payload.active).toBe('disabled');
+    expect(payload.trigger).toBe('已手动停用（enabled=false）');
+  });
+
+  it('显式 enabled=true 且 pid 缺失 → 保持 dead', async () => {
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: true, pid_file: join(root, 'enabled-gone.pid') }));
+    const r = await devforgeLaunchCollector.collect(ctx());
+    expect((r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
+  });
+
+  it('字符串 enabled="false" 不冒充布尔停用，保持 dead', async () => {
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: 'false', pid_file: join(root, 'string-enabled-gone.pid') }));
+    const r = await devforgeLaunchCollector.collect(ctx());
+    expect((r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
+  });
+
   afterAll(async () => {
     await rm(root, { recursive: true, force: true });
   });

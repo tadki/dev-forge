@@ -64,6 +64,11 @@ const state: RegistryState = {
       source: { collector: 'test', path: 'systemd://system/toolchain-start-all.service' },
       payload: { scope: 'system', active: 'active' },
     }),
+    mk('service:repo-sync-gqt', 'service', {
+      name: 'repo-sync · gqt',
+      source: { collector: 'test', path: '/tmp/repo-sync/repos.d/gqt.json' },
+      payload: { active: 'dead', config: { enabled: true } },
+    }),
   ],
   relations: [{ from: 'hook-rule:push-guard-master-gate', to: 'hook-script:x.sh', type: 'mounts' }],
   diagnostics: [],
@@ -141,7 +146,7 @@ describe('api endpoints', () => {
 
   it('overview aggregates counts, health', async () => {
     const r = await get('/api/overview', TOKEN);
-    expect(r.body.total).toBe(10);
+    expect(r.body.total).toBe(11);
     expect(r.body.counts['hook-rule']).toBe(1);
     expect(r.body.counts['deployment']).toBe(1);
     expect(r.body.health.status).toBe('GREEN');
@@ -231,6 +236,11 @@ describe('api endpoints', () => {
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ ok: true, unit: 'grepai-watch.service', action: 'stop' });
     expect(actionLog.at(-1)).toEqual({ unit: 'grepai-watch.service', action: 'stop' });
+
+    const repoSync = await post({ unit: 'repo-sync-gqt', action: 'start' });
+    expect(repoSync.status).toBe(200);
+    expect(await repoSync.json()).toMatchObject({ ok: true, unit: 'repo-sync-gqt', action: 'start' });
+    expect(actionLog.at(-1)).toEqual({ unit: 'repo-sync-gqt', action: 'start' });
   });
 
   it('unknown path 404s as json', async () => {

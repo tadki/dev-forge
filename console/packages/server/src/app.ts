@@ -166,7 +166,7 @@ export function createHandler(deps: AppDeps) {
         if (!unit || !SERVICE_ACTIONS.has(action)) {
           return json(res, 400, { error: 'unit 与 action(start|stop|restart) 必填' });
         }
-        const asset = state.assets.find((a) => a.id === `service:systemd-${unit}` || a.source.path === `systemd://user/${unit}` || a.source.path === `systemd://system/${unit}`);
+        const asset = state.assets.find((a) => a.id === `service:systemd-${unit}` || a.id === `service:${unit}` || a.source.path === `systemd://user/${unit}` || a.source.path === `systemd://system/${unit}`);
         if (!asset) return json(res, 404, { error: 'unit 不在注册表中', unit });
         if (asset.provenance !== 'first-party') {
           return json(res, 403, { error: '外部/第三方服务不做启停（仅限自建）', unit });

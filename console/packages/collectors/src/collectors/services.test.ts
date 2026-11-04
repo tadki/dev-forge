@@ -72,6 +72,36 @@ describe('services collector（假 exec 驱动）', () => {
     expect((grepai!.payload as { scope: string }).scope).toBe('user');
   });
 
+  it('proc-multica-daemon 文案说明独立 daemon 与缺失补拉/驻留监督，不再声称前台 exec', async () => {
+    const r = await servicesCollector.collect(ctxWithFakeExec());
+    const daemon = r.assets.find((a) => a.id === 'service:proc-multica-daemon')!;
+    const payload = daemon.payload as { trigger: string };
+    expect(daemon.summary).toContain('独立 daemon');
+    expect(daemon.summary).toContain('缺失补拉');
+    expect(payload.trigger).toContain('驻留监督');
+    expect(`${daemon.summary} ${payload.trigger}`).not.toMatch(/前台\s*exec|前台子进程/);
+  });
+
+  it('proc-multica-daemon 未运行分支也保留独立 daemon 与监督语义', async () => {
+    const cfg = defaultConfig({ devforge: '/tmp/nonexistent-devforge' });
+    const ctx = makeContext(cfg, {
+      exec: (cmd, args) => {
+        if (cmd === 'ps' && args.join(' ') === '-eo args --no-headers') {
+          return Promise.resolve({ ok: true, stdout: '', stderr: '' });
+        }
+        return fakeExec(cmd, args);
+      },
+    });
+    const r = await servicesCollector.collect(ctx);
+    const daemon = r.assets.find((a) => a.id === 'service:proc-multica-daemon')!;
+    const payload = daemon.payload as { active: string; trigger: string };
+    expect(payload.active).toBe('dead');
+    expect(daemon.summary).toContain('进程未运行');
+    expect(daemon.summary).toContain('独立 daemon');
+    expect(payload.trigger).toContain('驻留监督');
+    expect(`${daemon.summary} ${payload.trigger}`).not.toMatch(/前台\s*exec|前台子进程/);
+  });
+
   it('windows bridge status is PROBED via schtasks（机制而非手工标注）', async () => {
     const r = await servicesCollector.collect(ctxWithFakeExec());
     const keep = r.assets.find((a) => a.id === 'service:winbridge-wsl-keepalive');
