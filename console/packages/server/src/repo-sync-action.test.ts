@@ -254,4 +254,105 @@ describe('repo-sync action', () => {
     expect(result.output).toContain('log_dir');
     expect(cmdNames(calls)).toEqual(['cat']);
   });
+
+  it.each(['../devforge', 'a b', 'gqt/../x'])('非法注册名 %s 被拒绝且零 exec 副作用', async (name) => {
+    const { exec, calls } = fakeExec(() => ({ ok: true, stdout: '', stderr: '' }));
+    const result = await createRepoSyncAction({ devforge: root, exec })(name, 'start');
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('非法 repo-sync 注册名');
+    expect(calls).toEqual([]);
+  });
+
+  it.each(['[]', '42'])('注册 JSON 非对象（%s）时显式失败且零 exec', async (raw) => {
+    await writeFile(cfgPath, raw);
+    const { exec, calls } = fakeExec(() => ({ ok: true, stdout: '', stderr: '' }));
+    const result = await createRepoSyncAction({ devforge: root, exec })('gqt', 'start');
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('读取注册失败');
+    expect(calls).toEqual([]);
+  });
+
+  it('数字 enabled=0 不触发停用门控，仍走启动流程', async () => {
+    await registration({ enabled: 0 });
+    let started = false;
+    const { exec, calls } = fakeExec((cmd, args) => {
+      if (cmd === 'cat' && args[0] === pidFile) {
+        return started ? { ok: true, stdout: '4242\n', stderr: '' } : { ok: false, stdout: '', stderr: 'missing' };
+      }
+      if (cmd === 'cat' && args[0] === '/proc/4242/cmdline') return { ok: true, stdout: procCmdline, stderr: '' };
+      if (cmd === 'bash') {
+        started = true;
+        return { ok: true, stdout: '', stderr: '' };
+      }
+      return undefined;
+    });
+    const result = await createRepoSyncAction({ devforge: root, exec })('gqt', 'start');
+    expect(result.ok).toBe(true);
+    expect(result.output).not.toContain('已手动停用');
+    expect(cmdNames(calls)).toEqual(['cat', 'mkdir', 'bash', 'cat', 'cat']);
+  });
+
+  it('nohup 执行失败时透传错误且不再轮询', async () => {
+    await registration();
+    const { exec, calls } = fakeExec((cmd) => {
+      if (cmd === 'cat') return { ok: false, stdout: '', stderr: 'missing' };
+      if (cmd === 'bash') return { ok: false, stdout: '', stderr: 'nohup: exiting' };
+      return undefined;
+    });
+    const result = await createRepoSyncAction({ devforge: root, exec })('gqt', 'start');
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('nohup: exiting');
+    expect(cmdNames(calls)).toEqual(['cat', 'mkdir', 'bash']);
+  });
+
+  it('daemon 脚本相同但 --config 指向其它注册时拒绝 kill', async () => {
+    await registration();
+    await writeFile(pidFile, '4242\n');
+    const otherCfg = join(root, 'repo-sync', 'repos.d', 'kol.json');
+    const { exec, calls } = fakeExec((cmd, args) => {
+      if (cmd === 'cat' && args[0] === pidFile) return { ok: true, stdout: '4242\n', stderr: '' };
+      if (cmd === 'cat' && args[0] === '/proc/4242/cmdline') {
+        return { ok: true, stdout: ['python3', daemonScript, '--config', otherCfg, ''].join('\0'), stderr: '' };
+      }
+      if (cmd === 'kill') return { ok: true, stdout: '', stderr: '' };
+      return undefined;
+    });
+    const result = await createRepoSyncAction({ devforge: root, exec })('gqt', 'stop');
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('身份不匹配');
+    expect(cmdNames(calls)).toEqual(['cat', 'cat']);
+  });
+
+  it('脚本作为 cmdline 首参（argv0）也能识别 daemon 身份并按 pid 停止', async () => {
+    await registration();
+    await writeFile(pidFile, '4242\n');
+    const scriptFirst = [daemonScript, '--config', cfgPath, ''].join('\0');
+    const { exec, calls } = fakeExec((cmd, args) => {
+      if (cmd === 'cat' && args[0] === pidFile) return { ok: true, stdout: '4242\n', stderr: '' };
+      if (cmd === 'cat' && args[0] === '/proc/4242/cmdline') return { ok: true, stdout: scriptFirst, stderr: '' };
+      if (cmd === 'kill') return { ok: true, stdout: '', stderr: '' };
+      return undefined;
+    });
+    const result = await createRepoSyncAction({ devforge: root, exec })('gqt', 'stop');
+    expect(result.ok).toBe(true);
+    expect(calls.at(-1)).toEqual({ cmd: 'kill', args: ['-TERM', '4242'] });
+  });
+
+  it('restart 旧进程 5 秒内拒不退出时取消拉起，不执行 nohup', async () => {
+    await registration();
+    await writeFile(pidFile, '4242\n');
+    const { exec, calls } = fakeExec((cmd, args) => {
+      if (cmd === 'cat' && args[0] === pidFile) return { ok: true, stdout: '4242\n', stderr: '' };
+      if (cmd === 'cat' && args[0] === '/proc/4242/cmdline') return { ok: true, stdout: procCmdline, stderr: '' };
+      if (cmd === 'kill') return { ok: true, stdout: '', stderr: '' };
+      return undefined;
+    });
+    const result = await createRepoSyncAction({ devforge: root, exec })('gqt', 'restart');
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('5 秒内退出');
+    expect(cmdNames(calls)).not.toContain('bash');
+    expect(cmdNames(calls)).not.toContain('mkdir');
+    // 停止前 1 次身份检查 + STOP_ATTEMPTS(50) 轮轮询：每次两读中的 cmdline 共 51 次
+    expect(calls.filter((c) => c.cmd === 'cat' && c.args[0] === '/proc/4242/cmdline')).toHaveLength(51);
+  }, 10_000);
 });

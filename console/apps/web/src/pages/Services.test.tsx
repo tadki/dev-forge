@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { AssetLite } from '../types';
+import { StatusBadge } from '../components/ui';
 import { ServiceSwitch } from './Services';
 
-function row(payload: Record<string, unknown>): AssetLite {
+function row(payload: Record<string, unknown>, over: Partial<AssetLite> = {}): AssetLite {
   return {
     id: 'service:repo-sync-gqt',
     kind: 'service',
@@ -17,6 +18,7 @@ function row(payload: Record<string, unknown>): AssetLite {
     source: { collector: 'test', path: '/e2e/gqt.json' },
     payload,
     tags: [],
+    ...over,
   };
 }
 
@@ -47,5 +49,33 @@ describe('ServiceSwitch repo-sync 状态分支', () => {
     const html = renderToStaticMarkup(<ServiceSwitch row={row({ active: 'active' })} actionMsg="restart ✓" onAction={() => undefined} />);
     expect(html).toContain('restart ✓');
     expect(html).not.toContain('button');
+  });
+
+  it('非自建（EXT）repo-sync 行不提供启停按钮', () => {
+    const html = renderToStaticMarkup(<ServiceSwitch row={row({ active: 'dead' }, { provenance: 'third-party' })} onAction={() => undefined} />);
+    expect(html).toContain('EXT 外部');
+    expect(html).not.toContain('<button');
+  });
+});
+
+describe('StatusBadge 停用/失效语义', () => {
+  it('disabled 映射中性 off，不得渲染红色 bad（关掉不得报红）', () => {
+    const html = renderToStaticMarkup(<StatusBadge status="disabled" />);
+    expect(html).toContain('badge-off');
+    expect(html).not.toContain('badge-bad');
+    expect(html).not.toContain('badge-warn');
+  });
+
+  it('dead 映射红色 bad，不得降为中性 off', () => {
+    const html = renderToStaticMarkup(<StatusBadge status="dead" />);
+    expect(html).toContain('badge-bad');
+    expect(html).not.toContain('badge-off');
+  });
+
+  it('active 映射绿色 ok', () => {
+    const html = renderToStaticMarkup(<StatusBadge status="active" />);
+    expect(html).toContain('badge-ok');
+    expect(html).not.toContain('badge-bad');
+    expect(html).not.toContain('badge-off');
   });
 });
