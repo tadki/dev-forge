@@ -12,8 +12,6 @@ export type RepoSyncExec = (cmd: string, args: string[], timeoutMs: number) => P
 export interface RepoSyncDeps {
   devforge: string;
   exec: RepoSyncExec;
-  /** 仅测试替换共享 launcher 名，生产始终使用单一固定 oneshot。 */
-  launchUnit?: string;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -26,11 +24,10 @@ type PidStatus = 'missing' | 'stale' | 'mismatch' | 'running';
 type PidState = { pid: number; status: PidStatus };
 type Timing = { startTimeoutMs: number; stopTimeoutMs: number; pollIntervalMs: number };
 
-export const SHARED_LAUNCH_UNIT = 'forge-console-repo-sync-launcher';
-const START_COMMAND = 'mkdir -p "$3" && nohup python3 "$1" --config "$2" >>"$4" 2>&1 &';
+const START_COMMAND = 'mkdir -p "$3" && { nohup python3 "$1" --config "$2" >>"$4" 2>&1 & }';
 const VALID_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const DEFAULT_START_TIMEOUT_MS = 10_000;
-const DEFAULT_STOP_TIMEOUT_MS = 5_000;
+export const DEFAULT_START_TIMEOUT_MS = 10_000;
+export const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
 
 function resultOutput(result: ExecResult): string {
@@ -38,7 +35,7 @@ function resultOutput(result: ExecResult): string {
 }
 
 function positiveInt(value: number | undefined, fallback: number): number {
-  return value !== undefined && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+  return value !== undefined && Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : fallback;
 }
 
 function timingOf(deps: RepoSyncDeps): Timing {
@@ -114,23 +111,18 @@ async function stopOne(cfg: Registration, cfgPath: string, exec: RepoSyncExec): 
     : { ok: false, output: `kill TERM ${state.pid} 失败：${resultOutput(stopped)}` };
 }
 
-function launcherInFlight(result: ExecResult): boolean {
-  return /already (?:exists|active|running|loaded)|already has a fragment/i.test(resultOutput(result));
-}
-
 async function launchOne(name: string, cfgPath: string, cfg: Registration, deps: RepoSyncDeps, timing: Timing): Promise<ActionResult> {
   const logDir = configPathValue(cfg, 'log_dir');
   if (!logDir) return { ok: false, output: `repo-sync-${name} 缺少有效 log_dir，拒绝启动` };
 
   const script = join(deps.devforge, 'repo-sync', 'repo_sync_daemon.py');
   const logFile = join(logDir, 'repo-sync-daemon.log');
-  const launchUnit = deps.launchUnit ?? SHARED_LAUNCH_UNIT;
   const run = await deps.exec(
     'systemd-run',
-    ['--user', `--unit=${launchUnit}`, '--property=Type=oneshot', '--property=KillMode=process', '--collect', '/bin/bash', '-lc', START_COMMAND, 'repo-sync-start', script, cfgPath, logDir, logFile],
+    ['--user', '--property=Type=oneshot', '--property=KillMode=process', '--collect', '/bin/bash', '-c', START_COMMAND, 'repo-sync-start', script, cfgPath, logDir, logFile],
     15_000
   );
-  if (!run.ok && !launcherInFlight(run)) return { ok: false, output: resultOutput(run) };
+  if (!run.ok) return { ok: false, output: `${resultOutput(run)}；请检查 journalctl --user --since '-5 min'` };
 
   const attempts = attemptsFor(timing.startTimeoutMs, timing.pollIntervalMs);
   const started = await waitForDaemon(cfg, cfgPath, deps.exec, true, attempts, timing.pollIntervalMs);

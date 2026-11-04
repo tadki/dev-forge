@@ -15,7 +15,7 @@ describe('SEE-1522 部署沙箱与服务动作文档', () => {
 
   it('README 记录共享 launcher、停用门控、拒绝响应与可配置启动窗口', async () => {
     const readme = await readFile(readmePath, 'utf8');
-    expect(readme).toContain('forge-console-repo-sync-launcher');
+    expect(readme).toContain('run-u*');
     expect(readme).toContain('KillMode=process');
     expect(readme).toContain('enabled=false');
     expect(readme).toContain('ok:false');
