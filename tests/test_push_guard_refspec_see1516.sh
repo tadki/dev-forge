@@ -87,6 +87,11 @@ gate_expect_deny "R3 HEAD:refs/heads/master → master 门"       "git push orig
 gate_expect_deny "R4 --force → force 门"                       "git push --force origin feature/x" "禁止 force-push"
 gate_expect_deny "R5 --force-with-lease → force 门"            "git push --force-with-lease origin feature/x" "禁止 force-push"
 
+echo "--- gates 层: 硬化补测（+master/引号形态/force+no-force 组合） ---"
+gate_expect_deny "FN7 +master 加号形态 → master 门"            "git push origin +master" "禁止直接 push"
+gate_expect_deny "FN8 引号包裹 \"master\" → master 门"         'git push origin \"master\"' "禁止直接 push"
+gate_expect_allow "NF2 --force --no-force 组合显式豁免"        "git push --force --no-force origin feature/x"
+
 echo "--- gates 层: --no-force 显式豁免 ---"
 gate_expect_allow "NF1 --no-force 不触发 force 门"             "git push --no-force origin feature/x"
 

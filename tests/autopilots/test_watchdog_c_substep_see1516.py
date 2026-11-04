@@ -41,6 +41,20 @@ def test_find_marker_comment_none(monkeypatch):
     assert wr.find_marker_comment("issue-1", []) is None
 
 
+def test_find_marker_comment_unwraps_dict_payload(monkeypatch):
+    """CLI 返回 {comments:[...]} 包裹形态 → 仍能命中 marker。
+
+    hardener 补测：isinstance(comments, dict) 解包守卫删除的变异在 list
+    形态下不可检，dict 包裹形态（平台分页响应）在此杀伤。
+    """
+    monkeypatch.setattr(wr, "multica_cli",
+                        lambda cmd, timeout=30: (True,
+                                                 '{"comments":[{"id":"c-7","revision":2,'
+                                                 '"content":"x <!-- agent_watchdog_report -->"}]}'))
+    hit = wr.find_marker_comment("issue-1", [])
+    assert hit == {"id": "c-7", "revision": 2}, hit
+
+
 def test_find_marker_comment_query_failure_none(monkeypatch):
     log = []
     monkeypatch.setattr(wr, "multica_cli",
@@ -156,6 +170,13 @@ def test_self_agent_default_no_hardcode(monkeypatch):
     assert aw.resolve_default_self_agent() == "agent-uuid-y"
 
 
+def test_self_agent_env_precedence_watchdog_first(monkeypatch):
+    """双 env 同设 → WATCHDOG_SELF_AGENT_ID 优先（候选序变异杀伤）。"""
+    monkeypatch.setenv("WATCHDOG_SELF_AGENT_ID", "agent-uuid-x")
+    monkeypatch.setenv("SELF_AGENT_ID", "agent-uuid-y")
+    assert aw.resolve_default_self_agent() == "agent-uuid-x"
+
+
 def test_kill_switch_default_uses_single_source(monkeypatch):
     import sys
     monkeypatch.setenv("KILL_SWITCH", "true")
@@ -169,7 +190,7 @@ def test_no_chekky_constant_in_module():
     assert "CHEKKY_AGENT_ID" not in src
 
 
-@pytest.fixture(params=["env_unset", "env_true", "env_false"])
+@pytest.fixture(params=["env_unset", "env_true", "env_false", "env_empty"])
 def wrapper_ctx(tmp_path, request):
     bin_dir = tmp_path / "stubbin"
     bin_dir.mkdir()
@@ -193,6 +214,8 @@ def wrapper_ctx(tmp_path, request):
         env["KILL_SWITCH"] = "true"
     elif request.param == "env_false":
         env["KILL_SWITCH"] = "false"
+    elif request.param == "env_empty":
+        env["KILL_SWITCH"] = ""
     proc = subprocess.run(["bash", str(script_dir / "agent_watchdog.sh")],
                           capture_output=True, text=True, env=env, timeout=60)
     args = Path(log).read_text(encoding="utf-8") if log.exists() else ""
@@ -207,4 +230,6 @@ def test_wrapper_kill_switch_passthrough(wrapper_ctx):
     elif mode == "env_true":
         assert "--kill-switch true" in args
     else:
+        # env_false 与 env_empty 同属「显式设置」: set-but-empty 经
+        # autopilots_kill_switch 落回默认 false, 仍按显式覆盖透传。
         assert "--kill-switch false" in args
