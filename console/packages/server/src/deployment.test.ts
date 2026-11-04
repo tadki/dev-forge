@@ -13,9 +13,11 @@ describe('SEE-1522 部署沙箱与服务动作文档', () => {
     expect(unit).toContain('ReadWritePaths=\n');
   });
 
-  it('README 记录共享 launcher、停用门控、拒绝响应与可配置启动窗口', async () => {
+  it('README 记录自动命名 launcher、停用门控、拒绝响应与可配置启动窗口', async () => {
     const readme = await readFile(readmePath, 'utf8');
-    expect(readme).toContain('run-u*');
+    expect(readme).toContain('transient oneshot launcher');
+    expect(readme).toContain('不显式指定 `--unit`');
+    expect(readme).toContain('systemd 分配独立且唯一');
     expect(readme).toContain('KillMode=process');
     expect(readme).toContain('enabled=false');
     expect(readme).toContain('ok:false');
