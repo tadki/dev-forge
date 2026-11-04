@@ -102,6 +102,26 @@ describe('services collector（假 exec 驱动）', () => {
     expect(`${daemon.summary} ${payload.trigger}`).not.toMatch(/前台\s*exec|前台子进程/);
   });
 
+  it('ps 仅含非 start 的 multica daemon 子命令时不得误报运行中', async () => {
+    const cfg = defaultConfig({ devforge: '/tmp/nonexistent-devforge' });
+    const ctx = makeContext(cfg, {
+      exec: (cmd, args) => {
+        if (cmd === 'ps' && args.join(' ') === '-eo args --no-headers') {
+          return Promise.resolve({ ok: true, stdout: 'multica daemon status --output json\n', stderr: '' });
+        }
+        return fakeExec(cmd, args);
+      },
+    });
+    const r = await servicesCollector.collect(ctx);
+    const daemon = r.assets.find((a) => a.id === 'service:proc-multica-daemon')!;
+    const payload = daemon.payload as { active: string; trigger: string };
+    expect(payload.active).toBe('dead');
+    expect(daemon.summary).toContain('进程未运行');
+    expect(daemon.summary).toContain('独立 daemon');
+    expect(payload.trigger).toContain('驻留监督');
+    expect(`${daemon.summary} ${payload.trigger}`).not.toMatch(/前台\s*exec|前台子进程/);
+  });
+
   it('windows bridge status is PROBED via schtasks（机制而非手工标注）', async () => {
     const r = await servicesCollector.collect(ctxWithFakeExec());
     const keep = r.assets.find((a) => a.id === 'service:winbridge-wsl-keepalive');

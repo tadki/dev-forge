@@ -69,6 +69,18 @@ describe('devforge-launch repo-sync 判活', () => {
     expect((r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
   });
 
+  it('数字 enabled=0 / null 等假值不冒充布尔停用，保持 dead 与自动启动文案', async () => {
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: 0, pid_file: join(root, 'zero-enabled-gone.pid') }));
+    const r0 = await devforgeLaunchCollector.collect(ctx());
+    const p0 = r0.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string; trigger: string };
+    expect(p0.active).toBe('dead');
+    expect(p0.trigger).toBe('随 toolchain-start-all 启动');
+
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: null, pid_file: join(root, 'null-enabled-gone.pid') }));
+    const rNull = await devforgeLaunchCollector.collect(ctx());
+    expect((rNull.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
+  });
+
   afterAll(async () => {
     await rm(root, { recursive: true, force: true });
   });
