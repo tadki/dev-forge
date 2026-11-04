@@ -91,7 +91,14 @@ entries:
 
 ## 服务启停（写操作，仅限自建）
 
-`POST /api/services/actions` `{unit, action: start|stop|restart}`——仅接受注册表内 **first-party 且 user 级 systemd 单元**；外部/第三方与 system 级一律 403（system 级需 root）。UI 在「服务」页给可控行加 ■停止/▶启动/↻ 按钮（停 forge-console 自身有二次警告）。`FORGE_CONSOLE_DRY_ACTIONS=1` 时只回显命令不执行（E2E 用）。「注册表」页给 kind×自建/外部的统计表与自建资产全量清单，外部服务在服务页标 ◇ EXT。
+`POST /api/services/actions` `{unit, action: start|stop|restart}` 支持两类资产：
+
+- **systemd**：仅接受注册表内 first-party 且 user 级单元；外部/第三方与 system 级一律 403（system 级需 root）。
+- **repo-sync 进程服务**：按 `repo-sync/repos.d/<name>.json` 实值执行。严格 `enabled === false` 时 start/restart 返回 `ok:false`（输出含 `enabled=false`，且不执行任何进程命令），UI 显示中性停用态并隐藏启动/重启；stop 保留用于清理残留。注册必须声明非空 `pid_file`，否则所有动作零 exec 拒绝。停止前核对 `/proc/<pid>/cmdline` 的 daemon 与 config；stale pid 按未运行恢复，活 PID 身份不匹配拒杀。
+
+repo-sync 启动不由 `forge-console` 沙箱内的进程直接写宿主。console 自身保持 `ProtectSystem=strict` / `ProtectHome=read-only` / `ReadWritePaths=`，只通过固定共享 oneshot **`forge-console-repo-sync-launcher`** 调用一次 `systemd-run --user` 越过沙箱；launcher 以 `KillMode=process` + `--collect` 运行并退出，真正 daemon 始终由 `nohup python3 … --config …` 启动，stdout/stderr 追加到注册 `log_dir/repo-sync-daemon.log`，pid/state 由 daemon 按注册文件写入。它**不是**按仓 transient daemon unit，也不是服务状态真源；pid_file 自锁与 SIGTERM 才是 daemon 生命周期契约。
+
+动作结果以 HTTP 200 + `{ok, output}` 返回；业务拒绝（如停用门、身份不匹配）为 `ok:false`，前端直接展示 output。鉴权、注册表和参数校验错误仍用相应非 2xx。UI 在「服务」页给可控行加 ■停止/▶启动/↻ 按钮（停 forge-console 自身有二次警告）。`FORGE_CONSOLE_DRY_ACTIONS=1` 时只回显命令不执行（E2E 用）。「注册表」页给 kind×自建/外部的统计表与自建资产全量清单，外部服务在服务页标 ◇ EXT。
 
 ## 扩展接入（新增一个监控域）
 
@@ -111,3 +118,5 @@ entries:
 | `FORGE_CONSOLE_BIND` | `0.0.0.0` | 本机模式建议 `127.0.0.1` |
 | `FORGE_CONSOLE_CONFIG` | `console.config.yaml` | 配置路径 |
 | `FORGE_CONSOLE_WATCH` | `on` | `off` 关闭文件监听（测试用） |
+| `FORGE_REPO_SYNC_START_TIMEOUT_MS` | `10000` | repo-sync 启动后等待匹配 pid/daemon 的窗口；超时文案由此值推导 |
+| `FORGE_REPO_SYNC_STOP_TIMEOUT_MS` | `5000` | restart 等待旧 daemon 退出的窗口；超时则不重新拉起 |

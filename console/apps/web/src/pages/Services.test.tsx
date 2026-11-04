@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { AssetLite } from '../types';
 import { StatusBadge } from '../components/ui';
-import { ServiceSwitch } from './Services';
+import { ServiceSwitch, formatActionMessage } from './Services';
 
 function row(payload: Record<string, unknown>, over: Partial<AssetLite> = {}): AssetLite {
   return {
@@ -55,6 +55,15 @@ describe('ServiceSwitch repo-sync 状态分支', () => {
     const html = renderToStaticMarkup(<ServiceSwitch row={row({ active: 'dead' }, { provenance: 'third-party' })} onAction={() => undefined} />);
     expect(html).toContain('EXT 外部');
     expect(html).not.toContain('<button');
+  });
+});
+
+describe('服务动作结果文案', () => {
+  it('业务拒绝保留服务端 output，不包装成 Error: 500', () => {
+    const output = formatActionMessage('start', { ok: false, output: 'repo-sync-devforge 已手动停用（enabled=false），拒绝 start' });
+    expect(output).toContain('enabled=false');
+    expect(output).toContain('已手动停用');
+    expect(output).not.toContain('Error: 500');
   });
 });
 

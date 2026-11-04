@@ -224,6 +224,7 @@ test('services: disabled repo-sync is neutral and has no start/restart', async (
   await page.goto('/services');
   const disabled = page.locator('tr', { hasText: 'repo-sync · devforge' }).first();
   await expect(disabled.getByText('disabled', { exact: true })).toBeVisible();
+  await expect(disabled.getByText('false', { exact: true })).toBeVisible();
   await expect(disabled.getByText('已手动停用（enabled=false）')).toBeVisible();
   await expect(disabled.locator('.badge-off').first()).toBeVisible();
   await expect(disabled.locator('button')).toHaveCount(0);

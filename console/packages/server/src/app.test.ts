@@ -69,6 +69,11 @@ const state: RegistryState = {
       source: { collector: 'test', path: '/tmp/repo-sync/repos.d/gqt.json' },
       payload: { active: 'dead', config: { enabled: true } },
     }),
+    mk('service:repo-sync-devforge', 'service', {
+      name: 'repo-sync · devforge',
+      source: { collector: 'test', path: '/tmp/repo-sync/repos.d/devforge.json' },
+      payload: { active: 'disabled', config: { enabled: false } },
+    }),
   ],
   relations: [{ from: 'hook-rule:push-guard-master-gate', to: 'hook-script:x.sh', type: 'mounts' }],
   diagnostics: [],
@@ -95,6 +100,9 @@ beforeAll(async () => {
     pushAssets: (a) => pushed.push(...a),
     serviceAction: async (unit, action) => {
       actionLog.push({ unit, action });
+      if (unit === 'repo-sync-devforge' && action !== 'stop') {
+        return { ok: false, output: `repo-sync-devforge 已手动停用（enabled=false），拒绝 ${action}` };
+      }
       return { ok: true, output: `fake ${action} ${unit}` };
     },
   });
@@ -146,7 +154,7 @@ describe('api endpoints', () => {
 
   it('overview aggregates counts, health', async () => {
     const r = await get('/api/overview', TOKEN);
-    expect(r.body.total).toBe(11);
+    expect(r.body.total).toBe(12);
     expect(r.body.counts['hook-rule']).toBe(1);
     expect(r.body.counts['deployment']).toBe(1);
     expect(r.body.health.status).toBe('GREEN');
@@ -241,6 +249,12 @@ describe('api endpoints', () => {
     expect(repoSync.status).toBe(200);
     expect(await repoSync.json()).toMatchObject({ ok: true, unit: 'repo-sync-gqt', action: 'start' });
     expect(actionLog.at(-1)).toEqual({ unit: 'repo-sync-gqt', action: 'start' });
+
+    const denied = await post({ unit: 'repo-sync-devforge', action: 'start' });
+    expect(denied.status).toBe(200);
+    const deniedBody = await denied.json();
+    expect(deniedBody).toMatchObject({ ok: false, unit: 'repo-sync-devforge', action: 'start' });
+    expect(deniedBody.output).toContain('enabled=false');
   });
 
   it('unknown path 404s as json', async () => {

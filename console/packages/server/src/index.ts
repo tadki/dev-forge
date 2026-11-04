@@ -24,7 +24,19 @@ const sse = new SSEBus();
 const engine = new Engine({ config, sse, watchEnabled: process.env.FORGE_CONSOLE_WATCH !== 'off' });
 const dryActions = process.env.FORGE_CONSOLE_DRY_ACTIONS === '1';
 
-const repoSyncAction = createRepoSyncAction({ devforge: config.devforge, exec: execCapture });
+function timeoutFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+const repoSyncAction = createRepoSyncAction({
+  devforge: config.devforge,
+  exec: execCapture,
+  startTimeoutMs: timeoutFromEnv('FORGE_REPO_SYNC_START_TIMEOUT_MS', 10_000),
+  stopTimeoutMs: timeoutFromEnv('FORGE_REPO_SYNC_STOP_TIMEOUT_MS', 5_000),
+});
 const handler = createHandler({
   getState: () => engine.state,
   token,
@@ -35,7 +47,7 @@ const handler = createHandler({
   serviceAction: dryActions
     ? async (unit, action) => ({ ok: true, output: `[dry-run] ${action} ${unit}` })
     : async (unit, action) => {
-        // repo-sync：按注册 enabled 门控；nohup 原生拉起，pid_file 自锁与 SIGTERM 停止。
+        // repo-sync：enabled 门控；共享 oneshot 越沙箱后由 nohup/pid_file 管理生命周期。
         const rs = unit.match(/^repo-sync-(.+)$/);
         if (rs) {
           return repoSyncAction(rs[1], action);

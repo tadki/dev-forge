@@ -9,7 +9,7 @@ interface ServicePayload {
   scope?: string;
   active?: string;
   sub?: string;
-  enabled?: string;
+  enabled?: string | boolean;
   execStart?: string;
   envFile?: string;
   mainPid?: number;
@@ -63,6 +63,10 @@ export function ServiceSwitch({ row, actionMsg, onAction }: ServiceSwitchProps) 
   );
 }
 
+export function formatActionMessage(action: 'start' | 'stop' | 'restart', result: { ok: boolean; output?: string }): string {
+  return result.ok ? `${action} ✓` : `${action} ✕ ${result.output?.trim() || '未知错误'}`.slice(0, 160);
+}
+
 function MetaChips({ meta }: { meta?: AssetLite['meta'] }) {
   if (!meta) return <span className="dim">—</span>;
   return (
@@ -93,7 +97,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
     setActionMsg((m) => ({ ...m, [a.id]: `${action}…` }));
     try {
       const r = await apiPost<{ ok: boolean; output?: string }>('/api/services/actions', { unit, action });
-      setActionMsg((m) => ({ ...m, [a.id]: r.ok ? `${action} ✓` : `${action} ✕ ${r.output ?? ''}`.slice(0, 80) }));
+      setActionMsg((m) => ({ ...m, [a.id]: formatActionMessage(action, r) }));
     } catch (e) {
       setActionMsg((m) => ({ ...m, [a.id]: `${action} ✕ ${String(e).slice(0, 80)}` }));
     }
@@ -141,7 +145,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
                   ),
                 },
                 { key: 'status', head: '状态', render: (r) => <StatusBadge status={`${(r.payload as ServicePayload).active ?? 'n/a'}`} /> },
-                { key: 'en', head: '启用', render: (r) => <span className="mono dim">{(r.payload as ServicePayload).enabled ?? '—'}</span> },
+                { key: 'en', head: '启用', render: (r) => <span className="mono dim">{String((r.payload as ServicePayload).enabled ?? '—')}</span> },
                 { key: 'kids', head: '子进程', render: (r) => <span className="mono">{(r.payload as ServicePayload).children?.length ?? 0}</span> },
                 { key: 'trigger', head: '启动时机', render: (r) => <span className="dim">{(r.payload as ServicePayload).trigger ?? r.source.path.split('/')[2] ?? ''}</span> },
                 {
