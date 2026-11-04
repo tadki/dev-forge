@@ -17,6 +17,8 @@
 # 判失败并连带杀掉刚拉起的 repo-sync）；unit 落 KillMode=process，stop/restart
 # 只信号 MainPID，repo-sync 不再被 cgroup 连带杀，已停实例由每次激活的拉起
 # 循环补拉（每个 daemon 经注册 pid_file 自锁，存活实例不会被 double-start）。
+# SEE-1519 §SPEC-004（Owner 语义裁定）: repo-sync 属可手动开关项，注册
+# "enabled": false 的仓跳过拉起（停用持久化，unit 重启不强行拉回）。
 
 set -euo pipefail
 
@@ -54,6 +56,13 @@ fi
 
 for reg in "${REGISTRATIONS[@]}"; do
     name="$(basename "$reg" .json)"
+    # SEE-1519 §SPEC-004（Owner 语义裁定）: 注册级声明式开关，"enabled": false =
+    # Owner 手动停用该仓同步，跳过拉起使停用跨 unit 重启持久；grep 解析免新增
+    # 解释器依赖（注册文件为机器管理的单行 JSON）。
+    if grep -Eq '"enabled"[[:space:]]*:[[:space:]]*false' "$reg"; then
+        echo "[start] Skipping repo-sync daemon for '$name' (enabled=false)"
+        continue
+    fi
     echo "[start] Starting repo-sync daemon for '$name' (registry: $reg)..."
     nohup python3 "$DEV_FORGE_ROOT/repo-sync/repo_sync_daemon.py" \
         --config "$reg" \

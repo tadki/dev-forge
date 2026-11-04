@@ -13,7 +13,8 @@ Scope (per Atlas trigger 2026-08-27):
                      .claude/settings.json 权限漂移; 每-agent mcp-config 完整性 (含 timeout)
   E autopilots 健康  run 状态 / PID 锁残留 / workspace 锁残留 / watchdog 重启节流
   F launch 脚本健康  toolchain-start.sh 硬编码路径 / systemd unit 静态+运行态 /
-                     repo_sync_daemon 存活 (停摆 → 红线, SEE-1519 §SPEC-003/004)
+                     repo_sync_daemon 存活 (停摆 warn 观测；注册 enabled=false 停用
+                     → info 登记, Owner 可手动开关, SEE-1519 §SPEC-003/004 修订)
   G 错误度量口径 (cross-cutting) 绝对失败计数 + 失败码分类 + 每-agent/port 归属 + 与昨日 delta;
                      阈值计数 (同失败码日增 >=2 / 周累计 >=3, 2σ 弃); 日志完整性 "应采 vs 实采"
                      双源并集 (注册端口 ∪ 活跃 lease)
@@ -30,7 +31,8 @@ HARD SAFETY: 本脚本完全不产生任何写操作 —— 无 spawn、无 brid
   python3 toolchain/toolchain_daily_check.py --json     # 机器可读 stdout (供 1b autopilot 复用)
 
 Exit code: 0 = GREEN (无红线), 2 = REDLINE (port_override 污染 / 未知根因新失败 / 2σ 越界 /
-          systemd unit 非 active / 宿主机 repo-sync 守护停摆, SEE-1519 §SPEC-003/004),
+          systemd unit 非 active, SEE-1519 §SPEC-003 — repo-sync 停摆按 Owner
+          2026-11-04 语义裁定仅 warn, 不入红线),
           1 = 脚本自身无法完成检查 (输入缺失)。
 """
 
@@ -1296,13 +1298,27 @@ class DailyCheck:
             self.missing_input(repos_d, dim, "repo-sync 注册目录缺失/空")
         for name, cfg in regs:
             label = cfg.get("name") or os.path.splitext(name)[0]
-            # SEE-1519 §SPEC-004: 仅宿主机上下文（repo_path 真实存在）时，停摆升级为
-            # 红线；CI / 非宿主机（repo_path 不存在）降级 warn，严禁假阳性红线。
+            # SEE-1519 §SPEC-004（Owner 2026-11-04 语义裁定修订）：repo-sync 是
+            # 可手动开关项，停摆不升红线（仅 warn）；on_host 仅用于区分宿主/CI
+            # 文案口径，不再驱动红线。
             on_host = os.path.isdir(os.path.expanduser(str(cfg.get("repo_path", ""))))
-            self._check_registration_daemon(dim, issues, label, cfg, on_host)
+            self._check_registration_gate(dim, issues, label, cfg, on_host)
             self._check_registration_checkout(dim, issues, label, cfg)
 
+    def _check_registration_gate(self, dim, issues, label, cfg, on_host):
+        """enabled 声明式开关：缺省 true（gqt/kol 不设键照常巡检）；false = Owner
+        手动停用 → info 登记观测，跳过 daemon 存活判定（不 warn 不红线）。"""
+        if not cfg.get("enabled", True):
+            self.info(dim, "daemon_disabled",
+                      "%s repo-sync 已停用（注册 enabled=false, 手动开关项不判红线）" % label)
+            issues.append("F3 %s 注册停用 (enabled=false)" % label)
+            return
+        self._check_registration_daemon(dim, issues, label, cfg, on_host)
+
     def _check_registration_daemon(self, dim, issues, label, cfg, on_host):
+        # SEE-1519 §SPEC-004（Owner 2026-11-04 语义裁定）：repo-sync 为可手动开关
+        # 项，停摆恒 warn 不升红线（不进 redlines、health 不 REDLINE）；on_host
+        # 分支保留，仅区分宿主/非宿主文案口径。
         pid_file = cfg.get("pid_file")
         if not pid_file:
             issues.append("F3 %s 注册未声明 pid_file" % label)
@@ -1311,16 +1327,14 @@ class DailyCheck:
         pid_path = os.path.expanduser(str(pid_file).replace("$HOME", HOME))
         pid_text = safe_read(pid_path)
         if not pid_text:
+            issues.append("F3 %s daemon pid 文件缺失: %s" % (label, pid_path))
             if on_host:
-                # SEE-1519 §SPEC-004: 宿主机上 pid 缺=守护停摆 → 红线（曾只 warn,
-                # 把 42h 停摆掩盖成 GREEN, SEE-1518）
-                self.fail(dim, "daemon_pid_missing",
-                          "%s repo-sync 守护停摆（pid 文件缺失: %s）" % (label, pid_path))
-                issues.append("F3 %s daemon pid 文件缺失: %s" % (label, pid_path))
+                self.warn(dim, "daemon_pid_missing",
+                          "%s repo-sync 守护停摆（pid 文件缺失: %s, 不判红线）"
+                          % (label, pid_path))
             else:
                 self.warn(dim, "daemon_pid_missing",
                           "%s daemon 未运行（pid 文件缺失: %s）" % (label, pid_path))
-                issues.append("F3 %s daemon pid 文件缺失: %s" % (label, pid_path))
             return
         try:
             pid = int(pid_text.strip())
@@ -1334,9 +1348,8 @@ class DailyCheck:
         else:
             issues.append("F3 %s daemon PID %d 不存在" % (label, pid))
             if on_host:
-                # SEE-1519 §SPEC-004: 宿主机上 PID 不存活=守护停摆 → 红线
-                self.fail(dim, "daemon_dead",
-                          "%s repo-sync 守护停摆（PID %d 不存活）" % (label, pid))
+                self.warn(dim, "daemon_dead",
+                          "%s repo-sync 守护停摆（PID %d 不存活, 不判红线）" % (label, pid))
             else:
                 self.warn(dim, "daemon_dead",
                           "%s daemon PID %d 不存在（进程已退出/未启动）" % (label, pid))
