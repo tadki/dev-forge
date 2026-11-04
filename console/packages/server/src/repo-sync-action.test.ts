@@ -11,8 +11,6 @@ interface Call {
 
 type Result = { ok: boolean; stdout: string; stderr: string };
 
-const LAUNCHER = 'see1522-test-repo-sync-launcher';
-
 function fakeExec(handle: (cmd: string, args: string[]) => Result | undefined): { exec: RepoSyncExec; calls: Call[] } {
   const calls: Call[] = [];
   const exec: RepoSyncExec = async (cmd, args) => {
@@ -63,7 +61,6 @@ describe('repo-sync action', () => {
     return createRepoSyncAction({
       devforge: root,
       exec,
-      launchUnit: LAUNCHER,
       startTimeoutMs: 200,
       stopTimeoutMs: 200,
       pollIntervalMs: 10,
@@ -186,17 +183,17 @@ describe('repo-sync action', () => {
     expect(cmdNames(calls)).toEqual(['cat', 'systemd-run', 'cat', 'cat']);
     expect(cmdNames(calls)).not.toContain('systemctl');
     const launch = launcherCall(calls);
-    expect(launch.args.slice(0, 6)).toEqual([
+    expect(launch.args.slice(0, 5)).toEqual([
       '--user',
-      '--unit=forge-console-repo-sync-launcher',
       '--property=Type=oneshot',
       '--property=KillMode=process',
       '--collect',
       '/bin/bash',
     ]);
-    expect(launch.args[7]).toContain('mkdir -p "$3" && nohup python3 "$1" --config "$2" >>"$4" 2>&1 &');
-    expect(launch.args.slice(8)).toEqual(['repo-sync-start', daemonScript, cfgPath, join(root, 'repo-sync', 'logs'), join(root, 'repo-sync', 'logs', 'repo-sync-daemon.log')]);
-    expect(launch.args.some((arg) => arg === '--unit=repo-sync-gqt')).toBe(false);
+    expect(launch.args[5]).toBe('-c');
+    expect(launch.args[6]).toContain('mkdir -p "$3" && { nohup python3 "$1" --config "$2" >>"$4" 2>&1 & }');
+    expect(launch.args.slice(7)).toEqual(['repo-sync-start', daemonScript, cfgPath, join(root, 'repo-sync', 'logs'), join(root, 'repo-sync', 'logs', 'repo-sync-daemon.log')]);
+    expect(launch.args.some((arg) => arg.startsWith('--unit='))).toBe(false);
     expect(calls[3].args).toEqual(['/proc/4242/cmdline']);
   });
 
@@ -291,6 +288,17 @@ describe('repo-sync action', () => {
     expect(result.output).toContain('200ms');
     expect(cmdNames(calls).filter((cmd) => cmd === 'systemd-run')).toHaveLength(1);
     expect(cmdNames(calls).filter((cmd) => cmd === 'cat')).toHaveLength(21);
+  });
+
+  it('亚毫秒 poll 配置归一到至少 1ms，避免除零忙轮询', async () => {
+    await registration();
+    const { exec, calls } = fakeExec((cmd) => {
+      if (cmd === 'cat') return { ok: false, stdout: '', stderr: 'missing' };
+      return undefined;
+    });
+    const result = await action(exec, { startTimeoutMs: 2, pollIntervalMs: 0.5 })('gqt', 'start');
+    expect(result.ok).toBe(false);
+    expect(cmdNames(calls).filter((cmd) => cmd === 'cat')).toHaveLength(3);
   });
 
   it('冷启动超过单轮轮询时继续等待并在配置窗口内成功', async () => {
@@ -393,23 +401,31 @@ describe('repo-sync action', () => {
     expect(cmdNames(calls)).toEqual(['cat', 'systemd-run', 'cat', 'cat']);
   });
 
-  it('共享 launcher 已在运行时视为另一启动进行中，等待既有 daemon 而不重复拉起', async () => {
+  it('连续启动不依赖固定 unit 名，第二次仍能发起独立 launcher', async () => {
     await registration();
-    let launched = false;
+    let started = false;
+    let launches = 0;
     const { exec, calls } = fakeExec((cmd, args) => {
       if (cmd === 'cat' && args[0] === pidFile) {
-        return launched ? { ok: true, stdout: '4242\n', stderr: '' } : { ok: false, stdout: '', stderr: 'missing' };
+        return started ? { ok: true, stdout: '4242\n', stderr: '' } : { ok: false, stdout: '', stderr: 'missing' };
       }
       if (cmd === 'cat' && args[0] === '/proc/4242/cmdline') return { ok: true, stdout: procCmdline, stderr: '' };
       if (cmd === 'systemd-run') {
-        launched = true;
-        return { ok: false, stdout: '', stderr: 'Unit forge-console-repo-sync-launcher already active' };
+        launches += 1;
+        started = true;
+        return { ok: true, stdout: `Running as unit: run-u${launches}.service`, stderr: '' };
       }
       return undefined;
     });
-    const result = await action(exec)('gqt', 'start');
-    expect(result.ok).toBe(true);
-    expect(cmdNames(calls).filter((cmd) => cmd === 'systemd-run')).toHaveLength(1);
+    const first = await action(exec)('gqt', 'start');
+    started = false;
+    const second = await action(exec)('gqt', 'start');
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(launches).toBe(2);
+    for (const launch of calls.filter((c) => c.cmd === 'systemd-run')) {
+      expect(launch.args.some((arg) => arg.startsWith('--unit='))).toBe(false);
+    }
   });
 
   it('launcher 执行失败时透传错误且不再轮询', async () => {

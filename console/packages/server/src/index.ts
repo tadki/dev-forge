@@ -6,7 +6,7 @@ import { watch } from 'chokidar';
 import { loadConfig } from './engine.js';
 import { Engine } from './engine.js';
 import { createHandler } from './app.js';
-import { createRepoSyncAction } from './repo-sync-action.js';
+import { createRepoSyncAction, DEFAULT_START_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS } from './repo-sync-action.js';
 import { SSEBus } from './sse.js';
 
 const consoleRoot = join(import.meta.dirname, '..', '..', '..');
@@ -34,8 +34,8 @@ function timeoutFromEnv(name: string, fallback: number): number {
 const repoSyncAction = createRepoSyncAction({
   devforge: config.devforge,
   exec: execCapture,
-  startTimeoutMs: timeoutFromEnv('FORGE_REPO_SYNC_START_TIMEOUT_MS', 10_000),
-  stopTimeoutMs: timeoutFromEnv('FORGE_REPO_SYNC_STOP_TIMEOUT_MS', 5_000),
+  startTimeoutMs: timeoutFromEnv('FORGE_REPO_SYNC_START_TIMEOUT_MS', DEFAULT_START_TIMEOUT_MS),
+  stopTimeoutMs: timeoutFromEnv('FORGE_REPO_SYNC_STOP_TIMEOUT_MS', DEFAULT_STOP_TIMEOUT_MS),
 });
 const handler = createHandler({
   getState: () => engine.state,
@@ -47,7 +47,7 @@ const handler = createHandler({
   serviceAction: dryActions
     ? async (unit, action) => ({ ok: true, output: `[dry-run] ${action} ${unit}` })
     : async (unit, action) => {
-        // repo-sync：enabled 门控；共享 oneshot 越沙箱后由 nohup/pid_file 管理生命周期。
+        // repo-sync：enabled 门控；自动命名 oneshot 越沙箱后由 nohup/pid_file 管理生命周期。
         const rs = unit.match(/^repo-sync-(.+)$/);
         if (rs) {
           return repoSyncAction(rs[1], action);
