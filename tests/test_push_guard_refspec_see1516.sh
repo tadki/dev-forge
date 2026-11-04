@@ -12,6 +12,14 @@
 #   --no-force 显式豁免不拦 force 门
 set -uo pipefail
 
+# SEE-1516 tidy（Atlas 指定处置）：隔离宿主 agent/会话环境变量。本套件的
+# 期望建立在「无 whitelist agent」的确定性基线上（见下方脚本层注释）——宿主
+# 运行环境的 MULTICA_AGENT_ID/NAME（如 Atlas 运行时）若泄漏，会触发 agent
+# 白名单/agents 门控路径使 FORCE/MASTER 判定漂移而假红。只清环境、不动判据，
+# 与 test_auto_pr_on_stop_boundary_cases.sh:34 的既有隔离惯例同款。
+unset MULTICA_TASK_ID MULTICA_AGENT_ID MULTICA_AGENT_NAME \
+      MULTICA_TOKEN MULTICA_SERVER_URL MULTICA_WORKSPACE_ID
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENGINE="$ROOT/claude-hooks/unified/engine.js"
 GATES="$ROOT/claude-hooks/unified/rules.d/push-guard-gates.json"

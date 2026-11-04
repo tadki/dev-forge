@@ -303,6 +303,45 @@ def _check_error_ratio(state: dict, error_count: int, total_attempted: int,
     return False
 
 
+def _phase5_should_send(entry: dict, action: str, identifier: str,
+                        should_send: bool, processing_log: list) -> bool:
+    """Phase 5 per-entry send gate (decision only — no sends, no counters).
+
+    SEE-1516 tidy: extracted verbatim from the inline chain in
+    send_push_comments, whose accumulated §SPEC-008~009 additions pushed its
+    cyclomatic complexity past the gqt gate max (17 > 15). Ordering preserved:
+    terminal-status race guard → no_assignee 24h rate limit → need_push/
+    need_push_decision 24h cooldown (§SPEC-009). Pure predicate; the only
+    observable effect is the cooldown processing_log line.
+    """
+    # Race condition guard: re-check status before sending
+    if should_send and is_issue_in_terminal_status(entry.get("id", ""), processing_log):
+        should_send = False
+
+    if _no_assignee_rate_limited(entry, action, should_send, identifier, processing_log):
+        should_send = False
+
+    # §SPEC-009 (fingerprint 69823a273535): need_push/need_push_decision
+    # 与 no_assignee 同款 24h 冷却 — 同状态两轮不重复 @ (原仅 no_assignee
+    # 有 rate-limit, need_push 每轮 cron 重复催促)。
+    if (
+        should_send
+        and action in ("need_push", "need_push_first", "need_push_second",
+                       "need_push_decision")
+        and _is_within_hours(
+            entry.get("latest_push_reminder_at", ""),
+            PUSH_COOLDOWN_HOURS,
+        )
+    ):
+        processing_log.append(
+            f"phase5_push_cooldown: issue={identifier} "
+            f"action={action} cooldown_hours={PUSH_COOLDOWN_HOURS}"
+        )
+        should_send = False
+
+    return should_send
+
+
 def send_push_comments(
     categories: dict,
     processing_log: list,
@@ -344,32 +383,11 @@ def send_push_comments(
             mention_target_name = extract_mention_name(mention_link)
             comment_content = render_push_template(template, entry, mention_link)
 
-            should_send = not dry_run and not state.get("kill_switch", False)
-
-            # Race condition guard: re-check status before sending
-            if should_send and is_issue_in_terminal_status(issue_id, processing_log):
-                should_send = False
-
-            if _no_assignee_rate_limited(entry, action, should_send, identifier, processing_log):
-                should_send = False
-
-            # §SPEC-009 (fingerprint 69823a273535): need_push/need_push_decision
-            # 与 no_assignee 同款 24h 冷却 — 同状态两轮不重复 @ (原仅 no_assignee
-            # 有 rate-limit, need_push 每轮 cron 重复催促)。
-            if (
-                should_send
-                and action in ("need_push", "need_push_first", "need_push_second",
-                               "need_push_decision")
-                and _is_within_hours(
-                    entry.get("latest_push_reminder_at", ""),
-                    PUSH_COOLDOWN_HOURS,
-                )
-            ):
-                processing_log.append(
-                    f"phase5_push_cooldown: issue={identifier} "
-                    f"action={action} cooldown_hours={PUSH_COOLDOWN_HOURS}"
-                )
-                should_send = False
+            should_send = _phase5_should_send(
+                entry, action, identifier,
+                not dry_run and not state.get("kill_switch", False),
+                processing_log,
+            )
 
             if should_send:
                 total_attempted += 1
