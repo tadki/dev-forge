@@ -4,7 +4,9 @@ set -e
 # PreToolUse hook: guards git push commands
 # Trigger: Bash(git push*)
 # - Checks current branch contains latest origin/master
-# - Checks master/main push permission (MULTICA_AGENT_NAME)
+# - master/main 直推与 force 门禁已退役至声明式 gates（SEE-1516 §SPEC-021 单轨，
+#   rules.d/push-guard-gates.json 唯一防线）；脚本侧保留祖先/裸 push/shared-branch/
+#   draft/sidecar/gitlink 通用检查
 # - Success: pass stdin through (echo INPUT)
 # - Failure: exit 2 + stderr message
 
