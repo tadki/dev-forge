@@ -1,13 +1,22 @@
 """§SPEC-013 GQT host 三态测试（SEE-1406 追加工作项）。
 
-对真实 push-guard.sh 全 hook 进行行为测试（非源码镜像断言）：
-GQT canonical 检出纳入 host 判定后——
-  S1 非白名单 agent（Bachi）在 GQT canonical 直推 master → exit 2
-  S2 Atlas 在 GQT canonical 直推 master → exit 0 + stdin passthrough
-  S3 companion 检出（GQT task checkout 等价物）master 直推 → 不 gate（exit 0）
+对真实 push-guard.sh 全 hook 进行行为测试（非源码镜像断言）。
+
+SEE-1516 §SPEC-021 单轨改约（Owner「方案一 + B」2026-11-04）：push-guard.sh
+的 master/main 直推门禁（Check 2a，含 Atlas/Archi 白名单）与 force 拦截段
+已删除——master/force deny 唯一防线 = 引擎 gates
+（rules.d/push-guard-gates.json push-guard-master-gate / force-push-gate，
+repo op kol/gqt 作用域，无任何 agent 白名单；gates 层判定由
+tests/test_push_guard_refspec_see1516.sh 承接）。脚本层对 master 直推不再
+区分 agent——一律落入 Phase 3 通用检查后透传：
+
+  S1 任意 agent（Bachi/Archi）在 GQT canonical 直推 master → 脚本不再 gate
+     （exit 0 + passthrough；deny 归 gates 层）
+  S2 Atlas 在 GQT canonical 直推 master → exit 0 + stdin passthrough（同前）
+  S3 companion 检出 master 直推 → 不 gate（exit 0，零变化）
   S4 companion 零变化佐证：GQT_REPO_ROOT 指向另一检出时 companion 不受牵连
-  S5 KOL host 路径零变化锚点（PROJECT_ROOT=.claude/hooks marker 仍拦截）
-  S6 GQT canonical 共享分支普通推送仍放行（master-only 拦截，共享分支照推）
+  S5 KOL host 检出 master 直推 → 脚本不再 gate（exit 0；原 Check 2a 拦截退役）
+  S6 GQT canonical 共享分支普通推送仍放行（Check 3-8 保留不动）
 辅助 S7：缺省探针路径与 GQT launch/systemd 硬编码一致性（防漂移）。
 
 所有仓库均为 tempfile 临时建仓，绝不触碰 ~/tools/godot-qa-toolkit 规范检出
@@ -81,23 +90,24 @@ def run_hook(command: str, *, agent_id: str, agent_name: str,
 
 
 # ---------------------------------------------------------------------------
-# S1: 非白名单 deny — Bachi 在 GQT canonical 直推 master
+# S1: 脚本层不再 master-gate（单轨改约）—— Bachi/Archi 同路径透传
 # ---------------------------------------------------------------------------
 
-def test_gqt_host_master_push_denied_for_non_whitelist(tmp_path, tmp_git_repo):
-    # S1 用 GQT_REPO_ROOT 显式指向临时 canonical —— PATH 边界不碰规范检出
+def test_gqt_host_master_push_script_ungated_non_whitelist(tmp_path, tmp_git_repo):
+    """单轨改约：脚本对 GQT canonical master 直推不再 gate（deny 归 gates 层）。"""
     (tmp_path / "audit").mkdir()
     cmd = f"cd {tmp_git_repo} && git push origin master"
-    code, _out, err, _payload = run_hook(
+    code, out, err, payload = run_hook(
         cmd, agent_id=BACHI_ID, agent_name="Bachi",
         gqt_repo_root=str(tmp_git_repo), project_root=tmp_path / "audit",
     )
-    assert code == 2, f"expected deny (exit 2), got {code}; stderr={err}"
-    assert "master" in err
+    assert code == 0, f"expected script passthrough (exit 0), got {code}; stderr={err}"
+    assert "禁止直接推送到 master" not in err  # Check 2a 拦截文案已退役
+    assert out == payload + "\n"
 
 
-def test_gqt_host_master_push_denied_for_whitelist_affect_check(tmp_path, tmp_git_repo):
-    # ARCHI 同属白名单：抽查 Archi 放行（KOL host 行为一致性）
+def test_gqt_host_master_push_script_ungated_archi(tmp_path, tmp_git_repo):
+    """Archi 同路径透传——脚本层不再有 agent 白名单分叉。"""
     (tmp_path / "audit").mkdir()
     cmd = f"cd {tmp_git_repo} && git push origin master"
     code, out, err, payload = run_hook(
@@ -105,7 +115,7 @@ def test_gqt_host_master_push_denied_for_whitelist_affect_check(tmp_path, tmp_gi
         agent_name="Archi", gqt_repo_root=str(tmp_git_repo),
         project_root=tmp_path / "audit",
     )
-    assert code == 0, f"expected Archi allow (exit 0), got {code}; stderr={err}"
+    assert code == 0, f"expected Archi passthrough (exit 0), got {code}; stderr={err}"
     assert out == payload + "\n"
 
 
@@ -159,8 +169,8 @@ def test_companion_master_push_not_gated_when_gqt_root_points_elsewhere(tmp_path
 # S5: KOL host 路径零变化锚点（.claude/hooks marker host 仍拦截非白名单）
 # ---------------------------------------------------------------------------
 
-def test_kol_host_case_master_push_still_denied(tmp_path):
-    """KOL host 判定（.claude/hooks marker 等价物 + PROJECT_ROOT）零变化。"""
+def test_kol_host_case_master_push_script_ungated(tmp_path):
+    """KOL host 检出 master 直推 → 脚本不再 gate（原 Check 2a 拦截随 E1 退役）。"""
     kol_host = tmp_path / "kol-host"
     kol_host.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "master"], cwd=kol_host, check=True)
@@ -170,12 +180,23 @@ def test_kol_host_case_master_push_still_denied(tmp_path):
         check=True,
     )
     (kol_host / ".claude" / "hooks").mkdir(parents=True)  # host marker
+    # Check-3 前置：origin 默认分支引用可解析且 HEAD 包含之（同 tmp_git_repo）
+    origin = tmp_path / "kol-origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    subprocess.run(["git", "-C", str(kol_host), "remote", "add", "origin", str(origin)],
+                   check=True)
+    subprocess.run(
+        ["git", "-C", str(kol_host), "-c", "user.email=t@t", "-c", "user.name=t",
+         "push", "-q", "-u", "origin", "master"],
+        check=True,
+    )
     cmd = f"cd {kol_host} && git push origin master"
-    code, _out, err, _payload = run_hook(
+    code, out, err, payload = run_hook(
         cmd, agent_id=BACHI_ID, agent_name="Bachi", project_root=kol_host,
     )
-    assert code == 2, f"expected KOL host deny (exit 2), got {code}; stderr={err}"
-    assert "master" in err
+    assert code == 0, f"expected script passthrough (exit 0), got {code}; stderr={err}"
+    assert "禁止直接推送到 master" not in err
+    assert out == payload + "\n"
 
 
 # ---------------------------------------------------------------------------
