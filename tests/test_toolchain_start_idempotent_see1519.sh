@@ -8,6 +8,7 @@
 #   A. status → running   : 幂等驻留（不 exec daemon start），守护消失后 exit 0
 #   B. status → 未运行    : 维持 exec `daemon start --foreground` 语义
 #   C. status → 探测失败  : 不可判 → 退化为 B（改动前行为），不得 exit 1
+#   H. enabled=false 注册 : 跳过拉起（Owner 手动停用持久化，§SPEC-004 修订）
 #
 # Hermetic: 临时 HOME/registry/PATH stub，无网络，不触碰真实 daemon / repos.d。
 set -u
@@ -40,6 +41,10 @@ EOF
 EOF
     cat > "$SANDBOX/run/repo-sync/repos.d/gqt.json" <<EOF
 {"name":"gqt","repo_path":"$SANDBOX/repo2","branch":"master","pid_file":"$SANDBOX/gqt.pid"}
+EOF
+    # SEE-1519 §SPEC-004: enabled=false 注册（模拟 Owner 手动停用形态）
+    cat > "$SANDBOX/run/repo-sync/repos.d/devoff.json" <<EOF
+{"name":"devoff","repo_path":"$SANDBOX/repo3","branch":"main","pid_file":"$SANDBOX/devoff.pid","enabled":false}
 EOF
 }
 
@@ -171,6 +176,41 @@ DAEMON_HOLD=0 run_script "$SANDBOX/out-g.log"
 RC=$(cat "$SANDBOX/exit-code")
 CALLS=$(cat "$SANDBOX/stub-calls.log")
 if echo "$CALLS" | grep -q "daemon start --foreground"; then pass "G: 无 status 键含 running 字样判未运行并 exec foreground"; else fail "G: 键名校验缺失的变异应被杀 (垃圾输出被误判运行)"; fi
+
+# =============== H. enabled=false 注册: 跳过拉起, 开关不被硬编码 ===============
+# SEE-1519 §SPEC-004（Owner 语义裁定）: 手动停用的仓不得被 unit 重启强行拉回；
+# 同时启用仓照常拉起（开关不得误伤其余仓），双跑仍保持跳过语义（幂等）。
+setup_sandbox
+write_multica_stub notrunning
+DAEMON_HOLD=0 run_script "$SANDBOX/out-h1.log"
+RC1H=$(cat "$SANDBOX/exit-code")
+CALLS1=$(cat "$SANDBOX/stub-calls.log")
+if [ "$RC1H" = "0" ]; then pass "H1: 含停用注册时脚本正常 exit 0"; else fail "H1: exit=$RC1H (期望 0)"; fi
+if grep -q "Skipping repo-sync daemon for 'devoff' (enabled=false)" "$SANDBOX/out-h1.log"; then
+    pass "H1: enabled=false 注册被跳过（输出标记）"
+else
+    fail "H1: 缺 enabled=false 跳过标记 (out-h1.log)"
+fi
+if echo "$CALLS1" | grep -q "devoff.json"; then
+    fail "H1: 停用注册仍被拉起 (devoff.json 出现在 python3 调用)"
+else
+    pass "H1: 停用注册未拉起 repo-sync daemon"
+fi
+ENABLED_STARTS=$(echo "$CALLS1" | grep -c "repo_sync_daemon.py")
+if [ "$ENABLED_STARTS" -ge 2 ]; then pass "H1: 启用注册照常拉起 ($ENABLED_STARTS)"; else fail "H1: 启用注册拉起缺失 ($ENABLED_STARTS)"; fi
+# 双跑幂等: 第二次激活仍跳过停用注册、不拉起、不 double-start 启用实例
+DAEMON_HOLD=0 run_script "$SANDBOX/out-h2.log"
+CALLS2=$(cat "$SANDBOX/stub-calls.log")
+if grep -q "Skipping repo-sync daemon for 'devoff' (enabled=false)" "$SANDBOX/out-h2.log"; then
+    pass "H2: 二次激活仍跳过停用注册（停用跨重启持久）"
+else
+    fail "H2: 二次激活未跳过停用注册"
+fi
+if echo "$CALLS2" | grep -q "devoff.json"; then
+    fail "H2: 二次激活拉起了停用注册"
+else
+    pass "H2: 二次激活未拉起停用注册（无 double-start 回归）"
+fi
 
 echo ""
 echo "============================================"
