@@ -57,10 +57,6 @@ describe('repo-sync action', () => {
     );
   }
 
-  function withPidFile(over: Record<string, unknown> = {}): Promise<void> {
-    return registration({ pid_file: pidFile, ...over });
-  }
-
   it.each(['start', 'restart'] as const)('enabled=false 拒绝 %s，且零 exec 副作用', async (action) => {
     await registration({ enabled: false });
     const { exec, calls } = fakeExec(() => ({ ok: true, stdout: '', stderr: '' }));
@@ -71,7 +67,7 @@ describe('repo-sync action', () => {
   });
 
   it('enabled=false 仍允许 stop；核对 daemon 身份后按注册 pid 发 SIGTERM', async () => {
-    await withPidFile({ enabled: false });
+    await registration({ enabled: false });
     await writeFile(pidFile, '4242\n');
     const { exec, calls } = fakeExec((cmd, args) => {
       if (cmd === 'cat' && args[0] === pidFile) return { ok: true, stdout: '4242\n', stderr: '' };
@@ -90,7 +86,7 @@ describe('repo-sync action', () => {
   });
 
   it('stop 遇到 PID 复用/身份不匹配时拒绝 kill', async () => {
-    await withPidFile();
+    await registration();
     await writeFile(pidFile, '4242\n');
     const { exec, calls } = fakeExec((cmd, args) => {
       if (cmd === 'cat' && args[0] === pidFile) return { ok: true, stdout: '4242\n', stderr: '' };
@@ -104,7 +100,7 @@ describe('repo-sync action', () => {
   });
 
   it('enabled start 通过 nohup 拉起并追加注册日志，随后验证 pid 与进程身份', async () => {
-    await withPidFile();
+    await registration();
     let started = false;
     const { exec, calls } = fakeExec((cmd, args) => {
       if (cmd === 'cat' && args[0] === pidFile) {
@@ -129,7 +125,7 @@ describe('repo-sync action', () => {
   });
 
   it('enabled start 在注册 pid 属于同一 daemon 时幂等，不 mkdir / nohup / kill', async () => {
-    await withPidFile();
+    await registration();
     await writeFile(pidFile, '4242\n');
     const { exec, calls } = fakeExec((cmd, args) => {
       if (cmd === 'cat' && args[0] === pidFile) return { ok: true, stdout: '4242\n', stderr: '' };
@@ -143,7 +139,7 @@ describe('repo-sync action', () => {
   });
 
   it('enabled restart = SIGTERM、等待旧进程退出后重新 nohup 拉起', async () => {
-    await withPidFile();
+    await registration();
     let alive = true;
     await writeFile(pidFile, '4242\n');
     const { exec, calls } = fakeExec((cmd, args) => {
@@ -194,7 +190,7 @@ describe('repo-sync action', () => {
   });
 
   it('kill 失败时显式返回失败', async () => {
-    await withPidFile();
+    await registration();
     await writeFile(pidFile, '4242\n');
     const { exec } = fakeExec((cmd, args) => {
       if (cmd === 'cat' && args[0] === pidFile) return { ok: true, stdout: '4242\n', stderr: '' };
@@ -208,7 +204,7 @@ describe('repo-sync action', () => {
   });
 
   it('nohup 后未注册匹配 daemon 时不得回报启动成功', async () => {
-    await withPidFile();
+    await registration();
     const { exec, calls } = fakeExec((cmd) => {
       if (cmd === 'cat') return { ok: false, stdout: '', stderr: 'missing' };
       return undefined;
@@ -221,7 +217,7 @@ describe('repo-sync action', () => {
   }, 5000);
 
   it('restart 轮询等待慢退出，旧进程消失后才 nohup', async () => {
-    await withPidFile();
+    await registration();
     let alive = true;
     let procReads = 0;
     await writeFile(pidFile, '4242\n');
