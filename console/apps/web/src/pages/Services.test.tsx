@@ -29,6 +29,7 @@ describe('ServiceSwitch repo-sync 状态分支', () => {
     expect(html).toContain('已停用（enabled=false）');
     expect(html).not.toContain('▶ 启动');
     expect(html).not.toContain('↻');
+    expect(html).not.toContain('■ 停止');
   });
 
   it('enabled 且 dead 行保留启动与重启入口', () => {
@@ -64,6 +65,14 @@ describe('服务动作结果文案', () => {
     expect(output).toContain('enabled=false');
     expect(output).toContain('已手动停用');
     expect(output).not.toContain('Error: 500');
+  });
+
+  it('长失败文案保留 journalctl/日志路径等可操作尾注', () => {
+    const journalHint = "请检查 journalctl --user --since '-5 min'";
+    const output = `${'launcher stderr '.repeat(24)}${journalHint}`;
+    const message = formatActionMessage('start', { ok: false, output });
+    expect(message).toContain(journalHint);
+    expect(message.length).toBeLessThanOrEqual(410);
   });
 });
 

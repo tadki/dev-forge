@@ -28,6 +28,12 @@ export async function readJson<T = unknown>(path: string): Promise<T | null> {
   }
 }
 
+export function matchesRepoSyncDaemonCmdline(cmdline: string, cfgPath: string): boolean {
+  const args = cmdline.split('\0');
+  const scriptIndex = args.findIndex((arg) => arg === 'repo_sync_daemon.py' || arg.endsWith('/repo_sync_daemon.py'));
+  return scriptIndex >= 0 && args[scriptIndex + 1] === '--config' && args[scriptIndex + 2] === cfgPath;
+}
+
 export async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);

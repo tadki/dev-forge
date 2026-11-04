@@ -94,7 +94,7 @@ entries:
 `POST /api/services/actions` `{unit, action: start|stop|restart}` 支持两类资产：
 
 - **systemd**：仅接受注册表内 first-party 且 user 级单元；外部/第三方与 system 级一律 403（system 级需 root）。
-- **repo-sync 进程服务**：按 `repo-sync/repos.d/<name>.json` 实值执行。严格 `enabled === false` 时 start/restart 返回 `ok:false`（输出含 `enabled=false`，且不执行任何进程命令），UI 显示中性停用态并隐藏启动/重启；stop 保留用于清理残留。注册必须声明非空 `pid_file`，否则所有动作零 exec 拒绝。停止前核对 `/proc/<pid>/cmdline` 的 daemon 与 config；stale pid 按未运行恢复，活 PID 身份不匹配拒杀。
+- **repo-sync 进程服务**：按 `repo-sync/repos.d/<name>.json` 实值执行。严格 `enabled === false` 时 start/restart 返回 `ok:false`（输出含 `enabled=false`，且不执行任何进程命令），UI 显示中性停用态并隐藏启动/重启；disabled 时仅 API/服务端 stop 可用于清理残留（UI 不提供 start/stop/restart，调用 `POST /api/services/actions`）。注册必须声明非空 `pid_file`，否则所有动作零 exec 拒绝。停止前核对 `/proc/<pid>/cmdline` 的 daemon 与 config；stale pid 按未运行恢复，活 PID 身份不匹配拒杀。
 
 repo-sync 启动不由 `forge-console` 沙箱内的进程直接写宿主。console 自身保持 `ProtectSystem=strict` / `ProtectHome=read-only` / `ReadWritePaths=`，只通过 `systemd-run --user` 创建**自动命名的 transient oneshot launcher**（不显式指定 `--unit`，由 systemd 分配独立且唯一的 transient unit 名称，具体名称格式由 systemd 决定）越过沙箱；launcher 以 `KillMode=process` + `--collect` 运行并退出，真正 daemon 始终由 `nohup python3 … --config …` 启动，stdout/stderr 追加到注册 `log_dir/repo-sync-daemon.log`，pid/state 由 daemon 按注册文件写入。它**不是**按仓命名的 transient daemon unit，也不会被首个 daemon 钉住共享名；pid_file 自锁与 SIGTERM 才是 daemon 生命周期契约。
 

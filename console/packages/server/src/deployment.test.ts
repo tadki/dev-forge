@@ -20,6 +20,7 @@ describe('SEE-1522 部署沙箱与服务动作文档', () => {
     expect(readme).toContain('systemd 分配独立且唯一');
     expect(readme).toContain('KillMode=process');
     expect(readme).toContain('enabled=false');
+    expect(readme).toContain('disabled 时仅 API/服务端 stop 可用');
     expect(readme).toContain('ok:false');
     expect(readme).toContain('FORGE_REPO_SYNC_START_TIMEOUT_MS');
     expect(readme).toContain('FORGE_REPO_SYNC_STOP_TIMEOUT_MS');

@@ -1,6 +1,6 @@
 import type { Asset, Relation } from '@forge/schema';
 import { join } from 'node:path';
-import { exists, listDir, readJson, readText } from '../util.js';
+import { listDir, matchesRepoSyncDaemonCmdline, readJson, readText } from '../util.js';
 import { asset, type Collector } from '../types.js';
 
 export const devforgeLaunchCollector: Collector = {
@@ -13,7 +13,8 @@ export const devforgeLaunchCollector: Collector = {
 
     const reposD = join(ctx.paths.devforge, 'repo-sync', 'repos.d');
     for (const f of (await listDir(reposD)).filter((x) => x.endsWith('.json'))) {
-      const cfg = await readJson<Record<string, unknown>>(join(reposD, f));
+      const cfgPath = join(reposD, f);
+      const cfg = await readJson<Record<string, unknown>>(cfgPath);
       if (!cfg) continue;
       const name = String(cfg.name ?? f.replace(/\.json$/, ''));
       const disabled = cfg.enabled === false;
@@ -25,7 +26,10 @@ export const devforgeLaunchCollector: Collector = {
         active = 'dead';
         const pidText = await readText(pidFile);
         const pid = Number((pidText ?? '').trim());
-        if (pid > 0 && (await exists(`/proc/${pid}`))) active = 'active';
+        if (pid > 0) {
+          const proc = await ctx.exec('cat', [`/proc/${pid}/cmdline`], 3000);
+          if (proc.ok && matchesRepoSyncDaemonCmdline(proc.stdout, cfgPath)) active = 'active';
+        }
       }
       const trigger = disabled ? '已手动停用（enabled=false）' : '随 toolchain-start-all 启动';
       assets.push(
@@ -38,7 +42,7 @@ export const devforgeLaunchCollector: Collector = {
           enforcement: 'enforced',
           enabled: !disabled,
           payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, enabled: !disabled, active, trigger },
-          source: { collector: 'devforge-launch', path: join(reposD, f) },
+          source: { collector: 'devforge-launch', path: cfgPath },
           tags: ['repo-sync', 'devforge'],
         })
       );

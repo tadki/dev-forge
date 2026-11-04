@@ -11,8 +11,19 @@ async function writeRepos(fixture: string): Promise<void> {
   await writeFile(join(root, 'repo-sync', 'repos.d', 'devforge.json'), fixture);
 }
 
-function ctx() {
-  return makeContext(defaultConfig({ devforge: root }));
+function ctx(exec?: (cmd: string, args: string[], timeoutMs: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>) {
+  return makeContext(defaultConfig({ devforge: root }), exec ? { exec } : undefined);
+}
+
+function daemonCmdline(configPath = join(root, 'repo-sync', 'repos.d', 'devforge.json')): string {
+  return ['python3', join(root, 'repo_sync_daemon.py'), '--config', configPath, ''].join('\0');
+}
+
+function fakeProc(stdout: string, ok = true) {
+  return async (cmd: string, args: string[]) => {
+    if (cmd === 'cat' && args[0] === `/proc/${process.pid}/cmdline`) return { ok, stdout, stderr: ok ? '' : 'gone' };
+    return { ok: false, stdout: '', stderr: 'unexpected exec' };
+  };
 }
 
 describe('devforge-launch repo-sync 判活', () => {
@@ -23,13 +34,37 @@ describe('devforge-launch repo-sync 判活', () => {
     expect((a!.payload as { active: string }).active).toBe('dead');
   });
 
-  it('pid 存活 → active', async () => {
+  it('pid 存活且 cmdline 为同一 repo-sync daemon + config → active', async () => {
     const pidFile = join(root, 'live.pid');
     await writeFile(pidFile, String(process.pid));
     await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', pid_file: pidFile }));
-    const r = await devforgeLaunchCollector.collect(ctx());
+    const r = await devforgeLaunchCollector.collect(ctx(fakeProc(daemonCmdline())));
     const a = r.assets.find((x) => x.id === 'service:repo-sync-devforge');
     expect((a!.payload as { active: string }).active).toBe('active');
+  });
+
+  it('PID 复用但 cmdline 身份不匹配 → dead，不得显示 active', async () => {
+    const pidFile = join(root, 'reused.pid');
+    await writeFile(pidFile, String(process.pid));
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', pid_file: pidFile }));
+    const r = await devforgeLaunchCollector.collect(ctx(fakeProc(['node', '/tmp/other.js', ''].join('\0'))));
+    expect((r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
+  });
+
+  it('daemon 相同但 --config 不匹配 → dead', async () => {
+    const pidFile = join(root, 'wrong-config.pid');
+    await writeFile(pidFile, String(process.pid));
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', pid_file: pidFile }));
+    const r = await devforgeLaunchCollector.collect(ctx(fakeProc(daemonCmdline('/tmp/other-registration.json'))));
+    expect((r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
+  });
+
+  it('pid_file 遗留但 /proc cmdline 不存在（stale）→ dead', async () => {
+    const pidFile = join(root, 'stale.pid');
+    await writeFile(pidFile, String(process.pid));
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', pid_file: pidFile }));
+    const r = await devforgeLaunchCollector.collect(ctx(fakeProc('', false)));
+    expect((r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
   });
 
   it('无 pid_file 字段 → unknown，未声明 enabled 视为启用', async () => {
