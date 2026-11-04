@@ -5,6 +5,14 @@
 # Run:    bash tests/test_plan_mode_permission_allow.sh
 set -uo pipefail
 
+# SEE-1516 tidy（方案外修复·显式标注）：隔离宿主 agent/会话环境变量，与
+# test_push_guard_refspec_see1516.sh 同款处置（test_auto_pr_on_stop_boundary_cases.sh
+# 既有惯例）。宿主运行时的 MULTICA_AGENT_NAME（如 Refacty/Atlas）泄漏会命中
+# rules-v2.json 的 agents 门控规则（recall-reminder 等），令「无命中 → 透传」
+# 用例得到额外 additionalContext 而假红。只清环境、不动判据。
+unset MULTICA_TASK_ID MULTICA_AGENT_ID MULTICA_AGENT_NAME \
+      MULTICA_TOKEN MULTICA_SERVER_URL MULTICA_WORKSPACE_ID
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 PASS=0; FAIL=0; RESULTS=()
 
