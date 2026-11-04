@@ -46,6 +46,15 @@ EOF
     cat > "$SANDBOX/run/repo-sync/repos.d/devoff.json" <<EOF
 {"name":"devoff","repo_path":"$SANDBOX/repo3","branch":"main","pid_file":"$SANDBOX/devoff.pid","enabled":false}
 EOF
+    # hardener 补测 R14: pretty-printed 形态（冒号后带空白）也必须被识别为停用。
+    # 生产注册文件是缩进 JSON（"enabled": false,），正则不得依赖无空白写法。
+    cat > "$SANDBOX/run/repo-sync/repos.d/devoff2.json" <<EOF
+{"name":"devoff2","repo_path":"$SANDBOX/repo4","branch":"main","pid_file":"$SANDBOX/devoff2.pid","enabled": false}
+EOF
+    # hardener 补测 R15: 显式 enabled=true 的注册必须照常拉起（跳过只认值不认键名）。
+    cat > "$SANDBOX/run/repo-sync/repos.d/devon.json" <<EOF
+{"name":"devon","repo_path":"$SANDBOX/repo5","branch":"main","pid_file":"$SANDBOX/devon.pid","enabled":true}
+EOF
 }
 
 # stub multica: 按模式回放 daemon status / start 行为, 记录全部调用
@@ -210,6 +219,23 @@ if echo "$CALLS2" | grep -q "devoff.json"; then
     fail "H2: 二次激活拉起了停用注册"
 else
     pass "H2: 二次激活未拉起停用注册（无 double-start 回归）"
+fi
+# hardener 补测: pretty JSON（冒号带空白）形态的停用注册同样跳过（R14 击杀面）
+if grep -q "Skipping repo-sync daemon for 'devoff2' (enabled=false)" "$SANDBOX/out-h1.log"; then
+    pass "H3: pretty JSON 形态 enabled=false 同样被跳过"
+else
+    fail "H3: 冒号带空白的停用注册未被跳过（正则收紧变异应被杀）"
+fi
+if echo "$CALLS1" | grep -q "devoff2.json"; then
+    fail "H3: pretty JSON 停用注册仍被拉起"
+else
+    pass "H3: pretty JSON 停用注册未拉起"
+fi
+# hardener 补测: 显式 enabled=true 的注册必须照常拉起（R15 击杀面）
+if echo "$CALLS1" | grep -q "devon.json"; then
+    pass "H4: 显式 enabled=true 注册照常拉起"
+else
+    fail "H4: 显式 true 注册被误跳过（键名匹配变异应被杀）"
 fi
 
 echo ""

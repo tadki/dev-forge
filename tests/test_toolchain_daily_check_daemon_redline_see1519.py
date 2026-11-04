@@ -23,6 +23,7 @@ TOOLCHAIN_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "toolchain",
 )
+REPO_ROOT = os.path.dirname(TOOLCHAIN_DIR)
 sys.path.insert(0, TOOLCHAIN_DIR)
 
 import toolchain_daily_check as tdc  # noqa: E402
@@ -203,6 +204,22 @@ def test_f3_stall_does_not_drive_report_health_redline(host_repo, tmp_path,
     assert report["redline_count"] == 0
 
 
+def test_f3_disabled_registration_issues_are_info_observation(host_repo,
+                                                              tmp_path,
+                                                              monkeypatch):
+    # hardener：停用注册的 issue 走 info 观测语义——进 `issues`（供 F 维度详情展示）
+    # 但 level 为 INFO 且不进 redlines（R03/R04/R11 升级变异的钉扎）。
+    pid_file = tmp_path / "devforge-sync-daemon.pid"
+    _write_registration(host_repo, host_repo / "srv" / "dev-forge", pid_file,
+                        enabled=False)
+    c = _make_check(tmp_path, monkeypatch)
+    c.dim_f()
+    f = next(x for x in c.findings if x["code"] == "daemon_disabled")
+    assert f["level"] == tdc.INFO
+    assert c.redlines == []
+    assert c.dim_summary["F"]["status"] != tdc.REDLINE
+
+
 def test_f3_host_real_alive_process_is_ok(host_repo, tmp_path, monkeypatch):
     # 真实现路径全链路: pid_file 指向磁盘真实文件 + 存活 PID（本测试进程）
     pid_file = tmp_path / "devforge.pid"
@@ -213,3 +230,45 @@ def test_f3_host_real_alive_process_is_ok(host_repo, tmp_path, monkeypatch):
     f = next(x for x in c.findings if x["code"] == "f3")
     assert f["level"] == tdc.OK
     assert "devforge daemon 存活" in f["message"]
+
+
+def test_f3_host_pid_missing_message_marks_not_redline(host_repo, tmp_path,
+                                                       monkeypatch):
+    # hardener：宿主 pid 缺失的 warn 文案必须带「不判红线」标记，钉扎宿主/CI 文案
+    # 分档（R12 文案互换变异须被杀）。
+    pid_file = tmp_path / "devforge-sync-daemon.pid"
+    _write_registration(host_repo, host_repo / "srv" / "dev-forge", pid_file,
+                        enabled=True)
+    c = _make_check(tmp_path, monkeypatch)
+    c.dim_f()
+    f = next(x for x in c.findings if x["code"] == "daemon_pid_missing")
+    assert f["level"] == tdc.WARN
+    assert "repo-sync 守护停摆" in f["message"]
+    assert "不判红线" in f["message"]
+    assert "daemon 未运行（pid" not in f["message"]
+
+
+def test_f3_host_dead_pid_message_marks_not_redline(host_repo, tmp_path,
+                                                    monkeypatch):
+    # hardener：宿主 PID 不存活 warn 文案带「不判红线」标记（R13 文案互换须被杀）。
+    pid_file = tmp_path / "devforge-sync-daemon.pid"
+    pid_file.write_text("%d\n" % _dead_pid(), encoding="utf-8")
+    _write_registration(host_repo, host_repo / "srv" / "dev-forge", pid_file,
+                        enabled=True)
+    c = _make_check(tmp_path, monkeypatch)
+    c.dim_f()
+    f = next(x for x in c.findings if x["code"] == "daemon_dead")
+    assert f["level"] == tdc.WARN
+    assert "守护停摆" in f["message"]
+    assert "不判红线" in f["message"]
+
+
+def test_f3_production_devforge_registration_declares_disabled():
+    # hardener：生产注册 devforge.json 必须携带 enabled=false —— Owner
+    # 2026-11-04 手动停用语义的持久化声明（§SPEC-004 修订），unit 重启不强行
+    # 拉回。裁定状态若变化，本断言与数据文件同批更新（防误启用/误删键漂移）。
+    with open(os.path.join(REPO_ROOT, "repo-sync", "repos.d", "devforge.json"),
+              encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    assert cfg.get("name") == "devforge"
+    assert cfg.get("enabled") is False
