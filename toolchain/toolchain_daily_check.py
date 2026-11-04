@@ -1822,22 +1822,32 @@ class DailyCheck:
         with _ReportMutex(report_root):
             self._persist_locked(report, report_root)
 
-    def _persist_locked(self, report, report_root):
-        report_file = os.path.join(report_root, "latest.json")
-        history_file = os.path.join(report_root, "history.json")
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=report_root, prefix=".report-", suffix=".tmp")
+    @staticmethod
+    def _atomic_write(path, payload, tmp_prefix):
+        """原子写单文件（mkstemp 同目录临时件 → fsync → os.replace）。
+
+        SEE-1516 tidy：从 _persist_locked 提取的同形双写助手（latest.json 与
+        history.json 原本各持一份逐字节相同的 mkstemp/fsync/replace/回滚块）。
+        行为不变：同目录临时件、写败清理、replace 语义与原内联块一致。
+        """
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), prefix=tmp_prefix, suffix=".tmp")
         try:
             with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                json.dump(report, f, ensure_ascii=False, indent=2, default=str)
+                json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, report_file)
+            os.replace(tmp_path, path)
         except OSError:
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
             raise
+
+    def _persist_locked(self, report, report_root):
+        report_file = os.path.join(report_root, "latest.json")
+        history_file = os.path.join(report_root, "history.json")
+        self._atomic_write(report_file, report, ".report-")
 
         # history 追加 (滑动窗口); 经 journal 自愈读取 (SEE-1449), 被外部整体
         # 覆盖丢掉的日随本轮 persist 物理写回 history.json。
@@ -1862,19 +1872,7 @@ class DailyCheck:
             # journal 是 resilience 通道, 失败不阻断主报告落盘, 但必须显式可闻
             sys.stderr.write("[toolchain] history journal write failed (%s): %s\n"
                              % (journal_file, exc))
-        tmp_fd2, tmp_path2 = tempfile.mkstemp(dir=report_root, prefix=".history-", suffix=".tmp")
-        try:
-            with os.fdopen(tmp_fd2, "w", encoding="utf-8") as f:
-                json.dump(history, f, ensure_ascii=False, indent=2, default=str)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path2, history_file)
-        except OSError:
-            try:
-                os.unlink(tmp_path2)
-            except OSError:
-                pass
-            raise
+        self._atomic_write(history_file, history, ".history-")
 
     def render_text(self, report):
         lines = []
