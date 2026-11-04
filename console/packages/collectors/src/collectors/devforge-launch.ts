@@ -36,7 +36,8 @@ export const devforgeLaunchCollector: Collector = {
           summary: `${String(cfg.repo_path ?? '')} @ ${String(cfg.branch ?? '')}`,
           attach: { level: 'project', ref: String(cfg.repo_path ?? '') },
           enforcement: 'enforced',
-          payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, active, trigger },
+          enabled: !disabled,
+          payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, enabled: !disabled, active, trigger },
           source: { collector: 'devforge-launch', path: join(reposD, f) },
           tags: ['repo-sync', 'devforge'],
         })

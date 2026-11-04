@@ -32,19 +32,24 @@ describe('devforge-launch repo-sync 判活', () => {
     expect((a!.payload as { active: string }).active).toBe('active');
   });
 
-  it('无 pid_file 字段 → unknown', async () => {
+  it('无 pid_file 字段 → unknown，未声明 enabled 视为启用', async () => {
     await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x' }));
     const r = await devforgeLaunchCollector.collect(ctx());
-    const a = r.assets.find((x) => x.id === 'service:repo-sync-devforge');
-    expect((a!.payload as { active: string }).active).toBe('unknown');
+    const a = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!;
+    expect((a.payload as { active: string; enabled: boolean }).active).toBe('unknown');
+    expect(a.enabled).toBe(true);
+    expect((a.payload as { enabled: boolean }).enabled).toBe(true);
   });
 
-  it('enabled=false 且 pid 缺失 → disabled（不因缺 pid 报 dead）', async () => {
+  it('enabled=false 且 pid 缺失 → disabled（顶层/payload 同步停用）', async () => {
     await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: false, pid_file: join(root, 'disabled-gone.pid') }));
     const r = await devforgeLaunchCollector.collect(ctx());
-    const payload = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string; trigger: string };
+    const a = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!;
+    const payload = a.payload as { active: string; trigger: string; enabled: boolean };
     expect(payload.active).toBe('disabled');
     expect(payload.trigger).toBe('已手动停用（enabled=false）');
+    expect(a.enabled).toBe(false);
+    expect(payload.enabled).toBe(false);
   });
 
   it('enabled=false 且 pid 存活 → disabled（进程残留也不改停用语义）', async () => {
@@ -52,15 +57,22 @@ describe('devforge-launch repo-sync 判活', () => {
     await writeFile(pidFile, String(process.pid));
     await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: false, pid_file: pidFile }));
     const r = await devforgeLaunchCollector.collect(ctx());
-    const payload = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string; trigger: string };
+    const a = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!;
+    const payload = a.payload as { active: string; trigger: string; enabled: boolean };
     expect(payload.active).toBe('disabled');
     expect(payload.trigger).toBe('已手动停用（enabled=false）');
+    expect(a.enabled).toBe(false);
+    expect(payload.enabled).toBe(false);
   });
 
-  it('显式 enabled=true 且 pid 缺失 → 保持 dead', async () => {
+  it('显式 enabled=true 且 pid 缺失 → 保持 dead，顶层/payload 为启用', async () => {
     await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: true, pid_file: join(root, 'enabled-gone.pid') }));
     const r = await devforgeLaunchCollector.collect(ctx());
-    expect((r.assets.find((x) => x.id === 'service:repo-sync-devforge')!.payload as { active: string }).active).toBe('dead');
+    const a = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!;
+    const payload = a.payload as { active: string; enabled: boolean };
+    expect(payload.active).toBe('dead');
+    expect(a.enabled).toBe(true);
+    expect(payload.enabled).toBe(true);
   });
 
   it('字符串 enabled="false" 不冒充布尔停用，保持 dead', async () => {

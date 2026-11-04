@@ -182,7 +182,7 @@ export function createHandler(deps: AppDeps) {
         }
         const result = await deps.serviceAction(unit, action as 'start' | 'stop' | 'restart');
         deps.onAfterAction?.();
-        return json(res, result.ok ? 200 : 500, { ok: result.ok, unit, action, output: result.output.slice(0, 400) });
+        return json(res, 200, { ok: result.ok, unit, action, output: result.output.slice(0, 400) });
       }
 
       if (path === '/api/custom/assets' && req.method === 'POST') {

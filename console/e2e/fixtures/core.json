@@ -988,6 +988,7 @@
       },
       "payload": {
         "daemon": "repo_sync_daemon.py",
+        "enabled": false,
         "active": "disabled",
         "trigger": "已手动停用（enabled=false）"
       }
@@ -1017,6 +1018,7 @@
       },
       "payload": {
         "daemon": "repo_sync_daemon.py",
+        "enabled": true,
         "active": "dead",
         "trigger": "随 toolchain-start-all 启动"
       }
@@ -1046,6 +1048,7 @@
       },
       "payload": {
         "daemon": "repo_sync_daemon.py",
+        "enabled": true,
         "active": "active",
         "trigger": "随 toolchain-start-all 启动"
       }
