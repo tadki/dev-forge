@@ -198,27 +198,25 @@ function createEvaluator(payload, opts) {
     if (typeof env.warn === 'function') env.warn(msg);
   }
 
-  function loadRepo() {
-    if (repoLoaded) return repoInfo;
-    repoLoaded = true;
-    const probeDirs = [...new Set([projectRoot || cwd, cwd].filter(Boolean))];
+  // 单目录仓库探测（toplevel → origin URL 归一化），per-payload 缓存供会话仓与
+  // push 目标仓解析共用。非 git 目录 → null。
+  const repoAtCache = new Map(); // absDir -> { root, url } | null
+  function resolveRepoAt(dir) {
+    if (repoAtCache.has(dir)) return repoAtCache.get(dir);
     let root = '';
-    for (const dir of probeDirs) {
+    try {
+      root = execSync('git rev-parse --show-toplevel', {
+        cwd: dir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
+      }).trim();
+    } catch (e) {
       try {
-        root = execSync('git rev-parse --show-toplevel', {
+        const gitdir = execSync('git rev-parse --git-dir', {
           cwd: dir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
         }).trim();
-        if (root) break;
-      } catch (e) {
-        try {
-          const gitdir = execSync('git rev-parse --git-dir', {
-            cwd: dir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
-          }).trim();
-          if (gitdir) { root = path.isAbsolute(gitdir) ? path.dirname(gitdir) : path.resolve(dir, path.dirname(gitdir)); break; }
-        } catch (e2) { /* 下一候选 */ }
-      }
+        if (gitdir) { root = path.isAbsolute(gitdir) ? path.dirname(gitdir) : path.resolve(dir, path.dirname(gitdir)); }
+      } catch (e2) { /* 非 git 目录 → root 空 */ }
     }
-    if (!root) return repoInfo = null;
+    if (!root) { repoAtCache.set(dir, null); return null; }
     let url = '';
     try {
       // execFileSync 直排 argv（不经 shell）：root 来自 git 输出，含引号/元字符也安全
@@ -226,7 +224,20 @@ function createEvaluator(payload, opts) {
         encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000,
       }).trim();
     } catch (e) { /* 无 origin → url 空 */ }
-    return repoInfo = { root, url: normalizeGitUrl(url) };
+    const info = { root, url: normalizeGitUrl(url) };
+    repoAtCache.set(dir, info);
+    return info;
+  }
+
+  function loadRepo() {
+    if (repoLoaded) return repoInfo;
+    repoLoaded = true;
+    const probeDirs = [...new Set([projectRoot || cwd, cwd].filter(Boolean))];
+    for (const dir of probeDirs) {
+      const info = resolveRepoAt(dir);
+      if (info) return repoInfo = info;
+    }
+    return repoInfo = null;
   }
 
   let registryLoaded = false;
@@ -255,10 +266,77 @@ function createEvaluator(payload, opts) {
     return registryMap = map;
   }
 
-  function matchRepo(node) {
-    const repo = loadRepo();
-    const registry = loadRegistry();
-    if (!repo || !repo.url) return false; // 非 git / 无 origin → 恒 false
+  // ---- push 有效目标仓解析（SEE-1527：belt 豁免锚点去字面量化）----
+  // 旧 belt = 命令串含 "/dev-forge" 子串，路径敏感：dev-forge 检出目录名不含
+  // 字面量时，KOL/gqt 会话对它的合法 push 被真实误拦（跨仓误拦，生产可达）。
+  // 新锚点 = 逐 push 段解析有效目标仓（段内 -C <dir> 优先，其次前置 cd 链，
+  // 否则会话 cwd）→ toplevel → origin URL 归一化 → 注册表判定，路径形态无关。
+  // 保守方向（豁免不生效 = 门禁照常）：无 push 段、任一目标不可解析（变量插值
+  // cd / cd 无参 / 非 git / 无 origin / 注册表不可用）→ 恒 false；多 push 段取
+  // all 口径 —— any 口径会让复合命令里注册仓的 push 借道逃逸，属门禁弱化。
+  function parseCdDir(seg) {
+    const parsed = parseCommand(seg);
+    if (!parsed || parsed.base !== 'cd') return undefined; // undefined = 非 cd 段
+    const arg = parsed.subcommand.trim();
+    if (!arg || arg.startsWith('-') || /[$`]/.test(arg)) return null; // null = 不可解析
+    const tok = (tokenize(arg)[0] || '').replace(/^['"]|['"]$/g, '');
+    return tok || null;
+  }
+
+  function extractGitPushTargetDir(seg) {
+    const tokens = tokenize(seg);
+    for (let idx = 0; idx < tokens.length; idx++) {
+      if (tokens[idx] !== 'git') continue;
+      let j = idx + 1;
+      let cdir = '';
+      while (j < tokens.length && tokens[j].startsWith('-') && tokens[j] !== '--') {
+        // -C <dir>：捕获目标目录；其余带值短旗标（-c key=val 等）跳旗标 + 值
+        if (tokens[j] === '-C' && j + 1 < tokens.length) { cdir = tokens[j + 1]; j += 2; continue; }
+        if (tokens[j].length === 2 && j + 1 < tokens.length && tokens[j + 1] !== '-') { j += 2; continue; }
+        j++;
+      }
+      if (tokens[j] === 'push') return cdir; // '' = push 无 -C；undefined = 段内无 push
+    }
+    return undefined;
+  }
+
+  const pushTargetsCache = new Map(); // exclude 正则串 → 目标仓 info 数组
+  function loadPushTargetInfos(exclude) {
+    if (!cmd) return [];
+    const key = typeof exclude === 'string' ? exclude : '';
+    if (pushTargetsCache.has(key)) return pushTargetsCache.get(key);
+    let segments = extractCommands(cmd);
+    if (key) {
+      const re = safeRegex(key);
+      if (re) segments = segments.filter(s => !re.test(s));
+    }
+    let tracked = null;       // 前置 cd 链锚定目录；null = 未涉 cd（用会话 cwd）
+    let unresolvable = false; // cd 链不可解析且未被后续 cd 重锚 → 后续目标不可信
+    const dirs = [];
+    for (const seg of segments) {
+      const cd = parseCdDir(seg);
+      if (cd !== undefined) {
+        if (cd === null) { unresolvable = true; tracked = null; continue; }
+        tracked = path.isAbsolute(cd) ? cd : path.resolve(tracked || cwd, cd);
+        unresolvable = false;
+        continue;
+      }
+      const cdir = extractGitPushTargetDir(seg);
+      if (cdir === undefined) continue;
+      dirs.push(unresolvable ? null : path.resolve(tracked || cwd, cdir || '.'));
+    }
+    const uniq = [];
+    const seen = new Set();
+    for (const d of dirs) {
+      const k = d === null ? '\u0000unresolvable' : d;
+      if (!seen.has(k)) { seen.add(k); uniq.push(d); }
+    }
+    const infos = uniq.map(d => (d === null ? null : resolveRepoAt(d)));
+    pushTargetsCache.set(key, infos);
+    return infos;
+  }
+
+  function repoMatches(registry, node, repo) {
     if (node.registered === true) {
       for (const urls of registry.values()) if (urls.has(repo.url)) return true;
       return false;
@@ -268,6 +346,18 @@ function createEvaluator(payload, opts) {
       if (urls && urls.has(repo.url)) return true;
     }
     return false;
+  }
+
+  function matchRepo(node) {
+    const registry = loadRegistry();
+    if (node.target === 'push') {
+      const infos = loadPushTargetInfos(node.exclude);
+      if (!infos.length || infos.some(i => !i)) return false;
+      return infos.every(info => repoMatches(registry, node, info));
+    }
+    const repo = loadRepo();
+    if (!repo || !repo.url) return false; // 非 git / 无 origin → 恒 false
+    return repoMatches(registry, node, repo);
   }
 
   let contentLoaded = false;

@@ -64,6 +64,8 @@ function variantOf(node) {
   if (!node || typeof node !== 'object') return null;
   // SEE-1516 §SPEC-022：push_refspec 与 cmd-cur 同为 PreToolUse 载荷命令树操作
   if (node.op === 'push_refspec') return 'cmd-cur';
+  // SEE-1527：repo target:"push" 需解析命令内 git push 段，同为载荷命令树操作
+  if (node.op === 'repo' && node.target === 'push') return 'cmd-cur';
   if (node.op === 'command') return node.scope === 'run' ? 'cmd-run' : 'cmd-cur';
   return node.op;
 }
@@ -342,7 +344,14 @@ function whenNodeIssues(node) {
     return null;
   }
   if (node.op === 'repo') {
-    // devforge 注册表仓库判定；in[]（按注册 id 列举）与 registered（任意注册仓）二选一
+    // devforge 注册表仓库判定；in[]（按注册 id 列举）与 registered（任意注册仓）
+    // 二选一；target:"push"（SEE-1527）= 判定命令内 git push 的有效目标仓而非会话仓
+    if (node.target !== undefined && node.target !== 'push') {
+      return invalid('when.repo', 'repo.target 仅支持 "push"（git push 有效目标仓判定），得到 ' + JSON.stringify(node.target));
+    }
+    if (node.exclude !== undefined && typeof node.exclude !== 'string') {
+      return invalid('when.repo', 'repo.exclude 必须是字符串正则');
+    }
     const hasIn = Array.isArray(node.in) && node.in.length > 0;
     const hasRegistered = node.registered === true;
     if (hasIn && node.registered !== undefined) {

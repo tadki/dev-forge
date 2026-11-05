@@ -5,15 +5,21 @@
 # 演进（Owner 正式方案 2026-11-03）：豁免升级为仓库门控作用域——
 # 声明式门禁（rules.d/push-guard-gates.json）when 追加 repo op
 # in:[kol,gqt]（凭 repos.json 注册的 origin git URL 判定），dev-forge
-# 不在作用域即豁免；命令串 /dev-forge belt 防跨仓 -C 边角。
+# 不在作用域即豁免。
+# 演进（SEE-1527）：belt 豁免去字面量化——旧「命令串含 /dev-forge 子串」锚点
+# 路径敏感（检出目录名不含字面量时 KOL/gqt 会话对 dev-forge 检出的合法 push
+# 被跨仓误拦），改为 push 有效目标仓 origin URL ∈ 注册表 devforge 项判定
+# （repo op target:push，-C/cd 链解析），路径形态无关。
 # 脚本层（push-guard.sh Phase 1b）维持路径/URL 锚点豁免，与注册表解耦。
 #
 # 三层覆盖：
 #   A. 脚本层：canonical/workdir 检出全守卫豁免；非 dev-forge 仍拦。
 #   B. 引擎层：devforge 作用域外放行；注册仓（含 URL 归一化形态）deny；
 #      未注册仓作用域外放行（正式语义：门禁只管注册仓）；注册表缺失 fail-open
-#      + WARN 审计。
-#   C. validator：gates 规则 VALID + repo op 结构校验（in[] XOR registered）。
+#      + WARN 审计；belt = push 目标仓 URL 豁免（B8 家族 allow/deny 两侧对照，
+#      断言与套件检出位置解耦）。
+#   C. validator：gates 规则 VALID + repo op 结构校验（in[] XOR registered，
+#      target:"push" 值域）。
 #
 # Test Type: Regression + Boundary
 set -uo pipefail
@@ -133,6 +139,16 @@ git -C "$FIX/work_gqt_ssh" remote add origin "ssh://git@github.com/tadki/godot-q
 git init -q -b master "$FIX/work_scp"
 git -C "$FIX/work_scp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$FIX/work_scp" remote add origin "git@github.com:tadki/KingOfLikes-Godot"
+# B8 家族（SEE-1527）目标 fixture：origin = 注册表 devforge URL；路径由 mktemp
+# 随机目录 + work_df_url 构成，刻意不含 /dev-forge 字面量 —— 旧字面量 belt 在此
+# 必 MISS（跨仓误拦回归钉），新锚点按 URL 判定 → 断言与套件检出位置解耦。
+git init -q -b main "$FIX/work_df_url"
+git -C "$FIX/work_df_url" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$FIX/work_df_url" remote add origin "https://github.com/tadki/dev-forge.git"
+# 字面量对照 fixture：路径含 /dev-forge 但 origin 未注册 —— 字面量不再是豁免依据
+git init -q -b main "$FIX/dev-forge-literal"
+git -C "$FIX/dev-forge-literal" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$FIX/dev-forge-literal" remote add origin "$FIX/origin.git"
 
 # --- Group B: 引擎层 repo 作用域门禁 ---
 echo ""
@@ -161,7 +177,16 @@ ea "B4 未注册仓 master 直推 → 作用域外放行（门禁只管注册仓
 ea "B5 未注册仓 force → 作用域外放行" "$FIX/work" "git push --force origin feature/x" allow
 ea "B6 注册仓 kol（真实 origin URL）master 直推 → deny" "$FIX/work_kol" "git push origin main" deny "禁止直接 push"
 ea "B7 注册仓 gqt（ssh 形态 URL 归一化）force → deny" "$FIX/work_gqt_ssh" "git push --force origin feature/x" deny "禁止 force-push"
-ea "B8 kol 会话 -C dev-forge push → belt 防跨仓误拦" "$FIX/work_kol" "git -C $REPO_ROOT push origin main" allow
+
+# B8 家族（SEE-1527）：belt = push 有效目标仓 origin URL ∈ devforge 注册项，
+# -C/cd 链解析、路径形态无关；deny 侧钉豁免不外溢（未注册目标 / 复合命令
+# all 口径 / 路径含字面量但 origin 未注册均不豁免，字面量不再有豁免力）。
+ea "B8 kol 会话 -C 无字面量 devforge 检出 push → 目标仓 URL 豁免" "$FIX/work_kol" "git -C $FIX/work_df_url push origin main" allow
+ea "B8b kol 会话 -C devforge 检出 force → 同锚豁免（force gate）" "$FIX/work_kol" "git -C $FIX/work_df_url push --force origin feature/x" allow
+ea "B8c kol 会话 cd devforge 检出 push → cd 链解析豁免" "$FIX/work_kol" "cd $FIX/work_df_url && git push origin main" allow
+ea "B8d kol 会话 -C 未注册仓 push → 不豁免 deny" "$FIX/work_kol" "git -C $FIX/work push origin main" deny "禁止直接 push"
+ea "B8e kol 会话 devforge+未注册 复合 push → all 口径不豁免 deny" "$FIX/work_kol" "git -C $FIX/work_df_url push origin main && git -C $FIX/work push origin main" deny "禁止直接 push"
+ea "B8f kol 会话 -C 含字面量路径但 origin 未注册 push → 字面量不再豁免 deny" "$FIX/work_kol" "git -C $FIX/dev-forge-literal push origin main" deny "禁止直接 push"
 
 # 注册表缺失 → repo op 恒 false（fail-open 门禁）+ WARN 审计
 ea "B9 注册表缺失 → 门禁 fail-open 放行" "$FIX/work_kol" "git push origin main" allow "" "/nonexistent/pgdf-registry.json"
