@@ -190,7 +190,15 @@ export const claudeGlobalCollector: Collector = {
               provenance: 'third-party',
               tags: ['rules', g],
               source: { collector: 'claude-global', path: p, sha256: sha256(md) },
-              payload: { group: g, basename: f, lines: md.split('\n').length, headings: headings(md).slice(0, 20), lang: guessLang(md) },
+              payload: {
+                group: g,
+                basename: f,
+                lines: md.split('\n').length,
+                headings: headings(md).slice(0, 20),
+                lang: guessLang(md),
+                content: md.length <= 200_000 ? md : md.slice(0, 200_000),
+                contentHash: sha256(md),
+              },
             })
           );
         }
