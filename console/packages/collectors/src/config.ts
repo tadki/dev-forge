@@ -51,6 +51,10 @@ export interface ConsoleConfig {
   fixturesDir?: string;
   /** 自建资产声明目录（registry.d/*.yaml，声明即归属 + meta 盖戳）；默认 <devforge>/console/registry.d */
   registryDir?: string;
+  /** 本地自建资产源目录（已声明资产副本落盘，对账期望态）；默认 <devforge>/console/state/first-party */
+  firstPartyStoreDir?: string;
+  /** 平台适配声明目录（platforms.d/*.yaml）；默认 <devforge>/console/platforms.d */
+  platformsDir?: string;
 }
 
 export function defaultConfig(root?: { home?: string; devforge?: string }): ConsoleConfig {
