@@ -228,3 +228,83 @@ describe('executeReconcileAction', () => {
     expect(resolveReconcileContent({ assetId: 'missing', field: 'content' }, state)).toBeNull();
   });
 });
+
+describe('store-write 采纳 + ContentRef.from=store', () => {
+  it('dry-run：不落盘；真实执行：重写库内副本 + 备份 + 指纹对齐生产', async () => {
+    const storeDir = join(tmpdir(), `forge-store-action-${Date.now()}`);
+    const prod = mk('instruction:x/CLAUDE.md', 'instruction', {
+      payload: { content: '生产新版', registry: { declared: true } },
+    });
+    const lib = mk('instruction:x/CLAUDE.md', 'instruction', {
+      payload: { content: '库内旧版', registry: { declared: true } },
+    });
+    const { writeStoreRecord, loadFirstPartyStore, contentFingerprint } = await import('@forge/collectors');
+    const prev = await writeStoreRecord(storeDir, lib);
+    const records = new Map([[prod.id, prev]]);
+    const deps = (dryRun: boolean): ReconcileExecDeps => ({
+      exec: async () => ({ ok: true, stdout: '', stderr: '' }),
+      dryRun,
+      storeDir,
+      storeRecords: records,
+    });
+    const item: ReconcileItem = {
+      ...itemWithSteps([]),
+      key: `store:${prod.id}`,
+      actions: [{ id: 'adopt', direction: 'platform-to-local', label: 'x', executable: true, steps: [{ type: 'store-write', assetId: prod.id }] }],
+    };
+    // dry-run：原副本不动
+    const dry = await executeReconcileAction(item, 'adopt', stateWith([prod]), deps(true));
+    expect(dry.status).toBe('ok');
+    expect(dry.output).toContain('[dry-run]');
+    expect((await loadFirstPartyStore(storeDir)).records.get(prod.id)?.asset.payload.content).toBe('库内旧版');
+    // 真实执行：采纳生产
+    const real = await executeReconcileAction(item, 'adopt', stateWith([prod]), deps(false));
+    expect(real.status).toBe('ok');
+    const after = (await loadFirstPartyStore(storeDir)).records.get(prod.id)!;
+    expect((after.asset.payload as { content?: string }).content).toBe('生产新版');
+    expect(after.hash).toBe(contentFingerprint(prod));
+    expect(after.savedAt).toBe(prev.savedAt);
+    // 备份文件存在
+    const files = await readdir(storeDir);
+    expect(files.some((f) => f.includes('.forge-bak-'))).toBe(true);
+    // 资产不在 state → failed
+    const missing = await executeReconcileAction(item, 'adopt', stateWith([]), deps(false));
+    expect(missing.status).toBe('failed');
+    await (await import('node:fs/promises')).rm(storeDir, { recursive: true, force: true });
+  });
+
+  it('file-write 的内容可取自库内副本（from=store）', async () => {
+    const target = join(tmpdir(), `forge-push-${Date.now()}.md`);
+    await writeFile(target, '现产内容', 'utf8');
+    const prod = mk('instruction:x/CLAUDE.md', 'instruction', {
+      source: { collector: 't', path: target },
+      payload: { content: '生产版', registry: { declared: true } },
+    });
+    const lib = { ...prod, payload: { content: '库内真源版', registry: { declared: true } } };
+    const { writeStoreRecord } = await import('@forge/collectors');
+    const storeDir = join(tmpdir(), `forge-store-push-${Date.now()}`);
+    const rec = await writeStoreRecord(storeDir, lib);
+    const records = new Map([[lib.id, rec]]);
+    const item: ReconcileItem = {
+      ...itemWithSteps([]),
+      actions: [
+        {
+          id: 'push',
+          direction: 'local-to-platform',
+          label: 'x',
+          executable: true,
+          steps: [{ type: 'file-write', path: target, contentFrom: { assetId: lib.id, field: 'content', from: 'store' } }],
+        },
+      ],
+    };
+    const r = await executeReconcileAction(item, 'push', stateWith([prod]), {
+      exec: async () => ({ ok: true, stdout: '', stderr: '' }),
+      storeDir,
+      storeRecords: records,
+    });
+    expect(r.status).toBe('ok');
+    expect(await readFile(target, 'utf8')).toBe('库内真源版');
+    await (await import('node:fs/promises')).rm(target, { force: true });
+    await (await import('node:fs/promises')).rm(storeDir, { recursive: true, force: true });
+  });
+});

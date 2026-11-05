@@ -2,23 +2,35 @@ import type { Asset } from '@forge/schema';
 import type { RegistryEntry } from './overlay.js';
 import { matchesRegistryEntry } from './overlay.js';
 import { buildMigrationView, lineDiff } from './migration.js';
+import { contentFingerprint, isTruthKind } from './store-content.js';
+import type { StoreRecord } from './first-party-store.js';
+import { DEFAULT_PLATFORMS, resolvePlatform, resolveWriteChannel, type PlatformDef } from './platforms.js';
 
-export type ReconcileItemType = 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'uncovered-assets';
+export type ReconcileItemType =
+  | 'missing-on-platform'
+  | 'undeclared-platform'
+  | 'content-drift'
+  | 'store-drift'
+  | 'uncovered-assets';
 export type ReconcileDirection = 'platform-to-local' | 'local-to-platform';
 
-/** 内容来源：从当前 state 的资产 payload 里取同步内容（服务端解析，客户端无法注入） */
+/** 内容来源：从当前 state 的资产 payload（默认）或库内副本（from:'store'）取同步内容（服务端解析，客户端无法注入） */
 export interface ContentRef {
   assetId: string;
   field: 'content' | 'instructions' | 'materialized-body';
   /** field=materialized-body 时：物化样本所属 agent 名 */
   agent?: string;
+  /** state=当前采集实测；store=库内真源副本（「以库为准」方向） */
+  from?: 'state' | 'store';
 }
 
 export type WriteStep =
   | { type: 'registry-edit'; file: string; entryId: string; op: 'add-platform' | 'remove-platform'; platform: string }
   | { type: 'file-write'; path: string; contentFrom: ContentRef; preserveMulticaPrefix?: boolean }
   /** cmd 中值为 '{content}' 的参数由执行端用 contentFrom 解析的内容替换 */
-  | { type: 'command'; cmd: string[]; note: string; contentFrom?: ContentRef };
+  | { type: 'command'; cmd: string[]; note: string; contentFrom?: ContentRef }
+  /** 采纳生产：以当前采集资产重写库内副本（first-party store） */
+  | { type: 'store-write'; assetId: string };
 
 export interface ReconcileAction {
   /** 同方向多动作时用 #n 区分（POST 按此 id 寻址，不用 direction） */
@@ -51,12 +63,14 @@ export interface ReconcileItem {
   diff?: string[];
   copies: ReconcileCopy[];
   actions: ReconcileAction[];
+  /** 关联差异项（如 store-drift ↔ drift:multica 同一 agent），互链展示不合并 */
+  relatedKeys?: string[];
 }
 
 export interface ReconcileReport {
   generatedAt: string;
   items: ReconcileItem[];
-  summary: { missing: number; undeclared: number; drift: number; uncovered: number; total: number };
+  summary: { missing: number; undeclared: number; drift: number; store: number; uncovered: number; total: number };
 }
 
 function copyOf(a: Asset): ReconcileCopy {
@@ -77,17 +91,115 @@ function manualApplyNote(platform: string, matched: Asset[]): string {
   return `无通用自动应用路径：请按资产类型手动在 ${platform} 上应用（或从声明中移除该平台）`;
 }
 
+export interface ReconcileOpts {
+  /** 库内真源副本（v2）。提供时启用 store-drift 检测：库指纹 ≠ 生产指纹即差异 */
+  store?: Map<string, StoreRecord>;
+  /** 平台适配（默认 DEFAULT_PLATFORMS；生产由 engine 从 console/platforms.d 加载） */
+  platforms?: PlatformDef[];
+}
+
+/** 库 vs 生产对账：真源副本指纹与当前采集内容分叉 → adopt（采纳生产）/ push（以库为准物化） */
+function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): ReconcileItem[] {
+  const store = opts.store;
+  if (!store) return [];
+  const platforms = opts.platforms ?? DEFAULT_PLATFORMS;
+  const items: ReconcileItem[] = [];
+  const contentField = (a: Asset): 'content' | 'instructions' | undefined => {
+    if (a.kind === 'agent') return 'instructions';
+    if (a.kind === 'instruction' || a.kind === 'skill') return 'content';
+    return undefined;
+  };
+
+  for (const a of state.assets) {
+    if (!isTruthKind(a.kind)) continue;
+    const reg = (a.payload as { registry?: { declared?: boolean } }).registry;
+    if (reg?.declared !== true) continue;
+    const record = store.get(a.id);
+    if (!record || record.hashVersion !== 2) continue; // 未入库/待迁移 → 不比
+    const fp = contentFingerprint(a);
+    if (fp === record.hash) continue;
+
+    const field = contentField(a);
+    const storeText = field ? (record.asset.payload as Record<string, unknown>)[field] : undefined;
+    const prodText = field ? (a.payload as Record<string, unknown>)[field] : undefined;
+    const diff = field && typeof storeText === 'string' && typeof prodText === 'string'
+      ? lineDiff(storeText, prodText) // - 库内真源 / + 生产实测
+      : undefined;
+
+    const resolved = resolveWriteChannel(a, state.assets, platforms);
+    let push: ReconcileAction;
+    if (!resolved) {
+      push = { id: 'push', direction: 'local-to-platform', label: '以库为准：物化到生产', executable: false, note: '资产不匹配任何平台适配（platforms.d）', steps: [] };
+    } else if (resolved.write.type === 'file-write') {
+      const executable = a.source.path.startsWith('/') && field !== undefined && typeof storeText === 'string';
+      push = {
+        id: 'push',
+        direction: 'local-to-platform',
+        label: `以库为准：覆盖 ${a.source.path}`,
+        executable,
+        note: executable ? undefined : '库内副本缺少可写入的文本字段（content/instructions），需手动同步',
+        steps: executable ? [{ type: 'file-write', path: a.source.path, contentFrom: { assetId: a.id, field: field!, from: 'store' } }] : [],
+      };
+    } else if (resolved.write.type === 'command') {
+      const executable = field !== undefined && typeof storeText === 'string';
+      const cmd = resolved.write.cmd.map((arg) => (arg === '{platformId}' ? (resolved.platformId ?? '{platformId}') : arg));
+      push = {
+        id: 'push',
+        direction: 'local-to-platform',
+        label: `以库为准：执行 ${resolved.platform.id} 更新命令`,
+        executable,
+        note: executable ? undefined : '库内副本缺少可推送的文本字段（instructions/content），需手动执行',
+        steps: executable
+          ? [{ type: 'command', cmd, note: `${resolved.platform.label ?? resolved.platform.id} 写通道`, contentFrom: { assetId: a.id, field: field!, from: 'store' } }]
+          : [],
+      };
+    } else {
+      push = { id: 'push', direction: 'local-to-platform', label: `以库为准：物化到 ${resolved.platform.id}`, executable: false, note: resolved.write.advice, steps: [] };
+    }
+
+    items.push({
+      key: `store:${a.id}`,
+      type: 'store-drift',
+      severity: 'warn',
+      platform: a.platforms.join('+') || 'local',
+      name: a.name,
+      detail: `库内真源与生产实测分叉（${record.hash.slice(0, 8)} vs ${fp.slice(0, 8)}）`,
+      diff: diff?.slice(0, 40),
+      copies: [
+        { assetId: record.asset.id, name: `${record.asset.name}（库内）`, path: record.asset.source.path, sha: record.hash.slice(0, 16), platforms: ['store'] },
+        copyOf(a),
+      ],
+      actions: [
+        {
+          id: 'adopt',
+          direction: 'platform-to-local',
+          label: '以生产为准：把当前采集内容采纳进库',
+          executable: true,
+          steps: [{ type: 'store-write', assetId: a.id }],
+        },
+        push,
+      ],
+      ...(a.kind === 'agent' && resolvePlatform(a, platforms)?.id === 'multica'
+        ? { relatedKeys: [`drift:multica:${a.name.toLowerCase()}`] }
+        : {}),
+    });
+  }
+  return items;
+}
+
 /**
  * 平台对账：registry.d 声明的 platforms vs 采集到的实际 platforms，加上内容漂移
- * （multica agent instructions ↔ 物化 workdir CLAUDE.md；同 entry 同名副本 sha 分叉）。
+ * （库 vs 生产 store-drift；multica agent instructions ↔ 物化 workdir CLAUDE.md；同 entry 同名副本 sha 分叉）。
  * 纯函数：动作步骤全部由这里生成，执行端只认 key+direction，不接收客户端提交的路径/命令。
  */
 export function buildReconcileReport(
   state: { assets: Asset[] },
   entries: RegistryEntry[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  opts: ReconcileOpts = {}
 ): ReconcileReport {
   const items: ReconcileItem[] = [];
+  const platforms = opts.platforms ?? DEFAULT_PLATFORMS;
 
   for (const entry of entries) {
     if (entry.platforms === undefined) continue; // 未声明平台 → 不参与归属对账
@@ -215,11 +327,11 @@ export function buildReconcileReport(
     (a) =>
       a.kind === 'skill' &&
       a.platforms.includes('multica') &&
-      a.source.path.startsWith('multica://') &&
+      resolvePlatform(a, platforms)?.id === 'multica' &&
       typeof (a.payload as { content?: unknown }).content === 'string'
   );
   for (const local of state.assets) {
-    if (local.kind !== 'skill' || !local.source.path.startsWith('/') || !covered.has(local.id)) continue;
+    if (local.kind !== 'skill' || resolvePlatform(local, platforms)?.id !== 'claude-code' || !covered.has(local.id)) continue;
     const localContent = (local.payload as { content?: unknown }).content;
     // 本地无 SKILL.md（content 为空）时不配对：属于"本地缺文件"，不是内容漂移
     if (typeof localContent !== 'string' || localContent.trim() === '') continue;
@@ -365,6 +477,9 @@ export function buildReconcileReport(
     });
   }
 
+  // 库（真源）vs 生产：指纹分叉 → store-drift（adopt / push 双向裁决）
+  items.push(...buildStoreDriftItems(state, opts));
+
   items.sort((a, b) => a.key.localeCompare(b.key));
   return {
     generatedAt: now.toISOString(),
@@ -373,6 +488,7 @@ export function buildReconcileReport(
       missing: items.filter((i) => i.type === 'missing-on-platform').length,
       undeclared: items.filter((i) => i.type === 'undeclared-platform').length,
       drift: items.filter((i) => i.type === 'content-drift').length,
+      store: items.filter((i) => i.type === 'store-drift').length,
       uncovered: items.filter((i) => i.type === 'uncovered-assets').length,
       total: items.length,
     },
@@ -385,6 +501,7 @@ export function reconcileDiagnostics(report: ReconcileReport, limit = 30): Array
     'missing-on-platform': '声明未落地',
     'undeclared-platform': '未声明平台',
     'content-drift': '内容漂移',
+    'store-drift': '库与生产分叉',
     'uncovered-assets': '未纳入对账',
   };
   return report.items.slice(0, limit).map((i) => ({

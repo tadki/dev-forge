@@ -1,7 +1,7 @@
 import { copyFile, readFile, writeFile } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
-import { editRegistryPlatforms, spliceAgentInstructions } from '@forge/collectors';
-import type { ContentRef, RegistryState, ReconcileItem, WriteStep } from '@forge/collectors';
+import { isAbsolute, join } from 'node:path';
+import { editRegistryPlatforms, spliceAgentInstructions, writeStoreRecord, storeFileName } from '@forge/collectors';
+import type { ContentRef, RegistryState, ReconcileItem, StoreRecord, WriteStep } from '@forge/collectors';
 
 export interface ExecResult {
   ok: boolean;
@@ -12,6 +12,10 @@ export interface ExecResult {
 export interface ReconcileExecDeps {
   exec: (cmd: string, args: string[], timeoutMs: number) => Promise<ExecResult>;
   dryRun?: boolean;
+  /** 库目录（store-write 采纳动作必需） */
+  storeDir?: string;
+  /** 库内真源副本（ContentRef.from='store' 时解析内容用） */
+  storeRecords?: Map<string, StoreRecord>;
 }
 
 export interface ReconcileActionResult {
@@ -25,9 +29,9 @@ export interface ReconcileActionResult {
 const COMMAND_TIMEOUT_MS = 60_000;
 const OUTPUT_LIMIT = 800;
 
-/** 从当前 state 的资产 payload 解析同步内容（服务端唯一内容来源） */
-export function resolveReconcileContent(ref: ContentRef, state: RegistryState): string | null {
-  const asset = state.assets.find((a) => a.id === ref.assetId);
+/** 从当前 state 的资产 payload（默认）或库内副本（from='store'）解析同步内容（服务端唯一内容来源） */
+export function resolveReconcileContent(ref: ContentRef, state: RegistryState, storeRecords?: Map<string, StoreRecord>): string | null {
+  const asset = ref.from === 'store' ? storeRecords?.get(ref.assetId)?.asset : state.assets.find((a) => a.id === ref.assetId);
   if (!asset) return null;
   const payload = asset.payload as Record<string, unknown>;
   if (ref.field === 'content' || ref.field === 'instructions') {
@@ -54,19 +58,19 @@ function clip(text: string): string {
   return trimmed.length <= OUTPUT_LIMIT ? trimmed : `${trimmed.slice(0, OUTPUT_LIMIT)}…`;
 }
 
-async function runFileWrite(step: Extract<WriteStep, { type: 'file-write' }>, state: RegistryState, dryRun: boolean): Promise<string> {
+async function runFileWrite(step: Extract<WriteStep, { type: 'file-write' }>, state: RegistryState, deps: ReconcileExecDeps): Promise<string> {
   if (!writablePaths(state).has(step.path)) {
     throw new Error(`拒绝写入：${step.path} 不是当前采集到的资产路径`);
   }
-  const content = resolveReconcileContent(step.contentFrom, state);
-  if (content === null) throw new Error(`内容不可用：${step.contentFrom.assetId} 的 ${step.contentFrom.field} 为空`);
+  const content = resolveReconcileContent(step.contentFrom, state, deps.storeRecords);
+  if (content === null) throw new Error(`内容不可用：${step.contentFrom.assetId} 的 ${step.contentFrom.field} 为空（from=${step.contentFrom.from ?? 'state'}）`);
   let finalContent = content;
   if (step.preserveMulticaPrefix) {
     // 保留 multica harness 前后段，只替换嵌入的 instructions 块
     const existing = await readFile(step.path, 'utf8').catch(() => '');
     finalContent = spliceAgentInstructions(existing, content);
   }
-  if (dryRun) return `[dry-run] 将写入 ${step.path}（${Buffer.byteLength(finalContent)} 字节）`;
+  if (deps.dryRun) return `[dry-run] 将写入 ${step.path}（${Buffer.byteLength(finalContent)} 字节）`;
   const backup = `${step.path}.forge-bak-${Date.now()}`;
   let backupNote = '（新建文件，无需备份）';
   try {
@@ -79,10 +83,29 @@ async function runFileWrite(step: Extract<WriteStep, { type: 'file-write' }>, st
   return `已写入 ${step.path}（${Buffer.byteLength(finalContent)} 字节${backupNote}）`;
 }
 
+/** 采纳生产：以当前采集资产重写库内副本（先备份旧记录） */
+async function runStoreWrite(step: Extract<WriteStep, { type: 'store-write' }>, state: RegistryState, deps: ReconcileExecDeps): Promise<string> {
+  if (!deps.storeDir) throw new Error('storeDir 未配置，无法写库');
+  const asset = state.assets.find((a) => a.id === step.assetId);
+  if (!asset) throw new Error(`资产不在当前采集中：${step.assetId}`);
+  const target = join(deps.storeDir, storeFileName(step.assetId));
+  if (deps.dryRun) return `[dry-run] 将以生产内容重写库内副本 ${target}`;
+  let backupNote = '';
+  try {
+    const backup = `${target}.forge-bak-${Date.now()}`;
+    await copyFile(target, backup);
+    backupNote = `，旧副本备份 ${backup.split('/').pop()}`;
+  } catch {
+    /* 无旧记录 */
+  }
+  await writeStoreRecord(deps.storeDir, asset, deps.storeRecords?.get(step.assetId));
+  return `已采纳生产进库：${step.assetId}（指纹重算${backupNote}）`;
+}
+
 async function runCommand(step: Extract<WriteStep, { type: 'command' }>, state: RegistryState, deps: ReconcileExecDeps): Promise<string> {
   const resolved = step.cmd.map((arg) => {
     if (arg !== '{content}') return arg;
-    const content = step.contentFrom ? resolveReconcileContent(step.contentFrom, state) : null;
+    const content = step.contentFrom ? resolveReconcileContent(step.contentFrom, state, deps.storeRecords) : null;
     if (content === null) throw new Error('命令内容占位 {content} 无法解析');
     return content;
   });
@@ -121,7 +144,9 @@ export async function executeReconcileAction(
           lines.push(`已更新 ${step.file}：${step.entryId}.platforms = [${next.join(', ')}]`);
         }
       } else if (step.type === 'file-write') {
-        lines.push(await runFileWrite(step, state, deps.dryRun ?? false));
+        lines.push(await runFileWrite(step, state, deps));
+      } else if (step.type === 'store-write') {
+        lines.push(await runStoreWrite(step, state, deps));
       } else {
         lines.push(await runCommand(step, state, deps));
       }

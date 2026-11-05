@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Asset } from '@forge/schema';
 import { buildReconcileReport, reconcileDiagnostics } from './reconcile.js';
+import { contentFingerprint } from './store-content.js';
 import type { RegistryEntry } from './overlay.js';
 
 function mk(id: string, kind: Asset['kind'], over: Partial<Asset> = {}): Asset {
@@ -221,5 +222,120 @@ describe('内容漂移', () => {
     expect(items).toHaveLength(1);
     expect(items[0].copies).toHaveLength(2);
     expect(items[0].actions.some((a) => a.executable && a.steps[0]?.type === 'file-write')).toBe(true);
+  });
+});
+
+describe('store-drift（库 vs 生产）', () => {
+  const declared = (a: Asset): Asset => ({ ...a, payload: { ...a.payload, registry: { declared: true, declaredBy: 'e' } } });
+
+  function v2Record(asset: Asset, content: string): import('./first-party-store.js').StoreRecord {
+    return {
+      id: asset.id,
+      kind: asset.kind,
+      name: asset.name,
+      savedAt: '2026-11-06T00:00:00Z',
+      updatedAt: '2026-11-06T00:00:00Z',
+      hashVersion: 2,
+      hash: 'irrelevant-will-be-set',
+      asset: { ...asset, payload: { ...asset.payload, content } },
+    };
+  }
+
+  it('指纹一致 → 无 store-drift；分叉 → adopt/store-write + push(file-write, 库内容)', () => {
+    const prod = declared(mk('instruction:x/CLAUDE.md', 'instruction', { payload: { content: '生产新版' } }));
+    const same = declared(mk('instruction:same/CLAUDE.md', 'instruction', { payload: { content: '一致' } }));
+    const store = new Map();
+    for (const [a, lib] of [
+      [prod, v2Record(prod, '库内旧版')],
+      [same, { ...v2Record(same, '一致'), hash: contentFingerprint(same) }],
+    ] as const) {
+      store.set(a.id, lib as import('./first-party-store.js').StoreRecord);
+    }
+    const report = buildReconcileReport({ assets: [prod, same] }, [], new Date(), { store });
+    expect(report.summary.store).toBe(1);
+    const item = report.items.find((i) => i.key === `store:${prod.id}`);
+    expect(item?.type).toBe('store-drift');
+    expect(item?.diff?.some((l) => l.includes('库内旧版') || l.includes('生产新版'))).toBe(true);
+    const adopt = item?.actions.find((a) => a.id === 'adopt');
+    expect(adopt?.executable).toBe(true);
+    expect(adopt?.steps[0]).toMatchObject({ type: 'store-write', assetId: prod.id });
+    const push = item?.actions.find((a) => a.id === 'push');
+    expect(push?.direction).toBe('local-to-platform');
+    expect(push?.steps[0]).toMatchObject({
+      type: 'file-write',
+      path: prod.source.path,
+      contentFrom: { assetId: prod.id, field: 'content', from: 'store' },
+    });
+  });
+
+  it('multica skill 分叉 → push 走 command 通道并代入 platformId', () => {
+    const prod = declared(
+      mk('skill:multica-demo', 'skill', {
+        platforms: ['multica'],
+        source: { collector: 'multica', path: 'multica://skills/abc' },
+        payload: { content: '生产', platformId: 'abc-123' },
+      })
+    );
+    const store = new Map([[prod.id, { ...v2Record(prod, '库'), hash: 'not-matching' }]] as const);
+    const report = buildReconcileReport({ assets: [prod] }, [], new Date(), { store });
+    const push = report.items.find((i) => i.key === `store:${prod.id}`)?.actions.find((a) => a.id === 'push');
+    expect(push?.executable).toBe(true);
+    expect(push?.steps[0]).toMatchObject({
+      type: 'command',
+      cmd: ['multica', 'skill', 'update', 'abc-123', '--content', '{content}'],
+      contentFrom: { from: 'store', field: 'content' },
+    });
+  });
+
+  it('multica agent 分叉 → platformId 从 deployment 解析 + relatedKeys 关联 drift:multica', () => {
+    const prod = declared(
+      mk('agent:fronti', 'agent', {
+        platforms: ['multica'],
+        source: { collector: 'multica', path: 'multica://agents/f1' },
+        payload: { instructions: '新' },
+      })
+    );
+    const dep = mk('deployment:multica:fronti', 'deployment', {
+      platforms: ['multica'],
+      source: { collector: 'multica', path: 'multica://agents/f1' },
+      payload: { agent: 'Fronti', platformId: 'agent-uuid-9' },
+    });
+    const store = new Map([[prod.id, { ...v2Record(prod, '旧'), hash: 'x' }]] as const);
+    const report = buildReconcileReport({ assets: [prod, dep] }, [], new Date(), { store });
+    const item = report.items.find((i) => i.key === 'store:agent:fronti');
+    expect(item?.relatedKeys).toEqual(['drift:multica:fronti']);
+    const push = item?.actions.find((a) => a.id === 'push');
+    expect(push?.steps[0]).toMatchObject({
+      type: 'command',
+      cmd: ['multica', 'agent', 'update', 'agent-uuid-9', '--instructions', '{content}'],
+    });
+  });
+
+  it('无写通道 kind（multica autopilot）→ push 不可执行且带建议', () => {
+    const prod = declared(
+      mk('autopilot:multica-zzz', 'autopilot', {
+        platforms: ['multica'],
+        source: { collector: 'multica', path: 'multica://autopilots/z' },
+        payload: { description: 'd' },
+      })
+    );
+    const store = new Map([[prod.id, { ...v2Record(prod, 'x'), hash: 'x' }]] as const);
+    const report = buildReconcileReport({ assets: [prod] }, [], new Date(), { store });
+    const push = report.items.find((i) => i.key === `store:${prod.id}`)?.actions.find((a) => a.id === 'push');
+    expect(push?.executable).toBe(false);
+    expect(push?.note).toBeTruthy();
+  });
+
+  it('非内容型 kind 与未声明资产不进 store-drift；无 store 时不检测', () => {
+    const svc = declared(mk('service:sysd-x', 'service', { payload: { active: 'active' } }));
+    const undec = mk('skill:undeclared-x', 'skill', { payload: { content: 'x' } });
+    const store = new Map([
+      [svc.id, { ...v2Record(svc, 'x'), hash: 'x' }],
+      [undec.id, { ...v2Record(undec, 'x'), hash: 'x' }],
+    ] as const);
+    const r1 = buildReconcileReport({ assets: [svc, undec] }, [], new Date(), { store });
+    expect(r1.summary.store).toBe(0);
+    const r2 = buildReconcileReport({ assets: [svc, undec] }, []);
+    expect(r2.summary.store).toBe(0);
   });
 });

@@ -1,0 +1,15 @@
+# 平台适配 · Claude Code（本地文件系统）
+# 读通道 = claude-global / claude-projects / devforge-* 采集器（文件系统扫描）
+# 写通道 = file-write（路径白名单 + *.forge-bak 备份在执行器代码里，不在 YAML）
+id: claude-code
+label: Claude Code（本地文件系统）
+match:
+  pathPrefix: ["/"]
+kinds:
+  instruction: { write: { type: file-write } }
+  skill: { write: { type: file-write } }
+  agent: { write: { type: file-write } }        # CC subagent（.claude/agents/*.md）
+  hook-rule: { write: { type: file-write } }
+  hook-script: { write: { type: file-write } }
+  adapter: { write: { type: file-write } }
+  autopilot: { write: { type: file-write } }    # 本地脚本型
