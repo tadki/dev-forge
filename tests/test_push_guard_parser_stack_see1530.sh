@@ -356,6 +356,15 @@ ea "NEST-A1 kol: bash -c cd DF && push main 嵌套真锚定 → allow"     "$FIX
 ea "NEST-D1 kol: bash -c (cd DF) 平衡组 ; push main → deny 保持"    "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url)\" ; git push origin main" deny "禁止直接 push"
 
 echo ""
+echo -e "${CYAN}--- Group PAREN: 不平衡括号保守化（§SPEC-010 deny 方向）---${NC}"
+
+# §SPEC-010 声明语义：未闭合 `(` 残留帧 / 多余 `)` → belt 不可解析（deny 方向）。
+# bash 真语义 = 语法错不执行（SKIP），引擎保守 deny 属安全方向（E1/E2 矩阵格口径）；
+# 本组为声明面回归锚（hardener 增量 4 注入矩阵 N5 发现该面无钉承载后补齐，仅测试面）。
+ea "PAREN-1 kol: 未闭合外层组 (cd DF && push main → deny（保守化）" "$FIX/work_kol" "(cd $FIX/work_df_url && git push origin main" deny "禁止直接 push"
+ea "PAREN-2 kol: 多余右括号 cd DF) && push main → deny（保守化）"   "$FIX/work_kol" "cd $FIX/work_df_url) && git push origin main" deny "禁止直接 push"
+
+echo ""
 echo -e "${CYAN}--- OB-4 行为冻结登记（无断言）---${NC}"
 echo "  OB-4 别名远端逃逸（dev-forge 检出内 push 指向 KOL 的别名 remote）："
 echo "  origin-URL 身份判定固有边界，Owner 未裁决前冻结不改（本套件不为其加钉，"
