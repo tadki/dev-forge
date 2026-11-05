@@ -109,7 +109,8 @@ repo-sync 启动不由 `forge-console` 沙箱内的进程直接写宿主。conso
 **差异类型**：
 - `missing-on-platform`：声明已应用平台 P 但采集未发现 P 上实例（声明未匹配到资产时也触发）。
 - `undeclared-platform`：资产实际出现在 P 但声明未包含 P。
-- `content-drift`：multica agent instructions ↔ 最新物化 workdir CLAUDE.md 分叉（与迁移页同源）；同 entry 内同名副本 sha 分叉。
+- `content-drift`：multica agent instructions ↔ 最新物化 workdir CLAUDE.md 分叉（与迁移页同源）；同 entry 内同名副本 sha 分叉；已声明本地技能 ↔ multica 同名技能（名称归一化配对，如 taskassign ↔ task-assign）内容分叉。
+- `uncovered-assets`：有平台归属但未被任何 `platforms` 声明覆盖的自建资产，按 kind×平台分组提示补声明（`custom`/`report` 是采集器派生的观测视图，不参与）。
 
 **动作**（按差异类型给出，方向由用户裁决）：
 - 平台 → 本地：`采纳现状`（把实际平台回写进声明）/ `撤销声明`（从声明移除未落地的平台）/ `以 agent instructions 回写 workdir 物化文件`（保留 MULTICA-RUNTIME 前缀）。

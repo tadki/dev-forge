@@ -93,6 +93,12 @@ describe('平台归属对账', () => {
     expect(report.items).toHaveLength(0);
     expect(report.summary.total).toBe(0);
   });
+
+  it('custom/report 派生视图不进未覆盖兜底', () => {
+    const assets = [mk('custom:activity', 'custom', { platforms: ['claude-code'] }), mk('report:toolchain', 'report', { platforms: ['claude-code'] })];
+    const report = buildReconcileReport({ assets }, []);
+    expect(report.items.filter((i) => i.type === 'uncovered-assets')).toHaveLength(0);
+  });
 });
 
 describe('跨平台技能内容对账', () => {

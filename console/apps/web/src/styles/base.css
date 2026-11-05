@@ -298,3 +298,9 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .tabs { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .tab { border: var(--bw-thin) solid var(--ink); background: var(--paper-warm); padding: 2px 12px; font-size: var(--fs-l1); box-shadow: var(--shadow-divider); }
 .tab.active { background: var(--ink); color: var(--paper-warm); box-shadow: var(--shadow-widget); }
+
+/* ===== 平台对账警示区（有差异时置顶显示；无差异整块不渲染） ===== */
+.reconcile-warn { border: 2px solid var(--amber); background: rgba(232, 185, 58, 0.07); box-shadow: var(--shadow-widget); padding: var(--sp-3); margin-bottom: var(--sp-3); }
+.reconcile-warn-head { font-weight: 800; font-size: var(--fs-l2); margin-bottom: var(--sp-2); }
+.reconcile-warn-head .en { font-weight: 400; opacity: 0.65; margin-left: var(--sp-2); font-size: var(--fs-l1); font-family: var(--font-mono); }
+.reconcile-warn .panel { margin-bottom: var(--sp-2); }
