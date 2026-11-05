@@ -140,7 +140,11 @@ function extractCommandsWithSeps(rawCmd) {
   const stripped = rawCmd.replace(/(?:^|\s)<<-?\s*\S+[\s\S]*$/, '').trim();
   const nestedRe = /(?:bash|sh)\s+(?:-[cC]\s+['"])([^'"]*)(?:['"])/g;
   while ((m = nestedRe.exec(stripped)) !== null) {
+    // R-C（SEE-1530 复验 2）：bash -c/sh -c = 子进程边界——嵌套提取组以
+    // nest-in/out 标记包裹，供消费方作用域隔离（组内链/组帧不出组）。
+    commands.push({ nest: 'in' });
     pushGroup(splitShellCommandsTyped(m[1]));
+    commands.push({ nest: 'out' });
   }
   if (stripped) {
     pushGroup(splitShellCommandsTyped(stripped));
@@ -155,12 +159,16 @@ function extractCommands(rawCmd) {
 // 引号感知的括号事件切分（R-A/O-5，SEE-1530 复验）：按出现顺序返回
 // [{ text, paren: '(' | ')' | null }]，供子 shell 组状态机使用。转义括号与
 // `$(` 命令替换不产生组事件（执行形态逃逸族不扩面，保持既有语义）。
-function splitParenPieces(text) {
+// startDepth：跨段累积括号深度——组可跨分段闭合（`(cd DF && push` + `… )`），
+// 「多余 ')'」判据必须以累积深度计，否则跨段平衡组被误判不平衡（保守化误伤）。
+function splitParenPieces(text, startDepth) {
   const s = String(text || '');
-  const pieces = [];
+  const parts = [];
   let current = '';
   let inSingle = false;
   let inDouble = false;
+  let depth = startDepth || 0;
+  let unbalanced = false;
   let i = 0;
   while (i < s.length) {
     const ch = s[i];
@@ -168,8 +176,11 @@ function splitParenPieces(text) {
     if (ch.charCodeAt(0) === 39 && !inDouble) { inSingle = !inSingle; current += ch; i++; continue; }
     if (ch.charCodeAt(0) === 34 && !inSingle) { inDouble = !inDouble; current += ch; i++; continue; }
     if (!inSingle && !inDouble && (ch === '(' || ch === ')') && !(ch === '(' && i > 0 && s[i - 1] === '$')) {
-      if (current) pieces.push({ text: current, paren: null });
-      pieces.push({ text: '', paren: ch });
+      if (ch === '(') depth++;
+      else if (depth === 0) unbalanced = true; // 多余 ')'：不平衡括号（保守化判据）
+      else depth--;
+      if (current) parts.push({ text: current, paren: null });
+      parts.push({ text: '', paren: ch });
       current = '';
       i++;
       continue;
@@ -177,8 +188,8 @@ function splitParenPieces(text) {
     current += ch;
     i++;
   }
-  if (current) pieces.push({ text: current, paren: null });
-  return pieces;
+  if (current) parts.push({ text: current, paren: null });
+  return { parts, depth, unbalanced };
 }
 
 // ---- git push 实例级解析栈（SEE-1530 RC-A/C/D 精化）----
@@ -500,7 +511,34 @@ function createEvaluator(payload, opts) {
       }
     };
 
+    let nestSaved = null; // 嵌套提取组（子进程）入口快照：{ main 主链态, stack 外层组帧 }
+    let parenError = false; // 不平衡括号（多余 ')' / 残留未闭合帧）→ 整体保守 deny
+    let parenDepth = 0; // 跨段累积括号深度
     for (const seg of segments) {
+      if (seg.nest === 'in') {
+        // R-C（SEE-1530 复验 2）：bash -c/sh -c 子进程边界——嵌套组独占作用域：
+        // 保存主链与外层组帧，组内从未闭合 `(` 泄漏的组帧不出组（nest-out 整组
+        // 丢弃 = 不平衡括号保守化）；子进程继承入口 cwd（主链现值即嵌套链初值）。
+        nestSaved = {
+          main: { tracked: mainChain.tracked, unresolvable: mainChain.unresolvable },
+          stack: groupStack.slice(),
+        };
+        groupStack.length = 0;
+        prevSep = '';
+        continue;
+      }
+      if (seg.nest === 'out') {
+        // 子进程退出：嵌套组内 cd 不外溢（链与泄漏组帧整组丢弃），恢复外层。
+        if (nestSaved) {
+          mainChain.tracked = nestSaved.main.tracked;
+          mainChain.unresolvable = nestSaved.main.unresolvable;
+          groupStack.length = 0;
+          for (const f of nestSaved.stack) groupStack.push(f);
+          nestSaved = null;
+        }
+        prevSep = '';
+        continue;
+      }
       const cur = activeChain();
       // R-B/V12（SEE-1530 复验 + hardener 增量 2）：子 shell 边界（&/|/|&）左侧
       // 段自身的 cd 不外溢——恢复「左侧段执行前」状态。快照按链身份恢复：
@@ -531,7 +569,10 @@ function createEvaluator(payload, opts) {
       // 组入口态快照（saved）并新建组局部工作链（work，继承入口 cwd），')' 弹栈
       // 丢弃 work；组内 push 保持真锚定（`(cd DF && git push)` allow）。花括号组
       // 是同 shell，不建栈。
-      for (const piece of splitParenPieces(seg.text)) {
+      const pr = splitParenPieces(seg.text, parenDepth);
+      if (pr.unbalanced) parenError = true; // 多余 ')'（累积深度下的不平衡）→ 保守化（§SPEC-010）
+      parenDepth = pr.depth;
+      for (const piece of pr.parts) {
         if (piece.paren === '(') {
           const cur0 = activeChain();
           groupStack.push({
@@ -540,10 +581,15 @@ function createEvaluator(payload, opts) {
           });
           continue;
         }
-        if (piece.paren === ')') { groupStack.pop(); continue; }
+        if (piece.paren === ')') {
+          if (!groupStack.length) parenError = true; // 多余 ')' → 保守化（§SPEC-010）
+          else groupStack.pop();
+          continue;
+        }
         processPiece(piece.text, activeChain());
       }
     }
+    if (parenError || groupStack.length > 0) dirs.length = 0; // 不平衡括号 → belt 不可解析（deny 方向）
     const uniq = [];
     const seen = new Set();
     for (const d of dirs) {
