@@ -20,6 +20,7 @@ ProtectHome=read-only
 # 写：平台对账（逐次 confirm 后执行）——registry.d 声明回写 + 已登记资产文件的本地/平台同步。
 # file-write 目标受服务端白名单约束（只允许当前采集到的资产路径），这里按需放行其根目录。
 ReadWritePaths=%h/tools/dev-forge/console/registry.d
+ReadWritePaths=%h/tools/dev-forge/console/state
 ReadWritePaths=%h/.claude
 ReadWritePaths=%h/multica_workspaces
 ReadWritePaths=/mnt/d/GodotProjects

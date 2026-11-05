@@ -12,6 +12,7 @@ console/**/dist/
 console/**/node_modules/
 *.tsbuildinfo
 console/registry.snapshot.json
+console/state/
 console/e2e/test-results/
 console/e2e/playwright-report/
 
