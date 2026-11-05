@@ -317,7 +317,7 @@ fi
 rm -f "$C_TMP"
 
 # --- Summary ---
-rm -rf "$FIX" "$NEUTRAL" "$STATE_DIR"; rm -f "$FIRE_LOG"
+rm -rf "$FIX" "$NEUTRAL" "$STATE_DIR"; rm -f "$FIRE_LOG" "$FIRE_B10"
 echo ""
 echo "============================================"
 echo -e "${CYAN}Results:${NC} ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
