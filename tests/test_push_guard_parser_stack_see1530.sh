@@ -77,10 +77,20 @@ git init -q -b master "$FIX/work_master"
 git -C "$FIX/work_master" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$FIX/work_master" remote add origin "$FIX/origin.git"
 git -C "$FIX/work_master" push -q -u origin master 2>/dev/null
-git init -q -b feature/x "$FIX/work_feat"
-git -C "$FIX/work_feat" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-git -C "$FIX/work_feat" remote add origin "$FIX/origin.git"
+# feature 分支必须与 origin/master 同源（含同一根提交）——Check 3 祖先门锚
+# origin/master：独立根提交跨秒创建时 SHA 相异（同内容+同时间戳才同对象），
+# 祖先检查按设计拦截 → S-C2/S-FP1 瞬态红。SEE-1530 hardener 根因定位：原写法
+# 的通过依赖 work_master/work_feat 两根提交同秒创建的 SHA 碰撞，属 fixture
+# 缺陷非产品缺陷；故 work_feat 改为自 origin.git clone，同源性由构造保证。
+git clone -q "$FIX/origin.git" "$FIX/work_feat"
+git -C "$FIX/work_feat" checkout -q -b feature/x
 git -C "$FIX/work_feat" push -q -u origin feature/x 2>/dev/null
+# 祖先门设计行为 fixture：无关历史 feature 分支（异名根提交保证 SHA 恒异，
+# 不依赖时间戳碰撞——同型瞬态的确定性反证面）。
+git init -q -b orphan-feat "$FIX/work_orphan"
+git -C "$FIX/work_orphan" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init-orphan-see1530
+git -C "$FIX/work_orphan" remote add origin "$FIX/origin.git"
+git -C "$FIX/work_orphan" push -q -u origin orphan-feat 2>/dev/null
 
 # run_engine <workdir> <command> → engine stdout（命令 JSON 转义：OB-2 引号形态必需）
 json_esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
@@ -229,6 +239,7 @@ sa "S-FN1 script: master 分支 git -p push → Check4 拦 (exit 2)"    "$FIX/wo
 sa "S-FN2 script: master 分支 git -P push → Check4 拦 (exit 2)"    "$FIX/work_master" "git -P push" 2
 sa "S-FN3 script: master 分支 git -pC <dir> push → Check4 拦 (exit 2)" "$FIX/work_master" "git -pC $FIX/work_master push" 2
 sa "S-FP1 script: feature 分支 git -p push → 放行（无新增误拦）"     "$FIX/work_feat" "git -p push" 0 pt
+sa "S-ANC script: 无关历史 feature 分支裸 push → Check3 祖先门拦 (exit 2)" "$FIX/work_orphan" "git push" 2
 ea "S-REF engine: master 分支 git -p 裸 push → allow（refspec 不可见，拦截归脚本 Check4）" "$FIX/work_master" "git -p push" allow
 
 echo ""
