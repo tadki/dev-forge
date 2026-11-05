@@ -1,6 +1,7 @@
 # 自建资产注册表 —— 声明即归属：匹配到的资产盖 provenance=first-party + meta（优先于采集器推断）
 # 通用 meta 词汇表：owner / category / lifecycle(stable|experimental|deprecated) /
 #                   criticality(high|medium|low) / runtime(claude-code|multica|both|standalone) / docs / since / notes
+# platforms：声明该资产已应用到的平台（claude-code|multica）。不写 = 不参与平台对账（平台 → 本地 / 本地 → 平台）
 entries:
   - id: forge-console
     match: { idPrefix: "service:systemd-forge-console" }
@@ -8,6 +9,7 @@ entries:
 
   - id: devforge-hooks-engine
     match: { pathPrefix: "/home/jerry/tools/dev-forge/claude-hooks" }
+    platforms: [claude-code, multica]
     meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both, notes: "9 挂载点 → 统一引擎，multica 会话同样生效" }
 
   - id: devforge-core
@@ -16,20 +18,75 @@ entries:
 
   - id: kol-instructions
     match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/CLAUDE.md" }
+    platforms: [claude-code]
     meta: { owner: jerry, category: game, lifecycle: stable, criticality: medium, runtime: both }
 
   - id: multica-platform-agents
     match: { pathPrefix: "multica://agents/" }
+    platforms: [multica]
     meta: { owner: jerry, category: platform, lifecycle: stable, criticality: high, runtime: multica }
+
+  - id: multica-platform-autopilots
+    match: { pathPrefix: "multica://autopilots/" }
+    platforms: [multica]
+    meta: { owner: jerry, category: platform, lifecycle: stable, criticality: medium, runtime: multica }
 
   - id: multica-platform-skills
     match: { pathPrefix: "multica://skills/" }
+    platforms: [multica]
     meta: { owner: jerry, category: platform, lifecycle: stable, criticality: medium, runtime: multica }
+
+  - id: devforge-autopilots
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/autopilots/" }
+    platforms: [multica]
+    meta: { owner: jerry, category: governance, lifecycle: stable, criticality: medium, runtime: multica }
+
+  - id: devforge-hook-registrations
+    match: { idPrefix: "hook-registration:" }
+    platforms: [claude-code, multica]
+    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both }
+
+  - id: godot-mcp-instructions
+    match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/addons/godot_mcp/CLAUDE.md" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: game, lifecycle: stable, criticality: medium, runtime: claude-code }
+
+  - id: godot-qa-toolkit-instructions
+    match: { pathPrefix: "/home/jerry/tools/godot-qa-toolkit/CLAUDE.md" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: claude-code }
+
+  - id: grepai-instructions
+    match: { pathPrefix: "/home/jerry/tools/grepai/CLAUDE.md" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: claude-code }
+
+  - id: skill-recall
+    match: { pathPrefix: "/home/jerry/.claude/skills/recall/" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: memory, lifecycle: stable, criticality: medium, runtime: both, notes: "本地 recall ↔ multica 同名技能走内容对账" }
+
+  - id: skill-revy-testing
+    match: { pathPrefix: "/home/jerry/.claude/skills/revy-testing/" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: qa, lifecycle: stable, criticality: medium, runtime: both }
+
+  - id: skill-taskassign
+    match: { pathPrefix: "/home/jerry/.claude/skills/taskassign/" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: orchestration, lifecycle: stable, criticality: high, runtime: both, notes: "multica 侧名 task-assign（名称归一化配对）" }
+
+  - id: skill-review-md
+    match: { pathPrefix: "/home/jerry/.claude/skills/review-md/" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: review, lifecycle: stable, criticality: medium, runtime: claude-code }
+
+  - id: skill-hindsight-coding-agent
+    match: { pathPrefix: "/home/jerry/.claude/skills/hindsight-coding-agent/" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: memory, lifecycle: stable, criticality: medium, runtime: claude-code }
 
   - id: hindsight-integration
     match: { pathPrefix: "/home/jerry/.hindsight/" }
+    platforms: [claude-code]
     meta: { owner: jerry, category: memory, lifecycle: stable, criticality: medium, runtime: claude-code }
-
-  - id: claude-user-skills
-    match: { pathPrefix: "/home/jerry/.claude/skills/" }
-    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: claude-code }

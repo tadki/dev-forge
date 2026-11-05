@@ -160,7 +160,8 @@ export const claudeProjectsCollector: Collector = {
             attach: { level: 'project', ref: dir },
             applies: { workspaces: [ws.id], origin: 'native' },
             enforcement: 'advisory',
-            payload: { lines: md.split('\n').length },
+            provenance: 'third-party',
+            payload: { lines: md.split('\n').length, content: md.length <= 200_000 ? md : md.slice(0, 200_000) },
             source: { collector: 'claude-projects', path: join(dotClaude, 'skills', s, 'SKILL.md'), sha256: md ? sha256(md) : undefined },
             tags: ['skill', 'project'],
           })
