@@ -11,6 +11,7 @@ const RECONCILE_LABEL: Record<ReconcileItem['type'], string> = {
   'missing-on-platform': '声明未落地',
   'undeclared-platform': '未声明平台',
   'content-drift': '内容漂移',
+  'store-drift': '库与生产分叉',
   'uncovered-assets': '未纳入对账',
 };
 
@@ -24,10 +25,18 @@ function humanizeStep(step: ReconcileAction['steps'][number]): string {
     const s = step as { op?: string; platform?: string; entryId?: string };
     return `改 registry.d · ${s.entryId}: ${s.op === 'add-platform' ? '声明 +' : '移除声明 '}${s.platform}`;
   }
-  if (step.type === 'file-write') return `写文件 ${String(step.path)}（先备份原文件）`;
+  if (step.type === 'file-write') {
+    const s = step as { path?: string; contentFrom?: { from?: string } };
+    const fromStore = s.contentFrom?.from === 'store' ? '（内容取自库内副本）' : '';
+    return `写文件 ${String(s.path)}（先备份原文件）${fromStore}`;
+  }
   if (step.type === 'command') {
     const s = step as { cmd?: string[] };
     return `执行命令 ${(s.cmd ?? []).join(' ')}`;
+  }
+  if (step.type === 'store-write') {
+    const s = step as { assetId?: string };
+    return `采纳生产进库：重写 ${String(s.assetId)} 副本（先备份旧副本）`;
   }
   return step.type;
 }
@@ -135,11 +144,14 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
         <div className="reconcile-warn">
           <div className="reconcile-warn-head">
             ⚠ 平台对账
-            <span className="en">RECONCILE · 声明平台 vs 采集实际 · {rc.data.summary.total} 项差异待确认</span>
+            <span className="en">RECONCILE · 声明平台 vs 采集实际 + 库内真源 vs 生产 · {rc.data.summary.total} 项差异待确认</span>
           </div>
           {(rc.data?.items ?? []).slice(0, 40).map((item) => (
             <Panel key={item.key} title={`${RECONCILE_LABEL[item.type]} · ${item.name}`} en={`${item.platform} · ${item.key}`}>
               <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>{item.detail}</div>
+              {item.relatedKeys && item.relatedKeys.length > 0 && (
+                <div className="dim" style={{ fontSize: 'var(--fs-label)' }}>关联差异：{item.relatedKeys.join(' · ')}</div>
+              )}
               {item.copies.map((c) => (
                 <div key={`${c.assetId}:${c.path}`} className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>
                   {c.path || c.assetId}
