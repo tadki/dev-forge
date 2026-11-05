@@ -40,28 +40,44 @@ PHASE1_OUTPUT=$(printf '%s' "$INPUT" | node -e "
       }
 
       // Find 'git' token, then find 'push' subcommand after skipping global flags
+      // SEE-1530 RC-A 同族精化（与 unified 引擎 scanGitInvocation 同判定）：
+      //   -C/-c 带值跳旗标+值；-p/-P 无值不吞词（`git -p push` 曾吞掉 push 词判
+      //   NOT_PUSH，绕过 Check 4 裸 push 直推 master 唯一拦截点）；合并簇逐字符
+      //   （-pC dir = -p + -C dir）；未知旗标按无值；长旗标逐个跳过。
       let isPush = false;
       let pushTokenIndex = -1;
       for (let idx = 0; idx < tokens.length; idx++) {
         if (tokens[idx] === 'git') {
           let j = idx + 1;
-          // Skip flag tokens (start with -) and their value tokens
-          while (j < tokens.length) {
+          while (j < tokens.length && tokens[j].startsWith('-') && tokens[j] !== '--') {
             const tok = tokens[j];
-            if (tok.startsWith('-')) {
-              // Single-dash flag with value (e.g., -C dir): skip flag + next token
-              if (tok.length === 2 && tok !== '--') {
-                if (tok === '-C' && j + 1 < tokens.length) {
-                  cmdGitRoot = tokens[j + 1];
-                }
-                j += 2;
-                continue;
+            if (tok === '-C' || tok === '-c') {
+              if (tok === '-C' && j + 1 < tokens.length) {
+                cmdGitRoot = tokens[j + 1];
               }
-              // --flag=value or --flag: skip only the flag token
-              j++;
+              j += 2;
               continue;
             }
-            break;
+            // --flag=value or --flag: skip only the flag token
+            if (tok.startsWith('--')) { j++; continue; }
+            let valued = false;
+            for (let k = 1; k < tok.length; k++) {
+              const ch = tok[k];
+              if (ch !== 'C' && ch !== 'c') continue;
+              const attached = tok.slice(k + 1);
+              if (attached) {
+                if (ch === 'C') cmdGitRoot = attached;
+                j++;
+              } else if (j + 1 < tokens.length) {
+                if (ch === 'C') cmdGitRoot = tokens[j + 1];
+                j += 2;
+              } else {
+                j++;
+              }
+              valued = true;
+              break;
+            }
+            if (!valued) j++; // -p/-P 及未知簇：无值
           }
           if (j < tokens.length && tokens[j] === 'push') {
             isPush = true;
@@ -512,9 +528,22 @@ if [ "$IS_HOST_REPO" = "true" ] && [ -n "$WORKING_BRANCH" ]; then
           for (let idx = 0; idx < tokens.length; idx++) {
             if (tokens[idx] === 'git') {
               let j = idx + 1;
-              while (j < tokens.length && tokens[j].startsWith('-')) {
-                if (tokens[j].length === 2 && tokens[j] !== '--') { j += 2; continue; }
-                j++; continue;
+              // SEE-1530 同族精化：与 phase-1 同判定（-C/-c 带值、-p/-P 无值、合并簇）
+              while (j < tokens.length && tokens[j].startsWith('-') && tokens[j] !== '--') {
+                const tok = tokens[j];
+                if (tok === '-C' || tok === '-c') { j += 2; continue; }
+                if (tok.startsWith('--')) { j++; continue; }
+                let valued = false;
+                for (let k = 1; k < tok.length; k++) {
+                  const ch = tok[k];
+                  if (ch !== 'C' && ch !== 'c') continue;
+                  if (tok.slice(k + 1)) { j++; }
+                  else if (j + 1 < tokens.length) { j += 2; }
+                  else { j++; }
+                  valued = true;
+                  break;
+                }
+                if (!valued) j++;
               }
               if (j < tokens.length && tokens[j] === 'push') { pushIdx = j; break; }
             }
