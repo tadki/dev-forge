@@ -3,10 +3,12 @@ home: /home/jerry
 devforge: /home/jerry/tools/dev-forge
 
 # Workspace 注册表（产品域）：multica 平台 workspace_id 为锚点之一，此处为 console 侧权威
+# 语义（Owner 2026-11-05）：所有 harness 同属一个 workspace；kol / godot-mcp / gqt / grepai / dev-forge
+# 都是隶属于该 workspace 的项目。workspace 层保留且支持多个，只是当前只登记一个（jerry）。
 # projects 为注册制：手动登记仓库才会进项目页；git 是仓库身份（同仓库去重以此为准，缺省自动探测 origin），path 只是本地主仓库位置；harnesses 声明该项目有哪些 harness（声明后才解析其目录内容）
 workspaces:
-  - id: kol
-    name: King of Likes
+  - id: jerry
+    name: Jerry's Forge
     projects:
       - git: https://github.com/tadki/KingOfLikes-Godot.git
         path: /mnt/d/GodotProjects/king-of-likes
@@ -14,29 +16,17 @@ workspaces:
       - git: https://github.com/tadki/godot-mcp.git
         path: /mnt/d/GodotProjects/king-of-likes/addons/godot_mcp
         harnesses: [claude]
-    residents: [Atlas, Archi, Bachi, Fronti, Revy, Harti, Refacty, Chekky]
-    services: [grepai-watch]
-  - id: devforge
-    name: dev-forge 工具链
-    projects:
       - git: https://github.com/tadki/dev-forge.git
         path: /home/jerry/tools/dev-forge
         harnesses: [claude]
-    residents: [Atlas, Refacty, Archi]
-  - id: grepai
-    name: grepai 语义搜索
-    projects:
       - git: https://github.com/tadki/grepai.git
         path: /home/jerry/tools/grepai
         harnesses: [claude]
-    residents: []
-  - id: gqt
-    name: godot-qa-toolkit
-    projects:
       - git: https://github.com/tadki/godot-qa-toolkit.git
         path: /home/jerry/tools/godot-qa-toolkit
         harnesses: [claude]
-    residents: []
+    residents: [Atlas, Archi, Bachi, Fronti, Revy, Harti, Refacty, Chekky]
+    services: [grepai-watch]
 
 # scanRoots 已废除（2026-11-03）：项目为注册制，仅 workspaces[].projects 中注册的仓库进项目页
 

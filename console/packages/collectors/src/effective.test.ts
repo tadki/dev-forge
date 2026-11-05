@@ -22,7 +22,7 @@ function base(id: string, kind: Asset['kind'], over: Partial<Asset> = {}): Asset
 
 const project = base('project:king-of-likes', 'project', {
   attach: { level: 'project', ref: '/mnt/d/GodotProjects/king-of-likes' },
-  payload: { path: '/mnt/d/GodotProjects/king-of-likes', workspace: 'kol', workspaceName: 'King of Likes' },
+  payload: { path: '/mnt/d/GodotProjects/king-of-likes', workspace: 'jerry', workspaceName: "Jerry's Forge" },
 });
 
 const fronti = base('agent:fronti', 'agent', {
@@ -38,7 +38,7 @@ const frontiDep = base('deployment:multica:fronti', 'deployment', {
 
 const kolMd = base('instruction:king-of-likes/CLAUDE.md', 'instruction', {
   attach: { level: 'project', ref: '/mnt/d/GodotProjects/king-of-likes' },
-  applies: { workspaces: ['kol'], origin: 'native' },
+  applies: { workspaces: ['jerry'], origin: 'native' },
   payload: { basename: 'CLAUDE.md', lines: 144, content: '# KOL' },
 });
 
@@ -67,7 +67,7 @@ const assets = [
 describe('resolveEffective', () => {
   it('resolves project + agent with gated rules counted', () => {
     const eff = resolveEffective(assets, [], 'king-of-likes', 'Fronti');
-    expect(eff.project.workspace).toBe('kol');
+    expect(eff.project.workspace).toBe('jerry');
     expect(eff.agent?.platform).toBe('multica');
     const hooks = eff.sections.find((s) => s.id === 'hooks')!;
     expect(hooks.items[1].detail).toContain('2/3'); // fronti-gate + global-gate 命中

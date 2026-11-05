@@ -131,7 +131,7 @@ test('projects: single project card, git identity, harness badge, workspace grou
   await expect(page.getByText('tadki/KingOfLikes-Godot').first()).toBeVisible();
   await expect(page.getByText('tadki/godot-mcp').first()).toBeVisible();
   await expect(page.getByText('CLAUDE', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('King of Likes').first()).toBeVisible();
+  await expect(page.getByText("Jerry's Forge").first()).toBeVisible();
 });
 
 test('migration: coverage, gaps, export script', async ({ page }) => {
