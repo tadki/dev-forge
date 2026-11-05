@@ -18,9 +18,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # 为负载敏感（生产层 unified-hook read -t 3 / run_script timeout 墙钟预算），
 # 已在测试层硬化后一并移出本清单，回归 run_all 覆盖。
 EXCLUDED=(
-  # dev-forge 迁移排除（SEE-1429 Phase 2）：被测对象未随迁移进入本仓
-  test_reconcile_working_branch_args_see954.sh       # env:kol-only-script  (reconcile-working-branch.sh 保留 KOL，非注册脚本)
-  test_reconcile_working_branch_flow_see1042.sh      # env:kol-only-script
+  # dev-forge 迁移排除（SEE-1429 Phase 2）：被测对象未随迁移进入本仓。
+  #   SEE-1525 修订：原列于此的 test_reconcile_working_branch_args_see954 /
+  #   test_reconcile_working_branch_flow_see1042 两套件移出本清单——其被测对象
+  #   scripts/reconcile-working-branch.sh 实为 dev-forge 跟踪文件（原条目
+  #   env:kol-only-script 系误归因），且路径修复后可真实跑绿（DV-2，Revy 登记），
+  #   回归聚合门覆盖。
   test_see954_real_env_pushguard_e2e.sh              # env:kol-worktree    (真实 KOL worktree 推送链)
   test_cherry_pick_detection_see523.sh               # env:kol-push-chain  (真实推送语义，宿主环境依赖)
   test_v2_installer_p0.sh                            # env:retired-installer (SEE-1429 §三：install-hooks.sh cp 部署分支物理退役，由 bootstrap/registry-patch 取代)
