@@ -123,6 +123,12 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .split-rules .table-wrap { height: 520px; }
 .split-rules > aside .panel { height: 520px; display: flex; flex-direction: column; }
 .rule-detail-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* ===== 满页双卡片（指令库）：卡片对齐视口高度，内容内部滚动 ===== */
+.fill-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.fill-grid { flex: 1; min-height: 0; }
+.fill-grid > .panel { display: flex; flex-direction: column; min-height: 0; }
+.panel-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .kv-tight { grid-template-columns: 88px 1fr; }
 .col { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 .row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
@@ -228,6 +234,8 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .tree-sep { margin: var(--sp-2) 0 var(--sp-1); padding-top: var(--sp-2); border-top: 1px solid var(--khaki); color: var(--text-sub); }
 .tree-group { cursor: pointer; color: var(--text-sub); user-select: none; }
 .tree-group:hover { color: var(--ink); }
+.meta-toggle { cursor: pointer; color: var(--text-sub); user-select: none; margin-bottom: var(--sp-2); }
+.meta-toggle:hover { color: var(--ink); }
 
 /* ===== 代码/json/log ===== */
 .code { background: var(--ink); color: var(--text-on-dark); font-family: var(--font-mono); font-size: var(--fs-l1); padding: var(--sp-2) var(--sp-3); overflow: auto; white-space: pre-wrap; word-break: break-word; max-height: 420px; }
