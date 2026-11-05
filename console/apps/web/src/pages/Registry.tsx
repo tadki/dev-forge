@@ -131,6 +131,66 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
         </div>
       </div>
 
+      {rc.data && rc.data.summary.total > 0 && (
+        <div className="reconcile-warn">
+          <div className="reconcile-warn-head">
+            ⚠ 平台对账
+            <span className="en">RECONCILE · 声明平台 vs 采集实际 · {rc.data.summary.total} 项差异待确认</span>
+          </div>
+          {(rc.data?.items ?? []).slice(0, 40).map((item) => (
+            <Panel key={item.key} title={`${RECONCILE_LABEL[item.type]} · ${item.name}`} en={`${item.platform} · ${item.key}`}>
+              <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>{item.detail}</div>
+              {item.copies.map((c) => (
+                <div key={`${c.assetId}:${c.path}`} className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>
+                  {c.path || c.assetId}
+                  {c.sha ? ` · ${String(c.sha).slice(0, 12)}` : ''}
+                  {c.platforms.length > 0 ? ` · ${c.platforms.join('+')}` : ''}
+                </div>
+              ))}
+              {item.diff && item.diff.length > 0 && item.diff[0] !== '(一致)' && (
+                <pre
+                  className="mono"
+                  style={{
+                    margin: '6px 0 0',
+                    padding: '6px 8px',
+                    fontSize: 'var(--fs-label)',
+                    lineHeight: 1.5,
+                    whiteSpace: 'pre-wrap',
+                    maxHeight: 180,
+                    overflow: 'auto',
+                    border: '1px dashed var(--khaki)',
+                  }}
+                >
+                  {item.diff.join('\n')}
+                </pre>
+              )}
+              <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
+                {item.actions.map((a) => (
+                  <button
+                    key={a.id}
+                    className={`btn small ${a.executable ? (a.direction === 'platform-to-local' ? 'btn-amber' : 'btn-mint') : 'btn-ghost'}`}
+                    disabled={busyKey === `${item.key}:${a.id}`}
+                    title={!a.executable ? a.note : DIRECTION_LABEL[a.direction]}
+                    onClick={() => void runReconcileAction(item, a)}
+                  >
+                    {a.direction === 'platform-to-local' ? '⇠' : '⇢'} {a.label}
+                    {!a.executable ? ' ·手动' : ''}
+                  </button>
+                ))}
+              </div>
+            </Panel>
+          ))}
+        </div>
+      )}
+      {actionResult && (
+        <div className="panel-flat mt">
+          <span className="row" style={{ gap: 8 }}>
+            <Badge tone={actionResult.ok ? 'ok' : 'bad'}>{actionResult.ok ? '已执行' : '失败'}</Badge>
+          </span>
+          <pre style={{ whiteSpace: 'pre-wrap', margin: '6px 0 0', fontSize: 'var(--fs-l1)', fontFamily: 'var(--font-mono)' }}>{actionResult.text}</pre>
+        </div>
+      )}
+
       <Panel title="统计表" en={`BY KIND × PROVENANCE · ${assets.length} 总量`}>
         <DataTable
           rows={stats}
@@ -181,68 +241,7 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
         </div>
       )}
 
-      <SectionHeader no="02" title="平台对账" en={`RECONCILE · 声明平台 vs 采集实际${rc.data ? ` · ${rc.data.summary.total} 项差异` : ''}`} />
-      {rc.data && rc.data.summary.total === 0 && (
-        <div className="panel-flat">
-          <span className="row" style={{ gap: 8 }}>
-            <Badge tone="ok">一致</Badge>
-            <span className="dim">所有已声明平台的资产与采集实际一致，未发现内容漂移。</span>
-          </span>
-        </div>
-      )}
-      {actionResult && (
-        <div className="panel-flat mt">
-          <span className="row" style={{ gap: 8 }}>
-            <Badge tone={actionResult.ok ? 'ok' : 'bad'}>{actionResult.ok ? '已执行' : '失败'}</Badge>
-          </span>
-          <pre style={{ whiteSpace: 'pre-wrap', margin: '6px 0 0', fontSize: 'var(--fs-l1)', fontFamily: 'var(--font-mono)' }}>{actionResult.text}</pre>
-        </div>
-      )}
-      {(rc.data?.items ?? []).slice(0, 40).map((item) => (
-        <Panel key={item.key} title={`${RECONCILE_LABEL[item.type]} · ${item.name}`} en={`${item.platform} · ${item.key}`}>
-          <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>{item.detail}</div>
-          {item.copies.map((c) => (
-            <div key={`${c.assetId}:${c.path}`} className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>
-              {c.path || c.assetId}
-              {c.sha ? ` · ${String(c.sha).slice(0, 12)}` : ''}
-              {c.platforms.length > 0 ? ` · ${c.platforms.join('+')}` : ''}
-            </div>
-          ))}
-          {item.diff && item.diff.length > 0 && item.diff[0] !== '(一致)' && (
-            <pre
-              className="mono"
-              style={{
-                margin: '6px 0 0',
-                padding: '6px 8px',
-                fontSize: 'var(--fs-label)',
-                lineHeight: 1.5,
-                whiteSpace: 'pre-wrap',
-                maxHeight: 180,
-                overflow: 'auto',
-                border: '1px dashed var(--khaki)',
-              }}
-            >
-              {item.diff.join('\n')}
-            </pre>
-          )}
-          <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
-            {item.actions.map((a) => (
-              <button
-                key={a.id}
-                className={`btn small ${a.executable ? (a.direction === 'platform-to-local' ? 'btn-amber' : 'btn-mint') : 'btn-ghost'}`}
-                disabled={busyKey === `${item.key}:${a.id}`}
-                title={!a.executable ? a.note : DIRECTION_LABEL[a.direction]}
-                onClick={() => void runReconcileAction(item, a)}
-              >
-                {a.direction === 'platform-to-local' ? '⇠' : '⇢'} {a.label}
-                {!a.executable ? ' ·手动' : ''}
-              </button>
-            ))}
-          </div>
-        </Panel>
-      ))}
-
-      <SectionHeader no="03" title="自建资产清单" en={`FIRST-PARTY INVENTORY · ${ownList.length}`} />
+      <SectionHeader no="02" title="自建资产清单" en={`FIRST-PARTY INVENTORY · ${ownList.length}`} />
       <DataTable
         rows={ownList}
         cols={[

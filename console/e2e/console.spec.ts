@@ -119,7 +119,7 @@ test('skills: first-party vs dependencies tabs', async ({ page }) => {
   await page.goto('/skills');
   await expect(page.getByText('/recall').first()).toBeVisible();
   await expect(page.getByText('deep-research').first()).not.toBeVisible();
-  await page.getByRole('button', { name: '依赖架 DEPENDENCIES' }).click();
+  await page.getByRole('button', { name: '第三方 THIRD-PARTY' }).click();
   await expect(page.getByText('deep-research').first()).toBeVisible();
 });
 

@@ -221,7 +221,8 @@ export function buildReconcileReport(
   for (const local of state.assets) {
     if (local.kind !== 'skill' || !local.source.path.startsWith('/') || !covered.has(local.id)) continue;
     const localContent = (local.payload as { content?: unknown }).content;
-    if (typeof localContent !== 'string') continue;
+    // 本地无 SKILL.md（content 为空）时不配对：属于"本地缺文件"，不是内容漂移
+    if (typeof localContent !== 'string' || localContent.trim() === '') continue;
     const remote = multicaSkills.find((m) => normName(m.name) === normName(local.name));
     if (!remote) continue;
     const remoteContent = (remote.payload as { content?: unknown }).content;
@@ -265,11 +266,13 @@ export function buildReconcileReport(
     });
   }
 
-  // 兜底：有平台归属但没有被任何 platforms 声明覆盖的自建资产（按 kind×平台分组提示补声明）
+  // 兜底：有平台归属但没有被任何 platforms 声明覆盖的自建资产（按 kind×平台分组提示补声明）。
+  // custom/report 是采集器派生的观测视图（活动流、报告、样本聚合），不参与平台对账。
+  const NET_EXCLUDED_KINDS = new Set(['custom', 'report']);
   const uncoveredGroups = new Map<string, Asset[]>();
   for (const a of state.assets) {
     if (a.provenance !== 'first-party' || a.platforms.length === 0 || covered.has(a.id)) continue;
-    if (a.id.startsWith('registry:unmatched-')) continue;
+    if (NET_EXCLUDED_KINDS.has(a.kind) || a.id.startsWith('registry:unmatched-')) continue;
     const k = `${a.kind}:${[...a.platforms].sort().join('+')}`;
     uncoveredGroups.set(k, [...(uncoveredGroups.get(k) ?? []), a]);
   }
