@@ -153,7 +153,10 @@ function extractCommandsWithSeps(rawCmd) {
 }
 
 function extractCommands(rawCmd) {
-  return extractCommandsWithSeps(rawCmd).map(s => s.text);
+  // nest 标记条目（{nest:'in'|'out'}）无 text，wrapper 契约仍为 strings——过滤后再映射
+  return extractCommandsWithSeps(rawCmd)
+    .filter(s => typeof s.text === 'string')
+    .map(s => s.text);
 }
 
 // 引号感知的括号事件切分（R-A/O-5，SEE-1530 复验）：按出现顺序返回
