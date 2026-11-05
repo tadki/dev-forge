@@ -24,7 +24,16 @@ const KNOWN_VALUE_FLAGS = new Set([
 const SHELL_OPERATORS = new Set(['&&', '||', ';', '|', '|&', '(', '{', '>', '>>', '<', '2>', '&>']);
 
 function tokenize(str) {
-  return str.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+  // RC-D（SEE-1530）：无引号 token 剥壳字符——shell 结构符附着词上时（`(git`、
+  // `main)`、`{git`）git 词与 refspec 不再并入单 token 而漏检。引号串原样保留
+  // （引号感知：内部结构字符/命令文本不参与解析）。空 token（如独立 `(`）丢弃，
+  // 防止 parseCommand 把空串误当 base。
+  const out = [];
+  for (let t of (String(str).match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [])) {
+    if (!/^['"]/.test(t)) t = t.replace(/^[({]+/, '').replace(/[)};]+$/, '');
+    if (t) out.push(t);
+  }
+  return out;
 }
 
 function parseCommand(cmdStr) {
@@ -73,29 +82,36 @@ function splitShellCommands(str) {
   let inSingle = false;
   let inDouble = false;
   let i = 0;
+  const flush = () => { if (current.trim()) segments.push(current.trim()); current = ''; };
   while (i < str.length) {
     const ch = str[i];
     if (ch === '\\' && !inSingle && i + 1 < str.length) { current += ch; i++; current += str[i]; i++; continue; }
     if (ch.charCodeAt(0) === 39 && !inDouble) { inSingle = !inSingle; current += ch; i++; continue; }
     if (ch.charCodeAt(0) === 34 && !inSingle) { inDouble = !inSingle; current += ch; i++; continue; }
     if (!inSingle && !inDouble) {
-      if (ch === '\n' || ch === ';') {
-        if (current.trim()) segments.push(current.trim());
-        current = '';
-        i++;
+      if (ch === '\n' || ch === ';') { flush(); i++; continue; }
+      if ((ch === '&' && str[i + 1] === '&') || (ch === '|' && str[i + 1] === '|')) { flush(); i += 2; continue; }
+      // RC-B（SEE-1530）：单 `&`（后台）与单 `|`（管道）同为命令分隔——不切则
+      // 一段双 push 时 belt 与 push_refspec 均只见第一个（第二注册仓 push 逃逸）。
+      // 重定向组合不算分隔：`&>`/`>&`/`>|` 中 & / | 紧邻 `>` 为字面量；`|&` 属
+      // 管道分隔（按双字符切）。
+      if (ch === '|') {
+        if (str[i + 1] === '|') { flush(); i += 2; continue; }
+        if (str[i + 1] === '&' && str[i - 1] !== '>') { flush(); i += 2; continue; }
+        if (str[i - 1] === '>') { current += ch; i++; continue; }
+        flush(); i++;
         continue;
       }
-      if ((ch === '&' && str[i + 1] === '&') || (ch === '|' && str[i + 1] === '|')) {
-        if (current.trim()) segments.push(current.trim());
-        current = '';
-        i += 2;
+      if (ch === '&') {
+        if (str[i + 1] === '>' || str[i - 1] === '>') { current += ch; i++; continue; }
+        flush(); i++;
         continue;
       }
     }
     current += ch;
     i++;
   }
-  if (current.trim()) segments.push(current.trim());
+  flush();
   return segments;
 }
 
@@ -116,6 +132,110 @@ function extractCommands(rawCmd) {
     for (const seg of splitShellCommands(stripped)) commands.push(seg);
   }
   return commands;
+}
+
+// ---- git push 实例级解析栈（SEE-1530 RC-A/C/D 精化）----
+
+function stripTokenQuotes(t) {
+  return (t || '').replace(/^['"]|['"]$/g, '');
+}
+
+// git 全局旗标扫描（RC-A 精化，取代旧「2 字符一律跳旗标+值」规则——该规则把
+// 无值短旗标 -p/--paginate、-P/--no-pager 的后续词当值吞掉，`git -p push` 漏检）：
+//   -C <dir> / -c name=val：真带值短旗标，跳旗标+值（SEE-1516 FN 修复语义保留）
+//   -p / -P：无值；合并簇逐字符判定（`-pC dir` = -p + -C dir）
+//   未知旗标按无值（不吞词即不漏检，偏 deny 方向）
+//   长旗标逐个跳过（既有行为，`--git-dir <dir>` 分离值形态维持旧 FN 面不扩面）
+function scanGitInvocation(tokens, start) {
+  let j = start + 1;
+  const cdirs = [];
+  while (j < tokens.length && tokens[j].startsWith('-') && tokens[j] !== '--') {
+    const t = tokens[j];
+    if (t === '-C' || t === '-c') {
+      if (t === '-C' && j + 1 < tokens.length) cdirs.push(stripTokenQuotes(tokens[j + 1]));
+      j += 2;
+      continue;
+    }
+    if (t.startsWith('--')) { j++; continue; }
+    let valued = false;
+    for (let k = 1; k < t.length; k++) {
+      const ch = t[k];
+      if (ch !== 'C' && ch !== 'c') continue;
+      const attached = t.slice(k + 1);
+      if (attached) {
+        if (ch === 'C') cdirs.push(stripTokenQuotes(attached));
+        j++;
+      } else if (j + 1 < tokens.length) {
+        if (ch === 'C') cdirs.push(stripTokenQuotes(tokens[j + 1]));
+        j += 2;
+      } else {
+        j++;
+      }
+      valued = true;
+      break;
+    }
+    if (!valued) j++;
+  }
+  return { isPush: tokens[j] === 'push', cdirs, tailStart: j + 1 };
+}
+
+// 段内全部 push 实例解析（RC-D：旧逻辑每段只解析第一个 push，注释内/后续 push
+// 盲区）。注释（#…）不剥离——注释隐藏的第二 push 参与判定（遮蔽形态 deny 主
+// 语义，SEE-1530 定案）；引号串为单 token，内嵌命令文本天然不参与。实例尾片
+// 以下一实例的 git 词为界，避免相邻实例参数互渗。
+function scanGitPushInstances(seg) {
+  const tokens = tokenize(seg);
+  const hits = [];
+  for (let idx = 0; idx < tokens.length; idx++) {
+    if (tokens[idx] !== 'git') continue;
+    const inv = scanGitInvocation(tokens, idx);
+    if (inv.isPush) hits.push({ gitIdx: idx, cdirs: inv.cdirs, tailStart: inv.tailStart });
+  }
+  const instances = hits.map((h, i) => ({
+    cdirs: h.cdirs,
+    tail: tokens.slice(h.tailStart, i + 1 < hits.length ? hits[i + 1].gitIdx : tokens.length),
+  }));
+  return { tokens, instances };
+}
+
+// push_refspec exclude 的实例级语义（RC-C）：旧实现按正则滤除整段，混合 refspec
+// 段（真实 master push + --delete tmpb）整段逃逸。新语义 = 逐 token 判定：命中
+// exclude 的 token 按删除旗标消费并吞掉其后 ref 参数（--delete <ref> / -d <ref>
+// 成对，参数为旗标形态时不吞），剩余 token 即有效 refspec 面。
+function consumeExcludedTokens(tokens, re) {
+  if (!(re instanceof RegExp)) return { tokens, hadExcluded: false };
+  const out = [];
+  let hadExcluded = false;
+  for (let i = 0; i < tokens.length; i++) {
+    if (re.test(tokens[i])) {
+      hadExcluded = true;
+      if (i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) i++;
+      continue;
+    }
+    out.push(tokens[i]);
+  }
+  return { tokens: out, hadExcluded };
+}
+
+// 实例判定共用：纯删除 push = exclude 命中且无有效 refspec（positional < 2，
+// 即只剩 remote）——Owner 定案删除不走本门（含 `--delete x -f` 误带 force 形态，
+// 与旧整段滤除同判定）；push_refspec 与 repo target:push 两侧同口径跳过。
+function evaluatePushInstance(inst, excludeRe) {
+  const consumed = consumeExcludedTokens(inst.tail, excludeRe);
+  const positionals = consumed.tokens.filter(t => t !== '--' && !t.startsWith('-'));
+  return {
+    consumed,
+    positionals,
+    isPureDelete: consumed.hadExcluded && positionals.length < 2,
+  };
+}
+
+// 双 -C 相对链按 git 真实语义锚定（OB-5）：后续非绝对 -C 相对前一个 -C 的目录
+// （git(1) -C 条目原文）。旧实现只取最后一个 -C 并锚回会话 cwd，相对链落空误拦。
+function resolveCdirChain(base, cdirs) {
+  let acc = base;
+  for (const c of cdirs) acc = path.isAbsolute(c) ? c : path.resolve(acc, c);
+  return acc;
 }
 
 // ---- evaluator factory ----
@@ -269,35 +389,35 @@ function createEvaluator(payload, opts) {
   // ---- push 有效目标仓解析（SEE-1527：belt 豁免锚点去字面量化）----
   // 旧 belt = 命令串含 "/dev-forge" 子串，路径敏感：dev-forge 检出目录名不含
   // 字面量时，KOL/gqt 会话对它的合法 push 被真实误拦（跨仓误拦，生产可达）。
-  // 新锚点 = 逐 push 段解析有效目标仓（段内 -C <dir> 优先，其次前置 cd 链，
-  // 否则会话 cwd）→ toplevel → origin URL 归一化 → 注册表判定，路径形态无关。
+  // 新锚点 = 逐 push 实例解析有效目标仓（实例内 -C 链优先（OB-5 git 语义锚定），
+  // 其次前置 cd 链，否则会话 cwd；附着短旗标 -C<path> 与引号路径一并支持）→
+  // toplevel → origin URL 归一化 → 注册表判定，路径形态无关。
   // 保守方向（豁免不生效 = 门禁照常）：无 push 段、任一目标不可解析（变量插值
   // cd / cd 无参 / 非 git / 无 origin / 注册表不可用）→ 恒 false；多 push 段取
   // all 口径 —— any 口径会让复合命令里注册仓的 push 借道逃逸，属门禁弱化。
   function parseCdDir(seg) {
-    const parsed = parseCommand(seg);
-    if (!parsed || parsed.base !== 'cd') return undefined; // undefined = 非 cd 段
-    const arg = parsed.subcommand.trim();
-    if (!arg || arg.startsWith('-') || /[$`]/.test(arg)) return null; // null = 不可解析
-    const tok = (tokenize(arg)[0] || '').replace(/^['"]|['"]$/g, '');
-    return tok || null;
-  }
-
-  function extractGitPushTargetDir(seg) {
     const tokens = tokenize(seg);
-    for (let idx = 0; idx < tokens.length; idx++) {
-      if (tokens[idx] !== 'git') continue;
-      let j = idx + 1;
-      let cdir = '';
-      while (j < tokens.length && tokens[j].startsWith('-') && tokens[j] !== '--') {
-        // -C <dir>：捕获目标目录；其余带值短旗标（-c key=val 等）跳旗标 + 值
-        if (tokens[j] === '-C' && j + 1 < tokens.length) { cdir = tokens[j + 1]; j += 2; continue; }
-        if (tokens[j].length === 2 && j + 1 < tokens.length && tokens[j + 1] !== '-') { j += 2; continue; }
-        j++;
-      }
-      if (tokens[j] === 'push') return cdir; // '' = push 无 -C；undefined = 段内无 push
+    let i = 0;
+    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=\S+$/.test(tokens[i])) i++;
+    if (tokens[i] !== 'cd') return undefined; // undefined = 非 cd 段
+    i++;
+    // OB-3（SEE-1530）：cd 旗标（-P/-L，POSIX cd 旗标无值）跳过后取目录——旧实现
+    // 遇 `-` 开头参数即判不可解析（保守误拦 `cd -P <path> && git push`）；
+    // `--` 为旗标终止符，其后首 token 直接视为目录。
+    let afterDashDash = false;
+    while (i < tokens.length) {
+      if (!afterDashDash && tokens[i] === '--') { afterDashDash = true; i++; continue; }
+      if (!afterDashDash && tokens[i].startsWith('-')) { i++; continue; }
+      break;
     }
-    return undefined;
+    const raw = tokens[i];
+    if (!raw) return null; // null = 不可解析（cd 无参 / 纯旗标）
+    if (afterDashDash || !raw.startsWith('-')) {
+      if (/[$`]/.test(raw)) return null; // 变量插值不可解析（毒化链语义保留）
+      const tok = stripTokenQuotes(raw); // OB-2 同源：引号剥离（与 -C 捕获一致）
+      return tok || null;
+    }
+    return null;
   }
 
   const pushTargetsCache = new Map(); // exclude 正则串 → 目标仓 info 数组
@@ -305,11 +425,8 @@ function createEvaluator(payload, opts) {
     if (!cmd) return [];
     const key = typeof exclude === 'string' ? exclude : '';
     if (pushTargetsCache.has(key)) return pushTargetsCache.get(key);
-    let segments = extractCommands(cmd);
-    if (key) {
-      const re = safeRegex(key);
-      if (re) segments = segments.filter(s => !re.test(s));
-    }
+    const excludeRe = key ? safeRegex(key) : null;
+    const segments = extractCommands(cmd);
     let tracked = null;       // 前置 cd 链锚定目录；null = 未涉 cd（用会话 cwd）
     let unresolvable = false; // cd 链不可解析且未被后续 cd 重锚 → 后续目标不可信
     const dirs = [];
@@ -321,9 +438,13 @@ function createEvaluator(payload, opts) {
         unresolvable = false;
         continue;
       }
-      const cdir = extractGitPushTargetDir(seg);
-      if (cdir === undefined) continue;
-      dirs.push(unresolvable ? null : path.resolve(tracked || cwd, cdir || '.'));
+      for (const inst of scanGitPushInstances(seg).instances) {
+        const ev = evaluatePushInstance(inst, excludeRe);
+        if (ev.isPureDelete) continue; // 纯删除 push 不入 belt 目标（Owner 定案）
+        // OB-1（附着 `-C<path>` 由 scanGitInvocation 捕获）；OB-5 链按 git 语义
+        // 锚定；OB-4 别名远端不在本函数语义面（origin-URL 身份判定冻结不改）。
+        dirs.push(unresolvable ? null : resolveCdirChain(tracked || cwd, inst.cdirs));
+      }
     }
     const uniq = [];
     const seen = new Set();
@@ -437,79 +558,59 @@ function createEvaluator(payload, opts) {
     return false;
   }
 
-  // ---- push-refspec 结构化解析（SEE-1516 §SPEC-022 / fingerprint 7501c09c15a4）----
+  // ---- push-refspec 结构化解析（SEE-1516 §SPEC-022 / fingerprint 7501c09c15a4；
+  //      SEE-1530 实例级化 + exclude 语义精化）----
   // gates keyword 子串（` master`/` main`/`:refs/heads/master`）与 force 短簇枚举
   // 的 FP/FN 根治：token 级解析 git push refspecs，取代裸子串/枚举。
   //   master 形态 token 级精确匹配（`main-branch`/`maintenance` 分支名不再误拦 FP）
   //   refspec 形态全覆盖（`HEAD:master`/`+HEAD:refs/heads/master` 不再漏检 FN）
   //   force 短簇全簇判定（含 -nf/-vf/句尾 -f，--no-force 显式豁免）
-  function parseGitPushTokens(seg) {
-    const tokens = tokenize(seg);
-    for (let idx = 0; idx < tokens.length; idx++) {
-      if (tokens[idx] !== 'git') continue;
-      let j = idx + 1;
-      while (j < tokens.length && tokens[j].startsWith('-') && tokens[j] !== '--') {
-        // -C <dir> 等带值短旗标：跳旗标 + 值（FN 修复：`git -C dir push` 曾被
-        // 声明式 pattern `git(\s+-[A-Za-z-]+)*\s+push` 漏检）
-        if (tokens[j].length === 2 && j + 1 < tokens.length && tokens[j + 1] !== '-') {
-          j += 2;
-          continue;
-        }
-        j++;
-      }
-      if (tokens[j] === 'push') return tokens.slice(j + 1);
-    }
-    return null;
-  }
-
+  //   SEE-1530：每段全部 push 实例逐一判定（旧只看首 push）；exclude 由整段滤除
+  //   改为实例内删除旗标成对消费（混合 refspec 不再整段逃逸）
   function evalPushRefspec(node) {
     if (!cmd) return false;
     const kind = node.kind === 'force' ? 'force' : 'master';
-    let segments = extractCommands(cmd);
-    if (typeof node.exclude === 'string' && node.exclude !== '') {
-      const re = safeRegex(node.exclude);
-      if (re) segments = segments.filter(s => !re.test(s));
-    }
+    const excludeRe = typeof node.exclude === 'string' && node.exclude !== ''
+      ? safeRegex(node.exclude) : null;
+    const segments = extractCommands(cmd);
     for (const seg of segments) {
-      const after = parseGitPushTokens(seg);
-      if (!after) continue;
-      if (kind === 'force') {
-        let noForce = false;
-        let force = false;
-        for (const t of after) {
-          if (t === '--') continue;
-          if (t.startsWith('--')) {
-            if (t === '--no-force' || t.startsWith('--no-force=')) { noForce = true; continue; }
-            if (t === '--force' || t.startsWith('--force=') ||
-                t === '--force-with-lease' || t.startsWith('--force-with-lease=')) {
-              force = true;
+      for (const inst of scanGitPushInstances(seg).instances) {
+        const ev = evaluatePushInstance(inst, excludeRe);
+        if (ev.isPureDelete) continue; // 纯删除 push 不走本门（Owner 定案）
+        const after = ev.consumed.tokens;
+        if (kind === 'force') {
+          let noForce = false;
+          let force = false;
+          for (const t of after) {
+            if (t === '--') continue;
+            if (t.startsWith('--')) {
+              if (t === '--no-force' || t.startsWith('--no-force=')) { noForce = true; continue; }
+              if (t === '--force' || t.startsWith('--force=') ||
+                  t === '--force-with-lease' || t.startsWith('--force-with-lease=')) {
+                force = true;
+              }
+              continue;
             }
-            continue;
+            if (t.startsWith('-')) {
+              // 短簇全簇判定：任何含 f 的短簇（-f/-nf/-vf/-fo/-uf）皆 force
+              if (t.indexOf('f') !== -1) force = true;
+              continue;
+            }
+            if (t.startsWith('+')) force = true; // +refspec 加号 force 形态
           }
-          if (t.startsWith('-')) {
-            // 短簇全簇判定：任何含 f 的短簇（-f/-nf/-vf/-fo/-uf）皆 force
-            if (t.indexOf('f') !== -1) force = true;
-            continue;
-          }
-          if (t.startsWith('+')) force = true; // +refspec 加号 force 形态
+          if (force && !noForce) return true;
+          continue;
         }
-        if (force && !noForce) return true;
-        continue;
-      }
-      // kind === 'master'：refspec remote 侧 token 级精确匹配
-      const positionals = [];
-      for (const t of after) {
-        if (t === '--' || t.startsWith('-')) continue;
-        positionals.push(t);
-      }
-      // 首 positional 为 remote 名（≥2 positionals 时），其余为 refspecs
-      const refs = positionals.length >= 2 ? positionals.slice(1) : positionals;
-      for (const raw of refs) {
-        const remote = raw.replace(/^\+/, '')
-          .split(':').pop()
-          .replace(/^refs\/heads\//, '')
-          .replace(/^["']|["']$/g, '');
-        if (remote === 'master' || remote === 'main') return true;
+        // kind === 'master'：refspec remote 侧 token 级精确匹配
+        // 首 positional 为 remote 名（≥2 positionals 时），其余为 refspecs
+        const refs = ev.positionals.length >= 2 ? ev.positionals.slice(1) : ev.positionals;
+        for (const raw of refs) {
+          const remote = raw.replace(/^\+/, '')
+            .split(':').pop()
+            .replace(/^refs\/heads\//, '')
+            .replace(/^["']|["']$/g, '');
+          if (remote === 'master' || remote === 'main') return true;
+        }
       }
     }
     return false;
