@@ -1,0 +1,28 @@
+# 平台适配 · multica（server @ Mac mini，CLI 经 multica daemon）
+# 读通道 = multica 采集器（agent/autopilot/skill list --json 等）
+# 写通道 = 按 kind 的 CLI 命令模板；{platformId} 由执行端按 platformIdFrom 解析，{content} 为库内内容
+id: multica
+label: multica 平台
+match:
+  pathPrefix: ["multica://"]
+kinds:
+  skill:
+    write:
+      type: command
+      cmd: [multica, skill, update, "{platformId}", --content, "{content}"]
+      platformIdFrom: self            # skill 资产 payload.platformId
+  agent:
+    write:
+      type: command
+      cmd: [multica, agent, update, "{platformId}", --instructions, "{content}"]
+      platformIdFrom: deployment      # 该 agent 的 deployment 资产 payload.platformId
+  instruction:
+    write: { type: none, advice: 'multica agent update <AGENT_ID> --instructions "$(cat <资产路径>)"（需指定目标 agent）' }
+  autopilot:
+    write: { type: none, advice: 'multica autopilot 暂无通用更新命令：请在平台侧修改后重采，或改为「以生产为准」采纳进库' }
+  hook-rule:
+    write: { type: none, advice: 'hook 规则经全局 ~/.claude hooks 生效于 multica 会话；以库为准时改 dev-forge 源文件即可，无平台对象' }
+  hook-script:
+    write: { type: none, advice: '脚本在 dev-forge 仓库，采集自文件系统，无平台对象' }
+  adapter:
+    write: { type: none, advice: 'adapters 为本地脚本，无平台对象' }

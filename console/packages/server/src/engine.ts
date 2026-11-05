@@ -9,10 +9,16 @@ import {
   makeContext,
   mergeCollections,
   runCollectors,
+  loadFirstPartyStore,
+  syncFirstPartyStore,
+  loadPlatforms,
+  DEFAULT_PLATFORMS,
   type ConsoleConfig,
   type Collector,
   type RegistryEntry,
   type RegistryState,
+  type StoreRecord,
+  type PlatformDef,
 } from '@forge/collectors';
 import { fixtureCollector } from '@forge/collectors';
 import { loadExternalCollectors } from '@forge/collectors';
@@ -33,6 +39,11 @@ export class Engine {
   state: RegistryState = { assets: [], relations: [], diagnostics: [], collectorStatus: [], lastCollectedAt: '' };
   /** 最近一次采集加载的 registry.d 声明（对账动作执行时按此定位 entry 文件） */
   private registryEntries: RegistryEntry[] = [];
+  /** 库（真源）目录与最近一次采集加载的副本（store-write 采纳 / ContentRef.from=store 用） */
+  private storeDirPath = '';
+  private storeRecords: Map<string, StoreRecord> = new Map();
+  /** 平台适配（console/platforms.d；缺失回退 DEFAULT_PLATFORMS） */
+  private platforms: PlatformDef[] = DEFAULT_PLATFORMS;
   private collectors: Collector[];
   private timer?: ReturnType<typeof setInterval>;
   private watchers: Array<{ close: () => void }> = [];
@@ -84,9 +95,21 @@ export class Engine {
     return this.registryEntries;
   }
 
+  getStoreDir(): string {
+    return this.storeDirPath;
+  }
+
+  getStoreRecords(): Map<string, StoreRecord> {
+    return this.storeRecords;
+  }
+
+  getPlatforms(): PlatformDef[] {
+    return this.platforms;
+  }
+
   /** 对账项重查（动作执行前调用）：优先用当前 state 重算，item 已消失时返回 undefined → 409 */
   findReconcileItem(key: string) {
-    const report = buildReconcileReport(this.state, this.registryEntries);
+    const report = buildReconcileReport(this.state, this.registryEntries, new Date(), { store: this.storeRecords, platforms: this.platforms });
     return report.items.find((i) => i.key === key);
   }
 
@@ -130,6 +153,22 @@ export class Engine {
       this.registryEntries = loaded.entries;
       state.diagnostics = [...state.diagnostics, ...loaded.diagnostics];
       state = applyRegistryOverlay(state, this.registryEntries);
+      // 本地自建资产源（真源）：create-only 入库 + v1→v2 基线迁移；已存在副本永不覆写，
+      // 生产变更交 store-drift 对账裁决。失败不阻断采集。
+      const storeDir = this.config.firstPartyStoreDir ?? join(this.config.devforge, 'console', 'state', 'first-party');
+      this.storeDirPath = storeDir;
+      const platformsDir = this.config.platformsDir ?? join(this.config.devforge, 'console', 'platforms.d');
+      const loadedPlatforms = await loadPlatforms(platformsDir);
+      this.platforms = loadedPlatforms.platforms;
+      state.diagnostics = [...state.diagnostics, ...loadedPlatforms.diagnostics];
+      try {
+        const store = await loadFirstPartyStore(storeDir);
+        this.storeRecords = store.records;
+        state.diagnostics = [...state.diagnostics, ...store.diagnostics];
+        await syncFirstPartyStore(state.assets, storeDir, { records: store.records });
+      } catch (e) {
+        state.diagnostics.push({ level: 'warn', message: `[first-party-store] 入库失败：${String(e).slice(0, 200)}`, path: storeDir });
+      }
       // 保留 push 型自定义资产
       const pushed = this.state.assets.filter((a) => a.source.collector === 'push');
       if (pushed.length > 0) {
@@ -139,7 +178,7 @@ export class Engine {
         ]);
         state.assets = merged.assets;
       }
-      const reconcile = buildReconcileReport(state, this.registryEntries);
+      const reconcile = buildReconcileReport(state, this.registryEntries, new Date(), { store: this.storeRecords, platforms: this.platforms });
       state.reconcile = reconcile;
       state.diagnostics = [...state.diagnostics, ...reconcileDiagnostics(reconcile)];
       this.state = state;

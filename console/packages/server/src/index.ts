@@ -57,7 +57,12 @@ const handler = createHandler({
         return { ok: r.ok && (!r.stdout || !/failed/i.test(r.stdout)), output: `${r.stdout}${r.stderr}`.slice(0, 400) };
       },
   onAfterAction: () => void engine.collectNow(),
-  getReconcileReport: () => engine.state.reconcile ?? buildReconcileReport(engine.state, engine.getRegistryEntries()),
+  getReconcileReport: () =>
+    engine.state.reconcile ??
+    buildReconcileReport(engine.state, engine.getRegistryEntries(), new Date(), {
+      store: engine.getStoreRecords(),
+      platforms: engine.getPlatforms(),
+    }),
   reconcileAction: async (key, actionId) => {
     // 对账项按当前 state 重算，步骤完全由服务端生成；客户端只提交 key + actionId + confirm
     const item = engine.findReconcileItem(key);
@@ -65,6 +70,8 @@ const handler = createHandler({
     const result = await executeReconcileAction(item, actionId, engine.state, {
       exec: execCapture,
       dryRun: dryActions,
+      storeDir: engine.getStoreDir() || undefined,
+      storeRecords: engine.getStoreRecords(),
     });
     return { status: result.status, ok: result.ok, output: result.output };
   },
