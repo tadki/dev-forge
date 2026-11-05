@@ -305,6 +305,30 @@ ea "RB-4 kol: cd DF; push feature & push main → allow（混合目标）"    "$
 ea "RB-5 kol: cd DF && push feature; push main & push main → allow"  "$FIX/work_kol" "cd $FIX/work_df_url && git push origin feature/x ; git push origin main & git push origin main" allow
 
 echo ""
+echo -e "${CYAN}--- Group V12: 组闭合×子 shell 边界快照时序（§SPEC-009 / hardener 增量 2）---${NC}"
+
+# V12 deny 面（Harti blocker 上报 + Leader 三 ref 独立复现采信）：`( ... ) & push`
+# 中组闭合 ')' 与边界同段共存时，旧快照（段首取值）仍含组内锚 → 边界复位复活
+# 组内锚 → 尾随 push 误豁免。修复 = 快照按链身份路由 + 组帧 saved/work 分离
+# （恢复 work ← saved 组入口态）。
+ea "V12-1 kol: (cd DF && push main) & push main → deny"            "$FIX/work_kol" "(cd $FIX/work_df_url && git push origin main) & git push origin main" deny "禁止直接 push"
+ea "V12-2 kol: (cd DF && push main) | push main → deny"            "$FIX/work_kol" "(cd $FIX/work_df_url && git push origin main) | git push origin main" deny "禁止直接 push"
+ea "V12-3 kol: (cd DF && true) & push main → deny（minimal 变体）"   "$FIX/work_kol" "(cd $FIX/work_df_url && true) & git push origin main" deny "禁止直接 push"
+ea "V12-4 kol: (cd DF; true) & push main → deny（; true 变体）"     "$FIX/work_kol" "(cd $FIX/work_df_url; true) & git push origin main" deny "禁止直接 push"
+ea "V12-5 gqt: (cd DF && push main) & push main → deny"            "$FIX/work_gqt" "(cd $FIX/work_df_url && git push origin main) & git push origin main" deny "禁止直接 push"
+ea "V12-6 kol: (cd DF && push master) & push master → deny（master 目标）" "$FIX/work_kol" "(cd $FIX/work_df_url && git push origin master) & git push origin master" deny "禁止直接 push"
+
+echo ""
+echo -e "${CYAN}--- Group MX: 边界×组状态自审矩阵收割钉（裁决硬性要求）---${NC}"
+
+# 自审矩阵（30 格，bash pwd 实证法真值对照）收割的同族残余/守恒形态：
+ea "MX-1 kol: (cd DF & push main) 组内 & → deny"                   "$FIX/work_kol" "(cd $FIX/work_df_url & git push origin main)" deny "禁止直接 push"
+ea "MX-2 kol: (cd DF | push main) 组内 | → deny"                   "$FIX/work_kol" "(cd $FIX/work_df_url | git push origin main)" deny "禁止直接 push"
+ea "MX-3 kol: cd DF; (cd gqt) & push main → allow（组丢弃后主链保持）" "$FIX/work_kol" "cd $FIX/work_df_url ; (cd $FIX/work_gqt) & git push origin main" allow
+ea "MX-4 kol: cd /tmp; (cd DF) & push main → deny（主链未变）"       "$FIX/work_kol" "cd /tmp ; (cd $FIX/work_df_url) & git push origin main" deny "禁止直接 push"
+ea "MX-5 kol: (cd /tmp; cd DF && push main) 组内链 → allow"         "$FIX/work_kol" "(cd /tmp ; cd $FIX/work_df_url && git push origin main)" allow
+
+echo ""
 echo -e "${CYAN}--- OB-4 行为冻结登记（无断言）---${NC}"
 echo "  OB-4 别名远端逃逸（dev-forge 检出内 push 指向 KOL 的别名 remote）："
 echo "  origin-URL 身份判定固有边界，Owner 未裁决前冻结不改（本套件不为其加钉，"

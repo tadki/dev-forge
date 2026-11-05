@@ -473,20 +473,22 @@ function createEvaluator(payload, opts) {
     if (pushTargetsCache.has(key)) return pushTargetsCache.get(key);
     const excludeRe = key ? safeRegex(key) : null;
     const segments = extractCommandsWithSeps(cmd);
-    let tracked = null;       // 前置 cd 链锚定目录；null = 未涉 cd（用会话 cwd）
-    let unresolvable = false; // cd 链不可解析且未被后续 cd 重锚 → 后续目标不可信
+    const mainChain = { tracked: null, unresolvable: false }; // 主 shell 链（深度 0）
+    const groupStack = [];                                    // '(' 组帧栈：{saved 入口态, work 组局部工作链}
     const dirs = [];
-    const groupStack = [];    // '(' 子 shell 组状态栈（进入压栈，')' 恢复组外链）
     let prevSep = '';
+    let savedChain = null;      // 边界快照：左侧段执行前的活跃链引用及其状态
     let savedTracked = null;
     let savedUnresolvable = false;
 
-    const processPiece = (text) => {
+    const activeChain = () => (groupStack.length ? groupStack[groupStack.length - 1].work : mainChain);
+
+    const processPiece = (text, chain) => {
       const cd = parseCdDir(text);
       if (cd !== undefined) {
-        if (cd === null) { unresolvable = true; tracked = null; return; }
-        tracked = path.isAbsolute(cd) ? cd : path.resolve(tracked || cwd, cd);
-        unresolvable = false;
+        if (cd === null) { chain.unresolvable = true; chain.tracked = null; return; }
+        chain.tracked = path.isAbsolute(cd) ? cd : path.resolve(chain.tracked || cwd, cd);
+        chain.unresolvable = false;
         return;
       }
       for (const inst of scanGitPushInstances(text).instances) {
@@ -494,33 +496,52 @@ function createEvaluator(payload, opts) {
         if (ev.isPureDelete) continue; // 纯删除 push 不入 belt 目标（Owner 定案）
         // OB-1（附着 `-C<path>` 由 scanGitInvocation 捕获）；OB-5 链按 git 语义
         // 锚定；OB-4 别名远端不在本函数语义面（origin-URL 身份判定冻结不改）。
-        dirs.push(unresolvable ? null : resolveCdirChain(tracked || cwd, inst.cdirs));
+        dirs.push(chain.unresolvable ? null : resolveCdirChain(chain.tracked || cwd, inst.cdirs));
       }
     };
 
     for (const seg of segments) {
-      // R-B（SEE-1530 复验）：子 shell 边界（&/|/|&）左侧段自身的 cd 不外溢到
-      // 右侧段，但既有同 shell cwd 锚不得丢弃——恢复「左侧段执行前」状态
-      // （= 链上最后同 shell cd 的结果；后台/管道子 shell 继承已生效 cwd），
-      // 而非回退会话 cwd。不可解析毒化语义不变（保守方向）。
+      const cur = activeChain();
+      // R-B/V12（SEE-1530 复验 + hardener 增量 2）：子 shell 边界（&/|/|&）左侧
+      // 段自身的 cd 不外溢——恢复「左侧段执行前」状态。快照按链身份恢复：
+      //  ① 链未变（边界两侧同上下文）→ 恢复快照值（R-B：既有同 shell 锚保留；
+      //     D-1：左段自身 cd 被撤销）；
+      //  ② 链已变（左段内组开/合事件跨边界）→ 组局部链恢复组入口态（栈顶），
+      //     主链保持现值——组内锚从不入主链，不得经边界复位复活（V12 修复：
+      //     `(cd DF && push) & push` 右段 push 须落会话 cwd）。
       if (prevSep === '&' || prevSep === '|' || prevSep === '|&') {
-        tracked = savedTracked;
-        unresolvable = savedUnresolvable;
+        if (cur === savedChain) {
+          cur.tracked = savedTracked;
+          cur.unresolvable = savedUnresolvable;
+        } else if (groupStack.length) {
+          // 跨组边界：cur = 组局部工作链，恢复到组入口态快照（saved 与 work 分离
+          // ——V12 二次定位：若以 work 自身作 entry，恢复即自赋值 no-op，组内锚
+          // 复活）。cur 为主链时（栈空）不恢复——组事件属主 shell 簿记，主链现值
+          // 即边界时刻的组外链。
+          const entry = groupStack[groupStack.length - 1].saved;
+          cur.tracked = entry.tracked;
+          cur.unresolvable = entry.unresolvable;
+        }
       }
-      savedTracked = tracked;
-      savedUnresolvable = unresolvable;
+      savedChain = cur;
+      savedTracked = cur.tracked;
+      savedUnresolvable = cur.unresolvable;
       prevSep = seg.sep;
-      // R-A/O-5（SEE-1530 复验）：'(' 子 shell 组内的 cd 只影响组内——'(' 压栈
-      // 继承当前 cwd（子 shell 继承父 cwd），')' 恢复组外链；组内 push 保持真
-      // 锚定（`(cd DF && git push)` allow）。花括号组是同 shell，不建栈。
+      // R-A/O-5（SEE-1530 复验）：'(' 子 shell 组内的 cd 只影响组内——压栈保存
+      // 组入口态快照（saved）并新建组局部工作链（work，继承入口 cwd），')' 弹栈
+      // 丢弃 work；组内 push 保持真锚定（`(cd DF && git push)` allow）。花括号组
+      // 是同 shell，不建栈。
       for (const piece of splitParenPieces(seg.text)) {
-        if (piece.paren === '(') { groupStack.push({ tracked, unresolvable }); continue; }
-        if (piece.paren === ')') {
-          const saved = groupStack.pop();
-          if (saved) { tracked = saved.tracked; unresolvable = saved.unresolvable; }
+        if (piece.paren === '(') {
+          const cur0 = activeChain();
+          groupStack.push({
+            saved: { tracked: cur0.tracked, unresolvable: cur0.unresolvable },
+            work: { tracked: cur0.tracked, unresolvable: cur0.unresolvable },
+          });
           continue;
         }
-        processPiece(piece.text);
+        if (piece.paren === ')') { groupStack.pop(); continue; }
+        processPiece(piece.text, activeChain());
       }
     }
     const uniq = [];
