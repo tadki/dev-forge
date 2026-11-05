@@ -329,6 +329,33 @@ ea "MX-4 kol: cd /tmp; (cd DF) & push main → deny（主链未变）"       "$F
 ea "MX-5 kol: (cd /tmp; cd DF && push main) 组内链 → allow"         "$FIX/work_kol" "(cd /tmp ; cd $FIX/work_df_url && git push origin main)" allow
 
 echo ""
+echo -e "${CYAN}--- Group RCx: 嵌套提取组作用域隔离（§SPEC-010 / QA 复验 2 R-C）---${NC}"
+
+# R-C deny 面（Revy 复验 2 + Leader 转义探针独立复现采信）：bash -c/sh -c = 子进程
+# 边界——组内未闭合 `(` 曾把组帧泄漏进外层段，外层真实执行的 kol/gqt master 直推
+# 被误豁免。修复 = 提取组作用域隔离（nest-in/out 标记：组内链与泄漏组帧整组丢弃、
+# 主链/组栈恢复）+ 不平衡括号保守化（多余 ')' / 残留帧 → belt 不可解析 deny）。
+# bash 实证：`bash -c "(cd DF"` rc=2 语法错后外层 `;`/`||`/`&` 的 push 仍在主 shell
+# cwd 执行 → 实落 kol/gqt master。
+ea "RCx-1 kol: 未闭合组 ; push main → deny"                        "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url\" ; git push origin main" deny "禁止直接 push"
+ea "RCx-2 kol: 未闭合组 || push main → deny"                       "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url\" || git push origin main" deny "禁止直接 push"
+ea "RCx-3 kol: 未闭合组 & push main → deny"                        "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url\" & git push origin main" deny "禁止直接 push"
+ea "RCx-4 kol: 未闭合组 ; push master → deny"                      "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url\" ; git push origin master" deny "禁止直接 push"
+ea "RCx-5 kol: 未闭合组 ; push -f feature → deny（force 门）"        "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url\" ; git push -f origin feature/x" deny "禁止 force-push"
+ea "RCx-6 kol: 未闭合组 ; push HEAD:refs/heads/main → deny"        "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url\" ; git push origin HEAD:refs/heads/main" deny "禁止直接 push"
+ea "RCx-7 kol: sh -c 单引号未闭合组 → deny"                         "$FIX/work_kol" "sh -c '(cd $FIX/work_df_url' ; git push origin main" deny "禁止直接 push"
+ea "RCx-8 kol: 未闭合组 &&true 变体 → deny"                         "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url && true\" ; git push origin main" deny "禁止直接 push"
+ea "RCx-9 gqt: 未闭合组 ; push main → deny"                        "$FIX/work_gqt" "bash -c \"(cd $FIX/work_df_url\" ; git push origin main" deny "禁止直接 push"
+
+# O-8（预存 FN，同根授权同轮闭合）：嵌套提取组 cd 泄漏外层链——子进程边界作用域
+# 隔离机制自然覆盖。
+ea "O8-1 kol: bash -c cd DF ; push main → deny（O-8 闭合）"         "$FIX/work_kol" "bash -c \"cd $FIX/work_df_url\" ; git push origin main" deny "禁止直接 push"
+
+# 嵌套组真锚定 allow 对照（子进程继承入口 cwd，组内 cd 后 push 真落 DF）+ 平衡括号对照
+ea "NEST-A1 kol: bash -c cd DF && push main 嵌套真锚定 → allow"     "$FIX/work_kol" "bash -c \"cd $FIX/work_df_url && git push origin main\"" allow
+ea "NEST-D1 kol: bash -c (cd DF) 平衡组 ; push main → deny 保持"    "$FIX/work_kol" "bash -c \"(cd $FIX/work_df_url)\" ; git push origin main" deny "禁止直接 push"
+
+echo ""
 echo -e "${CYAN}--- OB-4 行为冻结登记（无断言）---${NC}"
 echo "  OB-4 别名远端逃逸（dev-forge 检出内 push 指向 KOL 的别名 remote）："
 echo "  origin-URL 身份判定固有边界，Owner 未裁决前冻结不改（本套件不为其加钉，"
