@@ -203,7 +203,7 @@ test('registry: reconcile section lists drift and executes dry-run after confirm
   await page.goto('/registry');
   await expect(page.getByText('平台对账', { exact: false })).toBeVisible();
   // fixture：Fronti instructions 与物化 CLAUDE.md 分叉 → drift 项 + 双向动作
-  await expect(page.getByText('drift:multica:fronti', { exact: false })).toBeVisible();
+  await expect(page.getByText('multica · drift:multica:fronti', { exact: false }).first()).toBeVisible();
   await expect(page.locator('pre.mono').first()).toBeVisible(); // 漂移内容逐行 diff 内联展示
   await expect(page.getByRole('button', { name: /以 agent instructions 为准/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /以物化 CLAUDE.md 为准/ })).toBeVisible();
@@ -218,6 +218,28 @@ test('registry: reconcile section lists drift and executes dry-run after confirm
   page.once('dialog', (d) => d.dismiss());
   await page.getByRole('button', { name: /以 agent instructions 为准/ }).click();
   await page.waitForTimeout(300);
+});
+
+test('registry: store drift（库 vs 生产）adopt/push 双向 dry-run', async ({ page }) => {
+  await page.goto('/registry');
+  // start.mjs 预置了 agent:fronti 的 v2 库内副本（hash 与 fixture 生产指纹不符）→ store-drift
+  const panel = page.locator('.panel', { hasText: 'store:agent:fronti' });
+  await expect(panel.getByText('库与生产分叉', { exact: false })).toBeVisible();
+  await expect(panel.getByText('关联差异', { exact: false })).toBeVisible(); // relatedKeys → drift:multica:fronti
+  await expect(panel.getByRole('button', { name: /以生产为准/ })).toBeVisible();
+  await expect(panel.getByRole('button', { name: /以库为准/ })).toBeVisible();
+
+  // adopt（以生产为准）→ dry-run 只回显重写库副本，不落盘
+  page.once('dialog', (d) => d.accept());
+  await panel.getByRole('button', { name: /以生产为准/ }).click();
+  await expect(page.getByText('[dry-run]', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('重写库内副本', { exact: false })).toBeVisible();
+  await expect(page.getByText('已执行', { exact: false })).toBeVisible();
+
+  // push（以库为准）→ dry-run 回显 multica 命令，platformId 从 deployment 解析
+  page.once('dialog', (d) => d.accept());
+  await panel.getByRole('button', { name: /以库为准/ }).click();
+  await expect(page.getByText('multica agent update fronti-1 --instructions', { exact: false })).toBeVisible();
 });
 
 test('registry: stats table + first-party inventory', async ({ page }) => {

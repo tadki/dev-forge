@@ -43,7 +43,7 @@ export interface Overview {
   health: { status: string; generatedAt?: string; redlineCount: number };
   collectors: CollectorStatus[];
   diagnostics: Array<{ level: string; message: string; path?: string }>;
-  reconcile?: { missing: number; undeclared: number; drift: number; uncovered: number; total: number };
+  reconcile?: { missing: number; undeclared: number; drift: number; store: number; uncovered: number; total: number };
   lastCollectedAt: string;
 }
 
@@ -66,7 +66,7 @@ export interface ReconcileAction {
 
 export interface ReconcileItem {
   key: string;
-  type: 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'uncovered-assets';
+  type: 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'store-drift' | 'uncovered-assets';
   severity: string;
   platform: string;
   entryId?: string;
@@ -75,12 +75,14 @@ export interface ReconcileItem {
   diff?: string[];
   copies: ReconcileCopy[];
   actions: ReconcileAction[];
+  /** 关联差异项（如 store-drift ↔ drift:multica 同一资产），互链展示不合并 */
+  relatedKeys?: string[];
 }
 
 export interface ReconcileReport {
   generatedAt: string;
   items: ReconcileItem[];
-  summary: { missing: number; undeclared: number; drift: number; uncovered: number; total: number };
+  summary: { missing: number; undeclared: number; drift: number; store: number; uncovered: number; total: number };
 }
 
 export interface FireEvent {

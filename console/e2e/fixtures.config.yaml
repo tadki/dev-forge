@@ -2,6 +2,8 @@
 home: /home/jerry
 devforge: /home/jerry/tools/dev-forge
 fixturesDir: FIXTURES_DIR_PLACEHOLDER
+# 入库隔离到测试产物目录（gitignored），不污染真实本地源 console/state/first-party
+firstPartyStoreDir: /home/jerry/tools/dev-forge/console/e2e/test-results/first-party
 workspaces:
   - id: jerry
     name: Jerry's Forge
