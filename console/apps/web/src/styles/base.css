@@ -128,6 +128,7 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .fill-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .fill-grid { flex: 1; min-height: 0; }
 .fill-grid > .panel { display: flex; flex-direction: column; min-height: 0; }
+.panel-flex { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .kv-tight { grid-template-columns: 88px 1fr; }
 .col { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }

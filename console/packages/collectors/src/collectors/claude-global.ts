@@ -117,29 +117,28 @@ export const claudeGlobalCollector: Collector = {
       );
     }
 
-    // skills（first-party）+ .agents/skills（ECC third-party）
-    for (const [dir, provenance, tag] of [
-      [join(claude, 'skills'), 'first-party', 'global'] as const,
-      [join(claude, '.agents', 'skills'), 'third-party', 'ecc'] as const,
+    // skills（user 目录：均为第三方工具技能；自建需经 registry.d 声明）+ .agents/skills（ECC）
+    for (const [dir, tag] of [
+      [join(claude, 'skills'), 'global'] as const,
+      [join(claude, '.agents', 'skills'), 'ecc'] as const,
     ]) {
       if (!(await exists(dir))) continue;
       for (const name of await listDir(dir)) {
         const skillDir = join(dir, name);
         const md = (await readText(join(skillDir, 'SKILL.md'))) ?? (await readText(join(skillDir, 'skill.md'))) ?? '';
-        if (!md && provenance === 'first-party') continue;
         const descMatch = md.match(/^description:\s*(.+)$/m) ?? md.match(/^#\s+(.+)$/m);
         assets.push(
           asset({
-            id: `skill:${provenance === 'first-party' ? 'user' : 'ecc'}-${name}`,
+            id: `skill:${tag === 'ecc' ? 'ecc' : 'user'}-${name}`,
             kind: 'skill',
             name: name,
             summary: descMatch ? descMatch[1].slice(0, 100) : '',
             attach: { level: 'user' },
-            enforcement: provenance === 'first-party' ? 'advisory' : 'advisory',
-            provenance,
+            enforcement: 'advisory',
+            provenance: 'third-party',
             tags: ['skill', tag],
             source: { collector: 'claude-global', path: join(skillDir, 'SKILL.md'), sha256: md ? sha256(md) : undefined },
-            payload: { hasBody: md.length > 0, lines: md.split('\n').length, scope: tag },
+            payload: { hasBody: md.length > 0, lines: md.split('\n').length, scope: tag, content: md.length <= 200_000 ? md : md.slice(0, 200_000) },
           })
         );
       }
@@ -159,7 +158,8 @@ export const claudeGlobalCollector: Collector = {
             summary: md.split('\n').find((l) => l.trim())?.slice(0, 100) ?? '',
             attach: { level: 'user' },
             enforcement: 'advisory',
-            payload: { command: true, lines: md.split('\n').length },
+            provenance: 'third-party',
+            payload: { command: true, lines: md.split('\n').length, content: md.length <= 200_000 ? md : md.slice(0, 200_000) },
             source: { collector: 'claude-global', path: join(commandsDir, f), sha256: sha256(md) },
             tags: ['command'],
           })

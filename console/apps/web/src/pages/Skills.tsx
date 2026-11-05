@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiGet } from '../api';
 import type { AssetLite } from '../types';
-import { Badge, Panel, SectionHeader } from '../components/ui';
+import { Badge, Panel } from '../components/ui';
+import { Markdown } from '../components/Markdown';
 import type { PageCtx } from './ctx';
 
 export function SkillsPage({ ctx }: { ctx: PageCtx }) {
@@ -12,72 +13,198 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
     queryFn: () => apiGet<{ assets: AssetLite[] }>(`/api/assets?kind=skill&provenance=${tab}${ctx.workspace ? `&workspace=${ctx.workspace}` : ''}`),
   });
   const [sel, setSel] = useState<string | null>(null);
+  const [view, setView] = useState<'render' | 'source'>('render');
+  const [metaOpen, setMetaOpen] = useState(false);
+  const [file, setFile] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const rows = all.data?.assets ?? [];
   const selId = sel ?? rows[0]?.id ?? null;
   const selected = rows.find((r) => r.id === selId);
+  const full = useQuery({
+    queryKey: ['assets', 'detail', selId],
+    queryFn: () => apiGet<{ asset: AssetLite }>(`/api/assets/${encodeURIComponent(selId ?? '')}`),
+    enabled: !!selId,
+  });
+  const fullPayload = (full.data?.asset.payload ?? {}) as { content?: string; files?: Array<{ path: string; content?: string }> };
+  const content = fullPayload.content;
+  const files = fullPayload.files ?? [];
+  useEffect(() => setFile(null), [selId]);
 
-  const groups = rows.reduce<Record<string, AssetLite[]>>((acc, s) => {
-    const scope = s.attach.level === 'user' ? (s.provenance === 'third-party' ? 'ECC 依赖架（user）' : '全局（user）') : s.attach.level === 'project' ? `项目 · ${s.attach.ref?.split('/').pop()}` : `平台 · ${s.attach.ref}`;
-    acc[scope] = [...(acc[scope] ?? []), s];
-    return acc;
-  }, {});
+  const locOf = (s: AssetLite): string => {
+    if (s.attach.level === 'project') return `项目 ${s.attach.ref?.split('/').pop() ?? s.attach.ref ?? '?'}`;
+    const p = s.source.path ?? '';
+    if (p.includes('/.claude/.agents/skills/')) return '全局 ~/.claude/.agents/skills（ECC 插件）';
+    if (p.includes('/.claude/skills/')) return '全局 ~/.claude/skills';
+    if (p.includes('/.claude/commands/')) return '全局 ~/.claude/commands';
+    return s.platforms.join(' · ') || '其他';
+  };
+  const locOrder = (k: string) =>
+    k.includes('.agents') ? 1 : k.includes('commands') ? 2 : k.startsWith('全局') ? 0 : k.startsWith('项目') ? 3 : 4;
+
+  const byName = (a: AssetLite, b: AssetLite) => a.name.localeCompare(b.name);
+
+  // 第三方两级树：平台 → 扫描位置 → 技能
+  const tree = Object.entries(
+    rows.reduce<Record<string, AssetLite[]>>((acc, s) => {
+      const plat = s.platforms.length ? s.platforms.join(' · ') : 'unknown';
+      acc[plat] = [...(acc[plat] ?? []), s];
+      return acc;
+    }, {})
+  )
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([plat, items]) => ({
+      plat,
+      locs: Object.entries(items.reduce<Record<string, AssetLite[]>>((acc, s) => {
+        const loc = locOf(s);
+        acc[loc] = [...(acc[loc] ?? []), s];
+        return acc;
+      }, {}))
+        .sort(([a], [b]) => locOrder(a) - locOrder(b) || a.localeCompare(b))
+        .map(([loc, li]) => ({ loc, items: [...li].sort(byName) })),
+    }));
+  const toggleNode = (k: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  const badgesOf = (s: AssetLite) => (
+    <>
+      {s.attach.level === 'project' && <Badge tone="plain">{s.attach.level}</Badge>}
+      {s.platforms.includes('multica') && <Badge tone="warn">multica</Badge>}
+      {(s.payload as { platformSkill?: boolean }).platformSkill && <Badge tone="plain">平台物化</Badge>}
+      {s.tags.includes('command') && <Badge tone="plain">command</Badge>}
+    </>
+  );
+
+  const renderCard = (s: AssetLite) => (
+    <button key={s.id} className={`card ${s.id === selId ? 'sel' : ''}`} onClick={() => setSel(s.id)}>
+      <h3 className="mono" style={{ fontSize: 'var(--fs-l2)' }}>{s.name.startsWith('/') ? s.name : `/${s.name}`}</h3>
+      <div className="row">{badgesOf(s)}</div>
+    </button>
+  );
 
   return (
-    <div>
+    <div className="fill-page">
       <div className="page-head">
         <div>
           <h2>技能</h2>
-          <div className="sub tagline">SKILLS · 自建 {rows.filter((r) => r.provenance === 'first-party').length} · 依赖架（ECC 等）单独折叠</div>
+          <div className="sub tagline">SKILLS · {tab === 'first-party' ? `自建 ${rows.length}` : `第三方 ${rows.length}`}</div>
         </div>
         <div className="page-actions">
           <div className="tabs" style={{ marginBottom: 0 }}>
             <button className={`tab ${tab === 'first-party' ? 'active' : ''}`} onClick={() => setTab('first-party')}>自建 FIRST-PARTY</button>
-            <button className={`tab ${tab === 'third-party' ? 'active' : ''}`} onClick={() => setTab('third-party')}>依赖架 DEPENDENCIES</button>
+            <button className={`tab ${tab === 'third-party' ? 'active' : ''}`} onClick={() => setTab('third-party')}>第三方 THIRD-PARTY</button>
           </div>
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '2fr 1fr' }}>
-        <div className="col">
-          {Object.entries(groups).map(([scope, items]) => (
-            <div key={scope}>
-              <SectionHeader no="▤" title={scope} en={`${items.length} SKILLS`} />
-              <div className="card-grid">
-                {items.map((s) => (
-                  <button key={s.id} className={`card ${s.id === selId ? 'sel' : ''}`} onClick={() => setSel(s.id)}>
-                    <h3 className="mono" style={{ fontSize: 'var(--fs-l2)' }}>{s.name.startsWith('/') ? s.name : `/${s.name}`}</h3>
-                    <div className="desc">{s.summary.slice(0, 100)}</div>
-                    <div className="row">
-                      {s.attach.level !== 'user' && <Badge tone="plain">{s.attach.level}</Badge>}
-                      {s.platforms.includes('multica') && <Badge tone="warn">multica</Badge>}
-                      {(s.payload as { platformSkill?: boolean }).platformSkill && <Badge tone="plain">平台物化</Badge>}
-                      {s.tags.includes('command') && <Badge tone="plain">command</Badge>}
-                    </div>
-                  </button>
-                ))}
+      <div className="grid fill-grid" style={{ gridTemplateColumns: '610px 1fr' }}>
+        <Panel title="技能清单" en="ALL SKILLS">
+          <div className="panel-scroll" style={{ paddingRight: 'var(--sp-3)' }}>
+            {tab === 'first-party' ? (
+              <div className="card-grid" style={{ gridTemplateColumns: 'repeat(2, 280px)' }}>
+                {[...rows].sort(byName).map(renderCard)}
               </div>
-            </div>
-          ))}
-        </div>
-        <div className="col">
-          <Panel title={selected?.name ?? '—'} en="DETAIL">
-            <div className="kv">
-              <dt>归属</dt><dd>{selected?.provenance === 'third-party' ? <Badge tone="off">third-party · 依赖架</Badge> : <Badge tone="ok">first-party</Badge>}</dd>
+            ) : (
+              tree.map(({ plat, locs }) => {
+                const pk = `p:${plat}`;
+                const platOpen = !collapsed.has(pk);
+                return (
+                  <div key={plat}>
+                    <div
+                      className="tagline"
+                      style={{ cursor: 'pointer', userSelect: 'none', marginTop: 'var(--sp-2)', fontWeight: 600 }}
+                      onClick={() => toggleNode(pk)}
+                    >
+                      {platOpen ? '▾' : '▸'} <span className="mono">{plat}</span> · {locs.reduce((n, l) => n + l.items.length, 0)}
+                    </div>
+                    {platOpen && locs.map(({ loc, items }) => {
+                      const lk = `${pk}:${loc}`;
+                      const locOpen = !collapsed.has(lk);
+                      return (
+                        <div key={loc}>
+                          <div
+                            className="tagline"
+                            style={{ cursor: 'pointer', userSelect: 'none', color: 'var(--text-sub)', paddingLeft: 'var(--sp-4)' }}
+                            onClick={() => toggleNode(lk)}
+                          >
+                            {locOpen ? '▾' : '▸'} {loc} · {items.length}
+                          </div>
+                          {locOpen && items.map((s) => (
+                            <div
+                              key={s.id}
+                              className={`tree-node mono ${s.id === selId ? 'sel' : ''}`}
+                              style={{ paddingLeft: 'var(--sp-5)', display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
+                              onClick={() => setSel(s.id)}
+                            >
+                              <span>{s.name.startsWith('/') ? s.name : `/${s.name}`}</span>
+                              <span className="row">{badgesOf(s)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Panel>
+        <Panel title={selected?.name ? (selected.name.startsWith('/') ? selected.name : `/${selected.name}`) : '—'} en={selected ? `LINES ${String((selected.payload as { lines?: number } | undefined)?.lines ?? '?')}` : ''}>
+          <div className="tabs">
+            {(['render', 'source'] as const).map((t) => (
+              <button key={t} className={`tab ${view === t ? 'active' : ''}`} onClick={() => setView(t)}>
+                {t === 'render' ? '渲染' : '源码'}
+              </button>
+            ))}
+          </div>
+          <div className="tagline meta-toggle" onClick={() => setMetaOpen((v) => !v)}>
+            {metaOpen ? '▾' : '▸'} 元信息
+          </div>
+          {metaOpen && (
+            <dl className="kv" style={{ marginBottom: 'var(--sp-2)' }}>
+              <dt>归属</dt><dd>{selected?.provenance === 'third-party' ? <Badge tone="off">third-party</Badge> : <Badge tone="ok">first-party</Badge>}</dd>
               <dt>挂载</dt><dd className="mono">{selected?.attach.level}{selected?.attach.ref ? ` · ${selected.attach.ref}` : ''}</dd>
+              <dt>平台</dt><dd className="mono">{selected?.platforms?.join(' · ') || '—'}</dd>
               <dt>强制力</dt><dd>{selected?.enforcement}</dd>
               <dt>规模</dt><dd className="mono">{String((selected?.payload as { lines?: number } | undefined)?.lines ?? '—')} 行</dd>
               <dt>源</dt><dd className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{selected?.source.path}</dd>
+            </dl>
+          )}
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 'var(--sp-3)' }}>
+            <aside style={{ width: 180, flexShrink: 0, overflowY: 'auto', borderRight: '1px solid var(--khaki)', paddingRight: 'var(--sp-2)' }}>
+              <div className="tagline" style={{ color: 'var(--text-sub)' }}>FILES · {files.length + 1}</div>
+              <div className={`tree-node mono ${file === null ? 'sel' : ''}`} onClick={() => setFile(null)}>SKILL.md</div>
+              {files.map((f) => (
+                <div key={f.path} className={`tree-node mono ${file === f.path ? 'sel' : ''}`} onClick={() => setFile(f.path)}>{f.path}</div>
+              ))}
+            </aside>
+            <div className="panel-scroll" style={{ minWidth: 0 }}>
+              {(() => {
+                if (file !== null) {
+                  const f = files.find((x) => x.path === file);
+                  if (!f) return <div className="dim">文件不存在。</div>;
+                  return view === 'render'
+                    ? <Markdown text={f.content ?? ''} />
+                    : <pre className="code" style={{ maxHeight: 'none' }}>{f.content ?? '—'}</pre>;
+                }
+                if (content !== undefined) {
+                  return view === 'render' ? <Markdown text={content} /> : <pre className="code" style={{ maxHeight: 'none' }}>{content}</pre>;
+                }
+                return (
+                  <div className="dim">
+                    {selected?.attach.level === 'platform'
+                      ? '平台技能无本地全文，请在 multica 查看。'
+                      : full.isLoading ? '加载中…' : '无内容。'}
+                  </div>
+                );
+              })()}
             </div>
-          </Panel>
-          <Panel title="接入方式" en="HOW TO ADD">
-            <ol style={{ margin: '4px 0 0 16px', fontSize: 'var(--fs-l1)', lineHeight: 1.9 }}>
-              <li>全局自建：放 <span className="mono">~/.claude/skills/&lt;name&gt;/SKILL.md</span></li>
-              <li>项目级：放 <span className="mono">&lt;repo&gt;/.claude/skills/</span></li>
-              <li>平台： <span className="mono">multica skill create</span> + agent 绑定</li>
-              <li>兜底： <span className="mono">POST /api/custom/assets</span>（契约 JSON）或 <span className="mono">console/collectors.d/</span> 丢脚本</li>
-            </ol>
-          </Panel>
-        </div>
+          </div>
+        </Panel>
       </div>
     </div>
   );
