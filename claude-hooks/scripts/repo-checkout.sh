@@ -321,8 +321,8 @@ ${unpushed}
     # ancestor of origin/<working_branch>. The base is resolved per-repo
     # (default_branch above — SEE-1525); when unresolvable, §B skips with a
     # readable reason: no rebase against a guessed ref and NO blocked_reason
-    # pinning (the old origin/master hardcode produced exactly those phantom
-    # pins on main-default repos). On a real conflict: abort, pin
+    # pinning (the old hardcoded default-branch name produced exactly those
+    # phantom pins on main-default repos). On a real conflict: abort, pin
     # blocked_reason/waiting_on metadata for Leader, emit conflict_msg, and
     # fall through — the reset below aligns the agent to the (unchanged)
     # origin/<working_branch> until Leader reconciles.
@@ -415,7 +415,7 @@ ${conflict_files}
     # absent after the reset) and pin the agent's godot-mcp port into it.
     # The whole file is untracked + gitignored (SEE-1111 目标1), so the reset
     # leaves no project.godot on a fresh worktree; prepare-worktree.sh copies
-    # it from D-drive HEAD / origin/master and then applies the
+    # it from D-drive HEAD / the origin default branch (KOL: master) and then applies the
     # "port_override 改成该 agent 专属端口" half, guarded by the same
     # write-target guard as configure (never the shared D-drive checkout).
     # Best-effort only: when no agent name/port is resolvable (manual session,
@@ -618,7 +618,7 @@ try_auto_create_shared_branch() {
             || {
                 # helper returned 1: remote branch missing (R10) or reset failed (R9).
                 if ! timeout "$GIT_FETCH_TIMEOUT" git ls-remote --exit-code --heads origin "$working_branch" >/dev/null 2>&1; then
-                    output_hint "[repo-checkout] metadata 与远程不一致：issue metadata 的 working_branch 为 ${working_branch}，但远程不存在该分支。请 Owner 确认 metadata，或手动创建：git push origin HEAD:refs/heads/${working_branch}。不要直接 push 到 origin/master。当前仓库： $repo_dir"
+                    output_hint "[repo-checkout] metadata 与远程不一致：issue metadata 的 working_branch 为 ${working_branch}，但远程不存在该分支。请 Owner 确认 metadata，或手动创建：git push origin HEAD:refs/heads/${working_branch}。不要直接 push 到 origin 默认分支。当前仓库： $repo_dir"
                 else
                     output_hint "本 issue 已设置 working branch ${working_branch}，但本地 reset 失败。请尝试手动执行：git fetch origin && git reset --hard origin/${working_branch} && git rebase origin/${default_branch:-HEAD}"
                 fi
