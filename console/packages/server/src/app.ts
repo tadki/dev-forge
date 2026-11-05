@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Asset } from '@forge/schema';
-import type { RegistryState, WorkspaceDef } from '@forge/collectors';
+import type { ReconcileReport, RegistryState, WorkspaceDef } from '@forge/collectors';
 import { buildMigrationView, resolveEffective } from '@forge/collectors';
 import { validateCollection } from '@forge/schema';
 import { checkAuth } from './auth.js';
@@ -17,6 +17,10 @@ export interface AppDeps {
   workspaces: () => WorkspaceDef[];
   /** 服务启停（只允许注册表内 first-party · user 级单元）；注入以便测试/dry-run */
   serviceAction: (unit: string, action: 'start' | 'stop' | 'restart') => Promise<{ ok: boolean; output: string }>;
+  /** 平台对账报告（collectNow 已计算；缺失时调用端按当前 state 重算） */
+  getReconcileReport: () => ReconcileReport;
+  /** 对账动作执行（服务端重算 item 并按 actionId 取步骤；gone=对账项已变化；failed=业务拒绝/中断，仍 200） */
+  reconcileAction: (key: string, actionId: string) => Promise<{ status: 'ok' | 'invalid' | 'gone' | 'failed'; ok: boolean; output: string }>;
   onAfterAction?: () => void;
 }
 
@@ -42,6 +46,7 @@ function liteAsset(a: Asset): Record<string, unknown> {
   delete lightPayload.events;
   delete lightPayload.samples;
   delete lightPayload.instructions;
+  delete lightPayload.files;
   return { ...rest, payload: lightPayload };
 }
 
@@ -104,8 +109,35 @@ export function createHandler(deps: AppDeps) {
           health,
           collectors: state.collectorStatus,
           diagnostics: state.diagnostics.slice(-30),
+          reconcile: state.reconcile?.summary ?? { missing: 0, undeclared: 0, drift: 0, uncovered: 0, total: 0 },
           lastCollectedAt: state.lastCollectedAt,
         });
+      }
+
+      if (path === '/api/reconcile' && req.method === 'GET') {
+        return json(res, 200, deps.getReconcileReport());
+      }
+
+      if (path === '/api/reconcile/actions' && req.method === 'POST') {
+        let body: { key?: string; actionId?: string; confirm?: boolean };
+        try {
+          body = JSON.parse(await readBody(req, 64 * 1024)) as typeof body;
+        } catch {
+          return json(res, 400, { error: 'invalid json' });
+        }
+        const key = (body.key ?? '').trim();
+        const actionId = (body.actionId ?? '').trim();
+        if (!key || !actionId) return json(res, 400, { error: 'key 与 actionId 必填' });
+        if (body.confirm !== true) {
+          return json(res, 400, { error: '写操作需要显式确认：confirm=true（请在界面确认后再提交）', key });
+        }
+        const result = await deps.reconcileAction(key, actionId);
+        if (result.status === 'gone') {
+          return json(res, 409, { error: '对账项已变化（可能已被处理），请刷新后重试', key });
+        }
+        if (result.status === 'invalid') return json(res, 400, { error: result.output, key, actionId });
+        deps.onAfterAction?.();
+        return json(res, 200, { ok: result.ok, key, actionId, output: result.output });
       }
 
       if (path === '/api/assets' && req.method === 'GET') {

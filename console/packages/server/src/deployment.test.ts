@@ -6,11 +6,14 @@ const unitPath = join(import.meta.dirname, '../../../deploy/forge-console.servic
 const readmePath = join(import.meta.dirname, '../../../README.md');
 
 describe('SEE-1522 部署沙箱与服务动作文档', () => {
-  it('forge-console 自身继续保持只读沙箱，不放开全局写权限', async () => {
+  it('forge-console 自身继续保持只读沙箱，写仅限对账目标（registry.d + 已登记资产根）', async () => {
     const unit = await readFile(unitPath, 'utf8');
     expect(unit).toContain('ProtectSystem=strict');
     expect(unit).toContain('ProtectHome=read-only');
-    expect(unit).toContain('ReadWritePaths=\n');
+    expect(unit).toContain('ReadWritePaths=%h/tools/dev-forge/console/registry.d');
+    expect(unit).toContain('ReadWritePaths=%h/.claude');
+    expect(unit).toContain('ReadWritePaths=%h/multica_workspaces');
+    expect(unit).toContain('ReadWritePaths=/mnt/d/GodotProjects');
   });
 
   it('README 记录自动命名 launcher、停用门控、拒绝响应与可配置启动窗口', async () => {

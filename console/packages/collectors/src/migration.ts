@@ -1,4 +1,5 @@
 import type { Asset } from '@forge/schema';
+import { sha256 } from './util.js';
 
 export interface CoverageRow {
   kind: string;
@@ -43,7 +44,7 @@ const KIND_META: Record<string, { target: string; status: 'ok' | 'gap' | 'na'; n
   autopilot: { target: 'multica autopilot（原生）', status: 'ok', note: '平台原生 cron trigger' },
 };
 
-function lineDiff(a: string, b: string): string[] {
+export function lineDiff(a: string, b: string): string[] {
   const al = a.split('\n');
   const bl = b.split('\n');
   const out: string[] = [];
@@ -87,7 +88,7 @@ export function buildMigrationView(assets: Asset[]): MigrationView {
     commands.push(scope);
   }
   for (const a of firstParty.filter((x) => x.kind === 'instruction' && x.attach.level === 'project')) {
-    commands.push(`# ${a.name} → 归属 agent 的 instructions 需要人工指定目标 agent`, `# multica agent update <AGENT_ID> --instructions-file "${a.source.path}"`);
+    commands.push(`# ${a.name} → 归属 agent 的 instructions 需要人工指定目标 agent`, `# multica agent update <AGENT_ID> --instructions "$(cat "${a.source.path}")"`);
   }
 
   // 平台 instructions vs 最新物化 workdir CLAUDE.md 的差异
@@ -102,7 +103,7 @@ export function buildMigrationView(assets: Asset[]): MigrationView {
     const identical = s.body.trim() === instructions.trim();
     diffs.push({
       agent: s.agent,
-      currentHash: instructions ? instructions.slice(0, 8) : '(无)',
+      currentHash: instructions ? sha256(instructions).slice(0, 8) : '(无)',
       materializedHash: s.hash.slice(0, 8),
       identical,
       materializedPath: s.path,

@@ -43,7 +43,44 @@ export interface Overview {
   health: { status: string; generatedAt?: string; redlineCount: number };
   collectors: CollectorStatus[];
   diagnostics: Array<{ level: string; message: string; path?: string }>;
+  reconcile?: { missing: number; undeclared: number; drift: number; uncovered: number; total: number };
   lastCollectedAt: string;
+}
+
+export interface ReconcileCopy {
+  assetId: string;
+  name: string;
+  path: string;
+  sha?: string;
+  platforms: string[];
+}
+
+export interface ReconcileAction {
+  id: string;
+  direction: 'platform-to-local' | 'local-to-platform';
+  label: string;
+  executable: boolean;
+  note?: string;
+  steps: Array<{ type: string; [k: string]: unknown }>;
+}
+
+export interface ReconcileItem {
+  key: string;
+  type: 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'uncovered-assets';
+  severity: string;
+  platform: string;
+  entryId?: string;
+  name: string;
+  detail: string;
+  diff?: string[];
+  copies: ReconcileCopy[];
+  actions: ReconcileAction[];
+}
+
+export interface ReconcileReport {
+  generatedAt: string;
+  items: ReconcileItem[];
+  summary: { missing: number; undeclared: number; drift: number; uncovered: number; total: number };
 }
 
 export interface FireEvent {

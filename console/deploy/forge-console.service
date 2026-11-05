@@ -10,15 +10,19 @@ ExecStart=/usr/bin/node %h/tools/dev-forge/console/packages/server/dist/index.js
 Restart=always  # on-failure 不救 TERM 干净退出（被误杀即失联）
 RestartSec=3
 
-# 安全收敛：只读采集所需的最小权限
+# 安全收敛：只读采集 + 平台对账写操作所需的最小权限
 NoNewPrivileges=true
 # PrivateTmp 必须关闭：repo-sync 判活要读宿主 /tmp 的 pid 文件
 PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=read-only
 # 允许读：~/.claude、dev-forge、~/.multica、~/.hindsight、/mnt/d、/mnt/c 桥文件
-# （ProtectHome=read-only 满足全部采集读取；console 自身无需写 home）
-ReadWritePaths=
+# 写：平台对账（逐次 confirm 后执行）——registry.d 声明回写 + 已登记资产文件的本地/平台同步。
+# file-write 目标受服务端白名单约束（只允许当前采集到的资产路径），这里按需放行其根目录。
+ReadWritePaths=%h/tools/dev-forge/console/registry.d
+ReadWritePaths=%h/.claude
+ReadWritePaths=%h/multica_workspaces
+ReadWritePaths=/mnt/d/GodotProjects
 StateDirectory=forge-console
 LogsDirectory=forge-console
 

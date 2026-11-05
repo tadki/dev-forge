@@ -83,6 +83,7 @@ export function useSSE(onRegistry: (data: unknown) => void, enabled: boolean): {
             void client.current.invalidateQueries({ queryKey: ['overview'] });
             void client.current.invalidateQueries({ queryKey: ['assets'] });
             void client.current.invalidateQueries({ queryKey: ['activity'] });
+            void client.current.invalidateQueries({ queryKey: ['reconcile'] });
           }
         }
       } catch {

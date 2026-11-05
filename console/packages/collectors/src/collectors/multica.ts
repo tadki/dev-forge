@@ -45,6 +45,10 @@ interface MulticaSkill {
   description?: string;
   labels?: Array<{ name: string; color?: string }>;
   workspace_id?: string;
+  /** skill get --with-content 时返回 SKILL.md 正文 */
+  content?: string;
+  /** skill get --with-content 时返回附加文件（脚本等），content 为文件正文 */
+  files?: Array<{ path: string; content?: string }>;
 }
 
 interface MulticaTask {
@@ -72,7 +76,56 @@ async function multicaJson<T>(
   }
 }
 
-const MULTICA_PREFIX_MARK = '<!-- BEGIN MULTICA-RUNTIME';
+export const MULTICA_PREFIX_MARK = '<!-- BEGIN MULTICA-RUNTIME';
+
+const IDENTITY_LINE = /\*\*You are:[^\n]*\n/;
+const HARNESS_SUFFIX_MARK = '\n## Available Commands';
+
+/**
+ * 从物化 workdir CLAUDE.md 中提取 agent instructions 原文。
+ * 文件结构（multica 生成）：BEGIN 注释 → harness 前段（Runtime/Background Safety/Agent Identity）
+ * → instructions（原文）→ harness 后段（Available Commands …）→ END 注释。
+ * 只剥第一行注释会把整个 harness 当 instructions，导致全部 agent 误报漂移。
+ */
+export function extractAgentInstructions(md: string): string {
+  const beginIdx = md.indexOf(MULTICA_PREFIX_MARK);
+  const endMarkerIdx = md.indexOf('<!-- END MULTICA-RUNTIME');
+  let inner = md;
+  if (beginIdx >= 0) {
+    const beginEnd = md.indexOf('-->', beginIdx);
+    inner = md.slice(beginEnd >= 0 ? beginEnd + 3 : beginIdx + MULTICA_PREFIX_MARK.length, endMarkerIdx > beginIdx ? endMarkerIdx : md.length);
+  }
+  const identity = inner.match(IDENTITY_LINE);
+  let rest = identity ? inner.slice(identity.index! + identity[0].length) : inner;
+  const suffixIdx = rest.indexOf(HARNESS_SUFFIX_MARK);
+  if (suffixIdx >= 0) rest = rest.slice(0, suffixIdx);
+  return rest.trim();
+}
+
+/**
+ * 把新的 instructions 写回物化文件：保留 harness 前段（到 Agent Identity 行）与
+ * 后段（## Available Commands 到 END 注释），只替换中间的 instructions 块。
+ */
+export function spliceAgentInstructions(existing: string, instructions: string): string {
+  const body = instructions.trim();
+  const beginIdx = existing.indexOf(MULTICA_PREFIX_MARK);
+  const endMarkerIdx = existing.indexOf('<!-- END MULTICA-RUNTIME');
+  if (beginIdx < 0 || endMarkerIdx < 0) {
+    // 无标记文件（非 multica 生成）不做结构拼接，整体覆盖正文
+    return `${body}\n`;
+  }
+  const beginEnd = existing.indexOf('-->', beginIdx);
+  if (beginEnd < 0) return `${body}\n`;
+  const afterBegin = existing.slice(beginEnd + 3, endMarkerIdx);
+  const identity = afterBegin.match(IDENTITY_LINE);
+  const prefixBlock = identity ? afterBegin.slice(0, identity.index! + identity[0].length).trim() : '';
+  const rest = identity ? afterBegin.slice(identity.index! + identity[0].length) : afterBegin;
+  const suffixIdx = rest.indexOf(HARNESS_SUFFIX_MARK);
+  const suffixBlock = suffixIdx >= 0 ? rest.slice(suffixIdx).trim() : '';
+  const head = existing.slice(0, beginEnd + 3).trimEnd();
+  const endBlock = existing.slice(endMarkerIdx).trim();
+  return [head, prefixBlock, body, suffixBlock, endBlock].filter(Boolean).join('\n\n') + '\n';
+}
 
 export const multicaCollector: Collector = {
   name: 'multica',
@@ -222,6 +275,13 @@ export const multicaCollector: Collector = {
     const skills = await multicaJson<MulticaSkill[]>(ctx, ['skill', 'list'], t);
     if (Array.isArray(skills)) {
       for (const s of skills.slice(0, 50)) {
+        const detail = await multicaJson<MulticaSkill>(ctx, ['skill', 'get', s.id, '--with-content'], t);
+        const body = detail?.content ?? '';
+        const files = (detail?.files ?? []).flatMap((f) =>
+          typeof f.content === 'string'
+            ? [{ path: f.path, content: f.content.length <= 200_000 ? f.content : f.content.slice(0, 200_000) }]
+            : []
+        );
         assets.push(
           asset({
             id: `skill:multica-${s.name}`,
@@ -232,7 +292,13 @@ export const multicaCollector: Collector = {
             enforcement: 'enforced',
             platforms: ['multica'],
             source: { collector: 'multica', path: 'multica://skills/' + s.id },
-            payload: { platformId: s.id, labels: s.labels?.map((l) => l.name) ?? [], workspaceId: s.workspace_id },
+            payload: {
+              platformId: s.id,
+              labels: s.labels?.map((l) => l.name) ?? [],
+              workspaceId: s.workspace_id,
+              ...(body ? { content: body.length <= 200_000 ? body : body.slice(0, 200_000) } : {}),
+              ...(files.length ? { files } : {}),
+            },
             tags: ['skill', 'multica', 'platform'],
           })
         );
@@ -299,9 +365,8 @@ export const multicaCollector: Collector = {
     for (const [agentName, { path: workdir }] of [...latestWorkdirs].slice(0, 4)) {
       const md = await readText(join(workdir, 'CLAUDE.md'));
       if (md === null) continue;
-      const endIdx = md.indexOf('-->', md.indexOf(MULTICA_PREFIX_MARK));
-      const body = endIdx >= 0 ? md.slice(endIdx + 3).trim() : md.trim();
-      materialized.push({ agent: agentName, path: join(workdir, 'CLAUDE.md'), hash: sha256(md), body: body.slice(0, 20_000) });
+      const body = extractAgentInstructions(md);
+      materialized.push({ agent: agentName, path: join(workdir, 'CLAUDE.md'), hash: sha256(body), body: body.slice(0, 20_000) });
     }
     if (materialized.length > 0) {
       assets.push(

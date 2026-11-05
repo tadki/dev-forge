@@ -1,11 +1,41 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { apiGet } from '../api';
-import type { AssetLite } from '../types';
+import { apiGet, apiPost } from '../api';
+import type { AssetLite, ReconcileAction, ReconcileItem, ReconcileReport } from '../types';
 import { Badge, Chip, DataTable, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
 
 const KIND_ORDER = ['agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'project', 'report', 'env', 'custom'];
+
+const RECONCILE_LABEL: Record<ReconcileItem['type'], string> = {
+  'missing-on-platform': '声明未落地',
+  'undeclared-platform': '未声明平台',
+  'content-drift': '内容漂移',
+  'uncovered-assets': '未纳入对账',
+};
+
+const DIRECTION_LABEL: Record<ReconcileAction['direction'], string> = {
+  'platform-to-local': '平台 → 本地',
+  'local-to-platform': '本地 → 平台',
+};
+
+function humanizeStep(step: ReconcileAction['steps'][number]): string {
+  if (step.type === 'registry-edit') {
+    const s = step as { op?: string; platform?: string; entryId?: string };
+    return `改 registry.d · ${s.entryId}: ${s.op === 'add-platform' ? '声明 +' : '移除声明 '}${s.platform}`;
+  }
+  if (step.type === 'file-write') return `写文件 ${String(step.path)}（先备份原文件）`;
+  if (step.type === 'command') {
+    const s = step as { cmd?: string[] };
+    return `执行命令 ${(s.cmd ?? []).join(' ')}`;
+  }
+  return step.type;
+}
+
+function confirmTip(item: ReconcileItem, action: ReconcileAction): string {
+  const steps = action.steps.length > 0 ? action.steps.map((s) => `  · ${humanizeStep(s)}`).join('\n') : '  （无自动步骤）';
+  return `平台对账 · ${RECONCILE_LABEL[item.type]} · ${item.platform}\n${item.detail}\n\n动作：${action.label}\n\n将执行：\n${steps}\n\n确认执行？写操作会先备份目标文件，执行后可回滚。`;
+}
 
 interface StatRow {
   id: string;
@@ -21,7 +51,39 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
     queryKey: ['assets', 'registry-all'],
     queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets'),
   });
+  const rc = useQuery({
+    queryKey: ['reconcile'],
+    queryFn: () => apiGet<ReconcileReport>('/api/reconcile'),
+  });
+  const qc = useQueryClient();
+  const [busyKey, setBusyKey] = useState('');
+  const [actionResult, setActionResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [kindFilter, setKindFilter] = useState('');
+
+  async function runReconcileAction(item: ReconcileItem, action: ReconcileAction) {
+    if (!action.executable) {
+      window.alert(action.note ?? '该方向没有安全的自动执行路径，请手动处理。');
+      return;
+    }
+    if (!window.confirm(confirmTip(item, action))) return;
+    setBusyKey(`${item.key}:${action.id}`);
+    setActionResult(null);
+    try {
+      const r = await apiPost<{ ok: boolean; output: string }>('/api/reconcile/actions', {
+        key: item.key,
+        actionId: action.id,
+        confirm: true,
+      });
+      setActionResult({ ok: r.ok, text: `${item.name} · ${action.label}\n${r.output || '(无输出)'}` });
+      void qc.invalidateQueries({ queryKey: ['reconcile'] });
+      void qc.invalidateQueries({ queryKey: ['assets'] });
+      void qc.invalidateQueries({ queryKey: ['overview'] });
+    } catch (e) {
+      setActionResult({ ok: false, text: String(e) });
+    } finally {
+      setBusyKey('');
+    }
+  }
 
   const assets = all.data?.assets ?? [];
   const stats = useMemo<StatRow[]>(() => {
@@ -119,7 +181,68 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
         </div>
       )}
 
-      <SectionHeader no="02" title="自建资产清单" en={`FIRST-PARTY INVENTORY · ${ownList.length}`} />
+      <SectionHeader no="02" title="平台对账" en={`RECONCILE · 声明平台 vs 采集实际${rc.data ? ` · ${rc.data.summary.total} 项差异` : ''}`} />
+      {rc.data && rc.data.summary.total === 0 && (
+        <div className="panel-flat">
+          <span className="row" style={{ gap: 8 }}>
+            <Badge tone="ok">一致</Badge>
+            <span className="dim">所有已声明平台的资产与采集实际一致，未发现内容漂移。</span>
+          </span>
+        </div>
+      )}
+      {actionResult && (
+        <div className="panel-flat mt">
+          <span className="row" style={{ gap: 8 }}>
+            <Badge tone={actionResult.ok ? 'ok' : 'bad'}>{actionResult.ok ? '已执行' : '失败'}</Badge>
+          </span>
+          <pre style={{ whiteSpace: 'pre-wrap', margin: '6px 0 0', fontSize: 'var(--fs-l1)', fontFamily: 'var(--font-mono)' }}>{actionResult.text}</pre>
+        </div>
+      )}
+      {(rc.data?.items ?? []).slice(0, 40).map((item) => (
+        <Panel key={item.key} title={`${RECONCILE_LABEL[item.type]} · ${item.name}`} en={`${item.platform} · ${item.key}`}>
+          <div className="dim" style={{ fontSize: 'var(--fs-l1)' }}>{item.detail}</div>
+          {item.copies.map((c) => (
+            <div key={`${c.assetId}:${c.path}`} className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>
+              {c.path || c.assetId}
+              {c.sha ? ` · ${String(c.sha).slice(0, 12)}` : ''}
+              {c.platforms.length > 0 ? ` · ${c.platforms.join('+')}` : ''}
+            </div>
+          ))}
+          {item.diff && item.diff.length > 0 && item.diff[0] !== '(一致)' && (
+            <pre
+              className="mono"
+              style={{
+                margin: '6px 0 0',
+                padding: '6px 8px',
+                fontSize: 'var(--fs-label)',
+                lineHeight: 1.5,
+                whiteSpace: 'pre-wrap',
+                maxHeight: 180,
+                overflow: 'auto',
+                border: '1px dashed var(--khaki)',
+              }}
+            >
+              {item.diff.join('\n')}
+            </pre>
+          )}
+          <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
+            {item.actions.map((a) => (
+              <button
+                key={a.id}
+                className={`btn small ${a.executable ? (a.direction === 'platform-to-local' ? 'btn-amber' : 'btn-mint') : 'btn-ghost'}`}
+                disabled={busyKey === `${item.key}:${a.id}`}
+                title={!a.executable ? a.note : DIRECTION_LABEL[a.direction]}
+                onClick={() => void runReconcileAction(item, a)}
+              >
+                {a.direction === 'platform-to-local' ? '⇠' : '⇢'} {a.label}
+                {!a.executable ? ' ·手动' : ''}
+              </button>
+            ))}
+          </div>
+        </Panel>
+      ))}
+
+      <SectionHeader no="03" title="自建资产清单" en={`FIRST-PARTY INVENTORY · ${ownList.length}`} />
       <DataTable
         rows={ownList}
         cols={[

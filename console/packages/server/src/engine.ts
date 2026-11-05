@@ -1,6 +1,8 @@
 import type { Asset, Collection } from '@forge/schema';
 import {
   applyRegistryOverlay,
+  buildReconcileReport,
+  reconcileDiagnostics,
   builtinCollectors,
   loadRegistryEntries,
   loadConfig,
@@ -9,6 +11,7 @@ import {
   runCollectors,
   type ConsoleConfig,
   type Collector,
+  type RegistryEntry,
   type RegistryState,
 } from '@forge/collectors';
 import { fixtureCollector } from '@forge/collectors';
@@ -28,6 +31,8 @@ export interface EngineOptions {
 
 export class Engine {
   state: RegistryState = { assets: [], relations: [], diagnostics: [], collectorStatus: [], lastCollectedAt: '' };
+  /** 最近一次采集加载的 registry.d 声明（对账动作执行时按此定位 entry 文件） */
+  private registryEntries: RegistryEntry[] = [];
   private collectors: Collector[];
   private timer?: ReturnType<typeof setInterval>;
   private watchers: Array<{ close: () => void }> = [];
@@ -75,6 +80,16 @@ export class Engine {
     this.watchers = [];
   }
 
+  getRegistryEntries(): RegistryEntry[] {
+    return this.registryEntries;
+  }
+
+  /** 对账项重查（动作执行前调用）：优先用当前 state 重算，item 已消失时返回 undefined → 409 */
+  findReconcileItem(key: string) {
+    const report = buildReconcileReport(this.state, this.registryEntries);
+    return report.items.find((i) => i.key === key);
+  }
+
   /** 热更新：console.config.yaml 变更后重载注册表、重建 chokidar watch 并立即重采（无需重启进程） */
   async updateConfig(config: ConsoleConfig): Promise<void> {
     this.config = config;
@@ -111,7 +126,8 @@ export class Engine {
       const ctx = makeContext(this.config);
       let state = await runCollectors(ctx, this.collectors);
       const registryDir = this.config.registryDir ?? join(this.config.devforge, 'console', 'registry.d');
-      state = applyRegistryOverlay(state, await loadRegistryEntries(registryDir));
+      this.registryEntries = await loadRegistryEntries(registryDir);
+      state = applyRegistryOverlay(state, this.registryEntries);
       // 保留 push 型自定义资产
       const pushed = this.state.assets.filter((a) => a.source.collector === 'push');
       if (pushed.length > 0) {
@@ -121,6 +137,9 @@ export class Engine {
         ]);
         state.assets = merged.assets;
       }
+      const reconcile = buildReconcileReport(state, this.registryEntries);
+      state.reconcile = reconcile;
+      state.diagnostics = [...state.diagnostics, ...reconcileDiagnostics(reconcile)];
       this.state = state;
       this.sse.broadcast('registry', {
         reason: 'collect',

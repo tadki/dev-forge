@@ -100,6 +100,28 @@ repo-sync 启动不由 `forge-console` 沙箱内的进程直接写宿主。conso
 
 动作结果以 HTTP 200 + `{ok, output}` 返回；业务拒绝（如停用门、身份不匹配）为 `ok:false`，前端直接展示 output。鉴权、注册表和参数校验错误仍用相应非 2xx。UI 在「服务」页给可控行加 ■停止/▶启动/↻ 按钮（停 forge-console 自身有二次警告）。`FORGE_CONSOLE_DRY_ACTIONS=1` 时只回显命令不执行（E2E 用）。「注册表」页给 kind×自建/外部的统计表与自建资产全量清单，外部服务在服务页标 ◇ EXT。
 
+## 平台对账（声明 × 实际 + 双向同步）
+
+注册表页「平台对账」区把 `registry.d` 声明与采集器看到的平台实际状态对账，差异逐条 warning 并可选择方向同步（**写操作逐次确认**）。
+
+**声明**：`registry.d/*.yaml` entry 增加 `platforms: [claude-code, multica]`（不写 = 不参与归属对账），盖戳到资产 `payload.registry.declaredPlatforms`；资产的 `platforms` 保持采集实际值。
+
+**差异类型**：
+- `missing-on-platform`：声明已应用平台 P 但采集未发现 P 上实例（声明未匹配到资产时也触发）。
+- `undeclared-platform`：资产实际出现在 P 但声明未包含 P。
+- `content-drift`：multica agent instructions ↔ 最新物化 workdir CLAUDE.md 分叉（与迁移页同源）；同 entry 内同名副本 sha 分叉。
+
+**动作**（按差异类型给出，方向由用户裁决）：
+- 平台 → 本地：`采纳现状`（把实际平台回写进声明）/ `撤销声明`（从声明移除未落地的平台）/ `以 agent instructions 回写 workdir 物化文件`（保留 MULTICA-RUNTIME 前缀）。
+- 本地 → 平台：`以物化内容更新 agent instructions`（`multica agent update <platformId> --instructions`）/ 无安全自动路径时仅给出建议命令（如应用到平台、从平台下线）。
+
+**写安全**：
+- 客户端只提交 `{key, actionId, confirm:true}`，步骤完全由服务端按当前 state 重算生成——路径、命令、内容均不可由客户端注入；对账项已变化时返回 409 强制刷新。
+- 文件写只允许当前采集到的资产路径（白名单），覆盖前自动备份 `*.forge-bak-<ts>`；registry 改写经 YAML Document 保留注释。
+- `FORGE_CONSOLE_DRY_ACTIONS=1` 时只回显计划不落盘（E2E 用）；沙箱 `ReadWritePaths` 只放行 registry.d、~/.claude、~/multica_workspaces 与项目根（见 deploy/forge-console.service）。
+
+**API**：`GET /api/reconcile`（报告与每条的 actions/steps 预览）；`POST /api/reconcile/actions` `{key, actionId, confirm:true}` → `{ok, output}`（缺 confirm 400、动作不可执行 400、项已变化 409、执行失败 200 + `ok:false`）。每次 collect 后报告入 `state.reconcile`，warn 诊断（前缀 `[reconcile]`）进 Overview 诊断尾部，`/api/overview` 附 `reconcile` 计数。
+
 ## 扩展接入（新增一个监控域）
 
 1. **内置**：`packages/collectors/src/collectors/<domain>.ts` 实现 `Collector` 接口，注册进 `builtinCollectors`。
