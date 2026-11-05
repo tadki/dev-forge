@@ -152,25 +152,6 @@ function extractCommands(rawCmd) {
   return extractCommandsWithSeps(rawCmd).map(s => s.text);
 }
 
-function extractCommands(rawCmd) {
-  const commands = [];
-  if (!rawCmd) return commands;
-  const pipeRe = /cat\s+<<-?\s*\S+\s*\|\s*(.+)/g;
-  let m;
-  while ((m = pipeRe.exec(rawCmd)) !== null) {
-    for (const seg of splitShellCommands(m[1])) commands.push(seg);
-  }
-  const stripped = rawCmd.replace(/(?:^|\s)<<-?\s*\S+[\s\S]*$/, '').trim();
-  const nestedRe = /(?:bash|sh)\s+(?:-[cC]\s+['"])([^'"]*)(?:['"])/g;
-  while ((m = nestedRe.exec(stripped)) !== null) {
-    for (const seg of splitShellCommands(m[1])) commands.push(seg);
-  }
-  if (stripped) {
-    for (const seg of splitShellCommands(stripped)) commands.push(seg);
-  }
-  return commands;
-}
-
 // ---- git push 实例级解析栈（SEE-1530 RC-A/C/D 精化）----
 
 function stripTokenQuotes(t) {
