@@ -78,11 +78,25 @@ export const PLATFORM_IDS = ['claude-code', 'multica'] as const;
 
 /**
  * registry.d 声明 entry 契约：元信息层（归属/生命周期/平台声明），与资产 payload 契约互不重叠。
- * platforms 收紧到 PLATFORM_IDS；meta 复用通用 metaSchema。
+ * match 三档粒度：idPrefix/pathPrefix 前缀（自有文件系统域）、ids 精确清单（平台命名空间推荐）、
+ * exclude 前缀命中后排除（平台自带资产剔除）。命中 = include 命中 && 无 exclude 命中。
  */
 export const registryEntrySchema = z.object({
   id: z.string().min(1),
-  match: z.object({ idPrefix: z.string().optional(), pathPrefix: z.string().optional() }).optional(),
+  match: z
+    .object({
+      idPrefix: z.string().optional(),
+      pathPrefix: z.string().optional(),
+      ids: z.array(z.string()).optional(),
+      exclude: z
+        .object({
+          idPrefix: z.array(z.string()).optional(),
+          pathPrefix: z.array(z.string()).optional(),
+          ids: z.array(z.string()).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   platforms: z.array(z.enum(PLATFORM_IDS)).optional(),
   meta: metaSchema.optional(),
 });

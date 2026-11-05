@@ -7,6 +7,8 @@ import type { RegistryState } from './registry.js';
 export interface RegistryMatch {
   idPrefix?: string;
   pathPrefix?: string;
+  ids?: string[];
+  exclude?: { idPrefix?: string[]; pathPrefix?: string[]; ids?: string[] };
 }
 
 export interface RegistryEntry {
@@ -20,9 +22,16 @@ export interface RegistryEntry {
 
 export function matchesRegistryEntry(asset: Asset, entry: RegistryEntry): boolean {
   const m = entry.match ?? {};
-  if (m.idPrefix && asset.id.startsWith(m.idPrefix)) return true;
-  if (m.pathPrefix && asset.source.path.startsWith(m.pathPrefix)) return true;
-  return false;
+  const included = (m.idPrefix !== undefined && asset.id.startsWith(m.idPrefix))
+    || (m.pathPrefix !== undefined && asset.source.path.startsWith(m.pathPrefix))
+    || (m.ids !== undefined && m.ids.includes(asset.id));
+  if (!included) return false;
+  const x = m.exclude;
+  if (!x) return true;
+  if (x.ids?.includes(asset.id)) return false;
+  if (x.idPrefix?.some((p) => asset.id.startsWith(p))) return false;
+  if (x.pathPrefix?.some((p) => asset.source.path.startsWith(p))) return false;
+  return true;
 }
 
 export interface LoadedRegistry {

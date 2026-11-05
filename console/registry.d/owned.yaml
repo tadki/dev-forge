@@ -2,6 +2,9 @@
 # 通用 meta 词汇表：owner / category / lifecycle(stable|experimental|deprecated) /
 #                   criticality(high|medium|low) / runtime(claude-code|multica|both|standalone) / docs / since / notes
 # platforms：声明该资产已应用到的平台（claude-code|multica）。不写 = 不参与平台对账（平台 → 本地 / 本地 → 平台）
+# match 粒度：idPrefix/pathPrefix 前缀；ids 精确清单；exclude 前缀命中后排除（平台自带剔除）。
+# 顺序敏感：第一条命中生效（first-match-wins），更具体的条目必须写在宽泛条目（如 devforge-core）之前。
+# 归属口径（Owner 2026-11-06）：multica 平台上扫到的全部资产都是自建；本地 ~/.claude/skills 与 multica 同名的是重复错放，清理掉。
 entries:
   - id: forge-console
     match: { idPrefix: "service:systemd-forge-console" }
@@ -11,10 +14,6 @@ entries:
     match: { pathPrefix: "/home/jerry/tools/dev-forge/claude-hooks" }
     platforms: [claude-code, multica]
     meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both, notes: "9 挂载点 → 统一引擎，multica 会话同样生效" }
-
-  - id: devforge-core
-    match: { pathPrefix: "/home/jerry/tools/dev-forge/" }
-    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: high, runtime: standalone }
 
   - id: kol-instructions
     match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/CLAUDE.md" }
@@ -50,6 +49,11 @@ entries:
     match: { pathPrefix: "/home/jerry/tools/dev-forge/adapters/" }
     platforms: [claude-code]
     meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: claude-code }
+
+  # 宽泛兜底：dev-forge 仓库下其余资产（必须排在所有 dev-forge 子路径条目之后）
+  - id: devforge-core
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/" }
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: high, runtime: standalone }
 
   - id: mcp-user-search
     match: { pathPrefix: "/home/jerry/.claude/.mcp.json" }

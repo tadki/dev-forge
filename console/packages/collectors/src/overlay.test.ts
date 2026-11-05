@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Asset } from '@forge/schema';
 import type { RegistryState } from './registry.js';
-import { applyRegistryOverlay, loadRegistryEntries } from './overlay.js';
+import { applyRegistryOverlay, loadRegistryEntries, matchesRegistryEntry, type RegistryEntry } from './overlay.js';
 
 const dir = join(tmpdir(), `forge-overlay-${Date.now()}`);
 
@@ -120,6 +120,24 @@ describe('registry.d 声明盖戳（overlay）', () => {
     expect(diagnostics.every((d) => d.level === 'error')).toBe(true);
     expect(diagnostics.map((d) => d.message).join(';')).toMatch(/bad-platform/);
     expect(diagnostics.map((d) => d.message).join(';')).toMatch(/bad-lifecycle/);
+  });
+
+  it('match 语义：ids 精确 / exclude 剔除 / fallthrough 到下一条 entry', async () => {
+    const entries: RegistryEntry[] = [
+      { id: 'exact', match: { ids: ['skill:a', 'skill:b'] }, file: '/x' },
+      { id: 'broad', match: { pathPrefix: '/platform/', exclude: { ids: ['skill:platform-own'] } }, file: '/x' },
+      { id: 'catch-all', match: { pathPrefix: '/platform/' }, file: '/x' },
+    ];
+    const at = (id: string, path: string): Asset => mk(id, path);
+    // ids 精确命中
+    expect(matchesRegistryEntry(at('skill:a', '/anywhere'), entries[0])).toBe(true);
+    expect(matchesRegistryEntry(at('skill:c', '/anywhere'), entries[0])).toBe(false);
+    // 前缀命中但被 exclude 剔除 → 不命中该 entry
+    expect(matchesRegistryEntry(at('skill:platform-own', '/platform/x'), entries[1])).toBe(false);
+    expect(matchesRegistryEntry(at('skill:mine', '/platform/x'), entries[1])).toBe(true);
+    // 被 exclude 挡掉的资产会 fallthrough 命中后面更宽的 entry（find 语义）
+    const hit = entries.find((e) => matchesRegistryEntry(at('skill:platform-own', '/platform/x'), e));
+    expect(hit?.id).toBe('catch-all');
   });
 
   afterAll(async () => {
