@@ -82,16 +82,23 @@ EOF
     chmod +x "$bin_dir/multica"
 }
 
-# git passthrough shim that makes the default-branch SYMREF lookup fail
-# (simulates an origin that cannot report its HEAD symref), used only inside
-# scenario C's align run. Deliberately narrow: plain ls-remote queries
-# (branch existence checks) must keep working so the scenario exercises the
-# resolution chain, not unrelated guards.
-make_no_lsremote_git_shim() {
+# git passthrough shim that kills BOTH default-branch lookup channels —
+# `git symbolic-ref --short refs/remotes/origin/HEAD` and `git ls-remote
+# --symref …` — so the resolver deterministically gets nothing on ANY git
+# version. Why both: newer git (2.45+, GitHub runners) opportunistically
+# CREATES refs/remotes/origin/HEAD during plain `git fetch origin`, so merely
+# deleting the symref (or relying on it never existing) is version-fragile —
+# CI run 41959696937 resolved "main" exactly this way. Narrow scope: other
+# symbolic-ref/ls-remote argv shapes (branch checks, upstream setting) still
+# pass through, keeping the scenario on the resolution chain only.
+make_no_default_resolution_git_shim() {
     local bin_dir="$1"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/git" <<EOF
 #!/bin/bash
+if [ "\$1" = "symbolic-ref" ] && [ "\$2" = "--short" ] && [ "\${3:-}" = "refs/remotes/origin/HEAD" ]; then
+    exit 1
+fi
 if [ "\$1" = "ls-remote" ] && [ "\${2:-}" = "--symref" ]; then
     exit 1
 fi
@@ -260,17 +267,19 @@ test_unresolvable_default_degrades_safely() {
     local meta_log="$TMPDIR/meta_c.log" mock_bin="$TMPDIR/mock_c" shim_bin="$TMPDIR/shim_c"
     : > "$meta_log"
     make_mock_multica "$mock_bin" "$meta_log"
-    make_no_lsremote_git_shim "$shim_bin"
+    make_no_default_resolution_git_shim "$shim_bin"
     local lib="$TMPDIR/helper_lib.sh"
     extract_helper_lib "$lib"
     local work wb_sha_before
     work=$(build_fixture "$TMPDIR/c" "DevForge" "main")
     ensure_shared_branch "$work" "shared/SEE-1525" "main" "m2"
-    # Agent behind wb; drop the local origin/HEAD symref so only ls-remote
-    # could resolve the default branch — and the shim kills exactly that.
+    # Agent behind wb; pin the adversarial precondition locally to match what
+    # newer git does on CI: origin/HEAD EXISTS (opportunistic set_head during
+    # fetch), but BOTH lookup channels are shimmed dead, so the resolver still
+    # gets nothing — deterministic on any git version.
     (cd "$work" \
         && git checkout -q agent/revy && git reset --hard HEAD~1 \
-        && { git symbolic-ref -d refs/remotes/origin/HEAD 2>/dev/null || true; })
+        && git symbolic-ref refs/remotes/origin/HEAD refs/heads/main)
     wb_sha_before=$(cd "$work" && git rev-parse "origin/shared/SEE-1525")
 
     local out rc hint

@@ -39,16 +39,23 @@ trap cleanup EXIT
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 
-# git passthrough shim that makes the default-branch SYMREF lookup fail
-# (simulates an origin that cannot report its HEAD symref), used only inside
-# scenario B's script invocation. Deliberately narrow: plain ls-remote queries
-# (branch existence checks) must keep working so the scenario exercises the
-# resolution chain, not unrelated guards.
-make_no_lsremote_git_shim() {
+# git passthrough shim that kills BOTH default-branch lookup channels —
+# `git symbolic-ref --short refs/remotes/origin/HEAD` and `git ls-remote
+# --symref …` — so the resolver deterministically gets nothing on ANY git
+# version. Why both: newer git (2.45+, GitHub runners) opportunistically
+# CREATES refs/remotes/origin/HEAD during plain `git fetch origin`, so merely
+# deleting the symref is version-fragile — CI run 41959696937 resolved "main"
+# exactly this way and ran a full reconcile. Narrow scope: other
+# symbolic-ref/ls-remote argv shapes (branch existence checks) still pass
+# through, keeping the scenario on the resolution chain only.
+make_no_default_resolution_git_shim() {
     local bin_dir="$1"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/git" <<EOF
 #!/bin/bash
+if [ "\$1" = "symbolic-ref" ] && [ "\$2" = "--short" ] && [ "\${3:-}" = "refs/remotes/origin/HEAD" ]; then
+    exit 1
+fi
 if [ "\$1" = "ls-remote" ] && [ "\${2:-}" = "--symref" ]; then
     exit 1
 fi
@@ -169,15 +176,20 @@ test_main_repo_reconcile() {
 test_unresolvable_hard_error() {
     echo "[B] unresolvable default: hard error exit 3, no rebase, no state change"
     local shim="$TMPDIR/shim_b"
-    make_no_lsremote_git_shim "$shim"
+    make_no_default_resolution_git_shim "$shim"
     local work
     work=$(build_fixture "$TMPDIR/b" "DevForge" "main")
     ensure_shared_branch "$work" "shared/SEE-1525" "main" "m2"
+    # Advance origin/main so the shared branch is behind (a real reconcile
+    # would run); pin the adversarial precondition locally to match newer git
+    # on CI: origin/HEAD EXISTS (opportunistic set_head during fetch), but
+    # BOTH lookup channels are shimmed dead, so the resolver still gets
+    # nothing — deterministic on any git version.
     (cd "$work" \
         && git checkout -q main \
         && echo "main_line3" >> f.txt && git add f.txt && git commit -qm "m3" \
         && git push -q origin main \
-        && { git symbolic-ref -d refs/remotes/origin/HEAD 2>/dev/null || true; })
+        && git symbolic-ref refs/remotes/origin/HEAD refs/heads/main)
     local wb_before
     wb_before=$(cd "$work" && git rev-parse "origin/shared/SEE-1525")
 
