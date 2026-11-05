@@ -63,7 +63,8 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
     queryFn: () => apiGet<{ assets: AssetLite[] }>(`/api/assets?kind=instruction${ctx.workspace ? `&workspace=${ctx.workspace}` : ''}`),
   });
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<'render' | 'source' | 'meta'>('render');
+  const [tab, setTab] = useState<'render' | 'source'>('render');
+  const [metaOpen, setMetaOpen] = useState(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
   const selId = selected ?? list.data?.assets[0]?.id ?? null;
@@ -100,7 +101,7 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
   const payload = (detail.data?.asset.payload ?? {}) as { content?: string; lines?: number; headings?: Array<{ level: number; text: string }>; lang?: string; contentHash?: string };
 
   return (
-    <div>
+    <div className="fill-page">
       <div className="page-head">
         <div>
           <h2>指令库</h2>
@@ -109,8 +110,9 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
           </div>
         </div>
       </div>
-      <div className="grid" style={{ gridTemplateColumns: '230px 1fr' }}>
+      <div className="grid fill-grid" style={{ gridTemplateColumns: '230px 1fr' }}>
         <Panel title="作用域树" en="SCOPE TREE">
+          <div className="panel-scroll">
           {owned.map((g) => (
             <div key={g.key} style={{ marginBottom: 8 }}>
               <div className="tagline" style={{ color: 'var(--text-sub)' }}>
@@ -143,20 +145,22 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
               })}
             </>
           )}
+          </div>
         </Panel>
 
         <Panel title={detail.data?.asset.name ?? '—'} en={detail.data ? `LINES ${payload.lines ?? '?'} · ${payload.lang ?? ''}` : ''}>
           <div className="tabs">
-            {(['render', 'source', 'meta'] as const).map((t) => (
+            {(['render', 'source'] as const).map((t) => (
               <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-                {t === 'render' ? '渲染' : t === 'source' ? '源码' : '元信息'}
+                {t === 'render' ? '渲染' : '源码'}
               </button>
             ))}
           </div>
-          {tab === 'render' && <div style={{ maxHeight: 560, overflow: 'auto' }}>{payload.content ? <Markdown text={payload.content} /> : <div className="dim">（无正文）</div>}</div>}
-          {tab === 'source' && <pre className="code" style={{ maxHeight: 560 }}>{payload.content ?? '—'}</pre>}
-          {tab === 'meta' && (
-            <dl className="kv">
+          <div className="tagline meta-toggle" onClick={() => setMetaOpen((v) => !v)}>
+            {metaOpen ? '▾' : '▸'} 元信息
+          </div>
+          {metaOpen && (
+            <dl className="kv" style={{ marginBottom: 'var(--sp-2)' }}>
               <dt>ID</dt><dd className="mono">{detail.data?.asset.id}</dd>
               <dt>归属</dt><dd>{detail.data?.asset.provenance === 'third-party' ? <Badge tone="off">third-party · 依赖架</Badge> : <Badge tone="ok">first-party</Badge>}</dd>
               <dt>挂载</dt><dd className="mono">{detail.data?.asset.attach.level}{detail.data?.asset.attach.ref ? ` · ${detail.data.asset.attach.ref}` : ''}</dd>
@@ -168,6 +172,10 @@ export function InstructionsPage({ ctx }: { ctx: PageCtx }) {
               <dt>源文件</dt><dd className="mono dim">{detail.data?.asset.source.path}</dd>
             </dl>
           )}
+          <div className="panel-scroll">
+            {tab === 'render' && (payload.content ? <Markdown text={payload.content} /> : <div className="dim">（无正文）</div>)}
+            {tab === 'source' && <pre className="code" style={{ maxHeight: 'none' }}>{payload.content ?? '—'}</pre>}
+          </div>
         </Panel>
       </div>
     </div>
