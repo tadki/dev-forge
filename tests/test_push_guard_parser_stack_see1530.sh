@@ -66,6 +66,11 @@ git -C "$FIX/work_plain" -c user.email=t@t -c user.name=t commit -q --allow-empt
 git init -q --bare "$FIX/origin.git"
 git -C "$FIX/work_plain" remote add origin "$FIX/origin.git"
 
+# D1-9 gqt 会话 fixture（QA D-1 在 kol/gqt 两会话均复现）
+git init -q -b master "$FIX/work_gqt"
+git -C "$FIX/work_gqt" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$FIX/work_gqt" remote add origin "https://github.com/tadki/godot-qa-toolkit.git"
+
 # OB-5 链 fixture：$FIX/ob5dir = devforge 检出（经 `-C $FIX -C ob5dir` 相对链可达）
 git init -q -b main "$FIX/ob5dir"
 git -C "$FIX/ob5dir" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
@@ -241,6 +246,28 @@ sa "S-FN3 script: master 分支 git -pC <dir> push → Check4 拦 (exit 2)" "$FI
 sa "S-FP1 script: feature 分支 git -p push → 放行（无新增误拦）"     "$FIX/work_feat" "git -p push" 0 pt
 sa "S-ANC script: 无关历史 feature 分支裸 push → Check3 祖先门拦 (exit 2)" "$FIX/work_orphan" "git push" 2
 ea "S-REF engine: master 分支 git -p 裸 push → allow（refspec 不可见，拦截归脚本 Check4）" "$FIX/work_master" "git -p push" allow
+
+echo ""
+echo -e "${CYAN}--- Group D1: cd 锚子 shell 边界（§SPEC-007 / QA D-1 修复）---${NC}"
+
+# D-1 deny 面（Revy QA 独立对抗 + Leader 独立复现采信）：bash 子 shell 语义下
+# `&`/`|`/`|&` 左侧 cd 不外溢（cd 在子 shell 执行），push 实际落会话仓 master——
+# 旧实现把左侧 cd 段误作后续段 cwd 锚 → belt 误豁免 → allow（HIGH FN 回归）。
+# 修复 = cd 锚仅跨 ';'/换行/'&&'/'||' 传递，`&`/`|`/`|&` 边界重置锚。
+ea "D1-1 kol: cd DF & push origin main → deny"                    "$FIX/work_kol" "cd $FIX/work_df_url & git push origin main" deny "禁止直接 push"
+ea "D1-2 kol: cd DF | push origin main → deny"                    "$FIX/work_kol" "cd $FIX/work_df_url | git push origin main" deny "禁止直接 push"
+ea "D1-3 kol: cd DF & push origin master → deny"                  "$FIX/work_kol" "cd $FIX/work_df_url & git push origin master" deny "禁止直接 push"
+ea "D1-4 kol: cd -P DF & push origin main → deny"                 "$FIX/work_kol" "cd -P $FIX/work_df_url & git push origin main" deny "禁止直接 push"
+ea "D1-5 kol: cd DF >/dev/null 2>&1 & push main → deny"           "$FIX/work_kol" "cd $FIX/work_df_url >/dev/null 2>&1 & git push origin main" deny "禁止直接 push"
+ea "D1-6 kol: cd DF & push -f origin feature/x → deny（force 门）"  "$FIX/work_kol" "cd $FIX/work_df_url & git push -f origin feature/x" deny "禁止 force-push"
+ea "D1-7 kol: cd DF & push origin HEAD:refs/heads/master → deny"  "$FIX/work_kol" "cd $FIX/work_df_url & git push origin HEAD:refs/heads/master" deny "禁止直接 push"
+ea "D1-8 kol: cd DF |& push origin main → deny"                   "$FIX/work_kol" "cd $FIX/work_df_url |& git push origin main" deny "禁止直接 push"
+ea "D1-9 gqt: cd DF & push origin main → deny"                    "$FIX/work_gqt" "cd $FIX/work_df_url & git push origin main" deny "禁止直接 push"
+
+# 同 shell 边界对照（真锚定 allow 侧，防修复外溢）
+ea "D1-A1 kol: cd DF && push origin main → allow（真锚定保留）"     "$FIX/work_kol" "cd $FIX/work_df_url && git push origin main" allow
+ea "D1-A2 kol: cd DF; push origin main → allow（; 同 shell 链传递）" "$FIX/work_kol" "cd $FIX/work_df_url; git push origin main" allow
+ea "D1-A3 kol: cd /tmp & cd DF && push → allow（& 重置后重锚）"     "$FIX/work_kol" "cd /tmp & cd $FIX/work_df_url && git push origin main" allow
 
 echo ""
 echo -e "${CYAN}--- OB-4 行为冻结登记（无断言）---${NC}"

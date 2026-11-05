@@ -76,42 +76,80 @@ function parseCommand(cmdStr) {
   return { base, subcommand: subcommandTokens.join(' '), flags };
 }
 
-function splitShellCommands(str) {
+// 分段核心：段携带右侧边界类型 sep ∈ {'\n',';','&&','||','&','|','|&',''}（'' =
+// 末段）。D-1（SEE-1530 QA）：`&`/`|`/`|&` 左侧段在 bash 子 shell 执行，其 cd 锚
+// 不外溢（`cd <DF> & git push` 实际落会话 cwd）——cd 锚传递需区分子 shell 边界，
+// 故分段器必须输出边界类型。
+function splitShellCommandsTyped(str) {
   const segments = [];
   let current = '';
   let inSingle = false;
   let inDouble = false;
   let i = 0;
-  const flush = () => { if (current.trim()) segments.push(current.trim()); current = ''; };
+  const flush = (sep) => { if (current.trim()) segments.push({ text: current.trim(), sep }); current = ''; };
   while (i < str.length) {
     const ch = str[i];
     if (ch === '\\' && !inSingle && i + 1 < str.length) { current += ch; i++; current += str[i]; i++; continue; }
     if (ch.charCodeAt(0) === 39 && !inDouble) { inSingle = !inSingle; current += ch; i++; continue; }
     if (ch.charCodeAt(0) === 34 && !inSingle) { inDouble = !inSingle; current += ch; i++; continue; }
     if (!inSingle && !inDouble) {
-      if (ch === '\n' || ch === ';') { flush(); i++; continue; }
-      if ((ch === '&' && str[i + 1] === '&') || (ch === '|' && str[i + 1] === '|')) { flush(); i += 2; continue; }
+      if (ch === '\n' || ch === ';') { flush(ch); i++; continue; }
+      if ((ch === '&' && str[i + 1] === '&') || (ch === '|' && str[i + 1] === '|')) { flush(ch + str[i + 1]); i += 2; continue; }
       // RC-B（SEE-1530）：单 `&`（后台）与单 `|`（管道）同为命令分隔——不切则
       // 一段双 push 时 belt 与 push_refspec 均只见第一个（第二注册仓 push 逃逸）。
       // 重定向组合不算分隔：`&>`/`>&`/`>|` 中 & / | 紧邻 `>` 为字面量；`|&` 属
       // 管道分隔（按双字符切）。
       if (ch === '|') {
-        if (str[i + 1] === '&' && str[i - 1] !== '>') { flush(); i += 2; continue; }
+        if (str[i + 1] === '&' && str[i - 1] !== '>') { flush('|&'); i += 2; continue; }
         if (str[i - 1] === '>') { current += ch; i++; continue; }
-        flush(); i++;
+        flush('|'); i++;
         continue;
       }
       if (ch === '&') {
         if (str[i + 1] === '>' || str[i - 1] === '>') { current += ch; i++; continue; }
-        flush(); i++;
+        flush('&'); i++;
         continue;
       }
     }
     current += ch;
     i++;
   }
-  flush();
+  flush('');
   return segments;
+}
+
+function splitShellCommands(str) {
+  return splitShellCommandsTyped(str).map(s => s.text);
+}
+
+function extractCommandsWithSeps(rawCmd) {
+  const commands = [];
+  if (!rawCmd) return commands;
+  // 组内段保留自身 sep；组尾以 carry（';'）衔接下一组——heredoc 管道/nested 提取
+  // 与外层段之间无真实 shell 边界，取沿用链（既有行为，不扩面）。
+  const pushGroup = (segs) => {
+    for (let i = 0; i < segs.length; i++) {
+      commands.push({ text: segs[i].text, sep: i + 1 < segs.length ? segs[i].sep : ';' });
+    }
+  };
+  const pipeRe = /cat\s+<<-?\s*\S+\s*\|\s*(.+)/g;
+  let m;
+  while ((m = pipeRe.exec(rawCmd)) !== null) {
+    pushGroup(splitShellCommandsTyped(m[1]));
+  }
+  const stripped = rawCmd.replace(/(?:^|\s)<<-?\s*\S+[\s\S]*$/, '').trim();
+  const nestedRe = /(?:bash|sh)\s+(?:-[cC]\s+['"])([^'"]*)(?:['"])/g;
+  while ((m = nestedRe.exec(stripped)) !== null) {
+    pushGroup(splitShellCommandsTyped(m[1]));
+  }
+  if (stripped) {
+    pushGroup(splitShellCommandsTyped(stripped));
+  }
+  return commands;
+}
+
+function extractCommands(rawCmd) {
+  return extractCommandsWithSeps(rawCmd).map(s => s.text);
 }
 
 function extractCommands(rawCmd) {
@@ -424,19 +462,25 @@ function createEvaluator(payload, opts) {
     const key = typeof exclude === 'string' ? exclude : '';
     if (pushTargetsCache.has(key)) return pushTargetsCache.get(key);
     const excludeRe = key ? safeRegex(key) : null;
-    const segments = extractCommands(cmd);
+    const segments = extractCommandsWithSeps(cmd);
     let tracked = null;       // 前置 cd 链锚定目录；null = 未涉 cd（用会话 cwd）
     let unresolvable = false; // cd 链不可解析且未被后续 cd 重锚 → 后续目标不可信
     const dirs = [];
+    let prevSep = '';
     for (const seg of segments) {
-      const cd = parseCdDir(seg);
+      // D-1（SEE-1530 QA）：cd 锚仅跨同 shell 边界（';'/换行/'&&'/'||'）传递；
+      // `&`/`|`/`|&` 左侧段在子 shell 执行、cwd 不外溢，重置锚（回退会话 cwd）。
+      // 不可解析毒化语义不变（仍随链携带，保守方向）。
+      if (prevSep === '&' || prevSep === '|' || prevSep === '|&') tracked = null;
+      prevSep = seg.sep;
+      const cd = parseCdDir(seg.text);
       if (cd !== undefined) {
         if (cd === null) { unresolvable = true; tracked = null; continue; }
         tracked = path.isAbsolute(cd) ? cd : path.resolve(tracked || cwd, cd);
         unresolvable = false;
         continue;
       }
-      for (const inst of scanGitPushInstances(seg).instances) {
+      for (const inst of scanGitPushInstances(seg.text).instances) {
         const ev = evaluatePushInstance(inst, excludeRe);
         if (ev.isPureDelete) continue; // 纯删除 push 不入 belt 目标（Owner 定案）
         // OB-1（附着 `-C<path>` 由 scanGitInvocation 捕获）；OB-5 链按 git 语义
