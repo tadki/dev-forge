@@ -226,24 +226,26 @@ console/
 1. **挂载 ≠ 生效**：`attach`（定义在哪）与 `applies`（细化到哪）分离，两层都展示。活例：dev-forge 的 hook 规则物理住在 dev-forge 这个 project（`attach.level: project`），语义上是 user 全局（经绝对路径注册）。
 2. **位置型资产没有作用域配置**：CLAUDE.md、`.mcp.json`、subagent 目录——作用域就是文件位置；UI 只显示派生结果，不给下拉框（配了也是假配置）。
 3. **● 与 ◐ 必须分栏标注**：如"此 skill 给 Revy"在 multica 是强分配、在 CC 会话无人强制——Console 诚实显示强制力，避免"设了就生效"的错觉；◐ 型经 `.forge.yaml` 登记（`origin: overlay`）。
-4. **Agent 的 workspace 关系是「住宿」（residence），不是作用域**：Fronti 住宿 KOL 域，但可被派去任何 project；residence 只用于分组、健康上卷、迁移建议，永不门控。
+4. **Agent 的 workspace 关系是「住宿」（residence），不是作用域**：Fronti 住宿 Jerry's Forge 域，但可被派去任何 project；residence 只用于分组、健康上卷、迁移建议，永不门控。
 5. **Session/Task 层是「实例」不是「资产」**：multica 物化的 workdir CLAUDE.md、`/tmp` mcp-config、one-shot 哨兵都是资产的运行态投影，作为实例挂在资产详情下，不进资产列表。
-6. **命名消歧**：本层 Workspace（产品域）≠ multica 的 task workspace（= Session 层）；grepai `--workspace kol` 与本层对齐。Workspace 不是多数数据源的原生概念，故引入 **workspace 注册表**（见下），KOL 家族 CLAUDE.md 漂移检测因此成为"workspace 内跨 project 对比"。
+6. **命名消歧**：本层 Workspace（产品域）≠ multica 的 task workspace（= Session 层）；grepai `--workspace` 与本层对齐。Workspace 不是多数数据源的原生概念，故引入 **workspace 注册表**（见下），CLAUDE.md 漂移检测因此成为"workspace 内跨 project 对比"。
+
+**Workspace 语义（Owner 决定 2026-11-05）**：我们的所有 harness 同属**一个** workspace（`jerry` / Jerry's Forge）；King of Likes、godot-mcp、godot-qa-toolkit、grepai、dev-forge 都是隶属于它的**项目**，各自不再是 workspace。workspace 层保留且注册表支持多个，只是当前只登记一个。
 
 **Workspace 注册表**（`console.config.yaml`，声明 + 自动建议 + Owner 确认）：
 
 ```yaml
 workspaces:
-  - id: kol
-    name: King of Likes
+  - id: jerry
+    name: Jerry's Forge
     projects:                       # 成员 project（路径）
       - /mnt/d/GodotProjects/king-of-likes
-      - /home/jerry/s5recheck-worktree
-      - /mnt/d/GodotProjects/see1089-qa
-    residents: [fronti, revy, harti, archi, bachi, refacty, chekky]   # 住宿 agent
+      - /mnt/d/GodotProjects/king-of-likes/addons/godot_mcp
+      - /home/jerry/tools/dev-forge
+      - /home/jerry/tools/grepai
+      - /home/jerry/tools/godot-qa-toolkit
+    residents: [atlas, archi, bachi, fronti, revy, harti, refacty, chekky]   # 住宿 agent
     services: [grepai-watch]        # 健康上卷分组
-  - id: devforge
-    projects: [/home/jerry/tools/dev-forge]
 ```
 
 自动建议规则：git remote 同源 / worktree 亲缘 → 聚为一族；repo-sync `repos.d` 与 grepai `--workspace` 作为既有信号。M2 起 UI 内确认归属并回写 config。
@@ -343,7 +345,7 @@ Vite + React + TypeScript；路由按页面域拆分；状态：服务端状态�
 | **关系图 Graph** | 谁挂谁、谁调度谁？ | 分层血缘图（非力导向——档案柜气质要整齐）：asset 节点按 kind 着墨块/纸块，边 = relations |
 | **通用资产浏览器** | （兜底） | 未知 kind / custom 资产的 JSON 树 + 元信息表，永不白屏 |
 
-**全局交互（作用域是一等导航维度）**：TopBar 下挂 Workspace 切换器（全部 / KOL / dev-forge / grepai…，来自 §4.1 注册表）——切换后所有页面按该产品域过滤（project 列表、住宿 agent、服务上卷健康、autopilot target）。每个资产详情页有**作用域面板**：按 §4.1 矩阵逐轴展示 `●强制 / ◐约定 / ◇派生 / —无效` 徽章 + `attach/applies` 详情；位置型资产只读展示派生结果。Agents 页按 residence 分组；漂移检测限定在 workspace 内跨 project 对比。**归属过滤与作用域并列为一等维度**：主清单默认只列 `first-party`，依赖架（ECC 34 技能、rules 规则包、claude-mem 脚本等 third-party）单独 tab 折叠展示——它影响行为但不属于"我们的 harness"，也不进迁移导出。
+**全局交互（作用域是一等导航维度）**：TopBar 下挂 Workspace 切换器（全部 / jerry…，来自 §4.1 注册表；当前单 workspace，注册表支持多个）——切换后所有页面按该产品域过滤（project 列表、住宿 agent、服务上卷健康、autopilot target）。每个资产详情页有**作用域面板**：按 §4.1 矩阵逐轴展示 `●强制 / ◐约定 / ◇派生 / —无效` 徽章 + `attach/applies` 详情；位置型资产只读展示派生结果。Agents 页按 residence 分组；漂移检测限定在 workspace 内跨 project 对比。**归属过滤与作用域并列为一等维度**：主清单默认只列 `first-party`，依赖架（ECC 34 技能、rules 规则包、claude-mem 脚本等 third-party）单独 tab 折叠展示——它影响行为但不属于"我们的 harness"，也不进迁移导出。
 
 ### 7.3 杀手级功能：Effective Harness（有效 harness 解析）
 

@@ -49,7 +49,7 @@ export function OverviewPage({ ctx }: { ctx: PageCtx }) {
       </div>
 
       <div className="stat-grid">
-        <StatBlock num={overview.counts['project'] ?? 0} label="工作区/项目" en="PROJECTS" />
+        <StatBlock num={overview.counts['project'] ?? 0} label="项目" en="PROJECTS" />
         <StatBlock num={overview.counts['agent'] ?? 0} label="智能体" en="AGENTS" />
         <StatBlock num={overview.counts['instruction'] ?? 0} label="指令" en="INSTRUCTIONS" />
         <StatBlock num={overview.counts['skill'] ?? 0} label="技能" en="SKILLS" />

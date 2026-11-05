@@ -72,7 +72,7 @@ token 按 origin 存 localStorage：`localhost:5173` 与 `192.168.1.105:5173` �
 | `packages/server` | 零框架 HTTP：token 鉴权（除 `/healthz` 与静态资源）、SSE、静态托管、chokidar watch（/mnt 9p 走 polling） |
 | `apps/web` | Vite + React UI：11+1 页，设计 tokens 见 `src/styles/tokens.css` |
 | `e2e` | Playwright：fixture 采集器 + 16 条用例（真后端真浏览器） |
-| `console.config.yaml` | workspace 注册表（可提交）+ 扫描根 + multica/hindsight 配置 |
+| `console.config.yaml` | workspace 注册表（可提交；当前单 workspace `jerry`，kol/godot-mcp/gqt/grepai/dev-forge 均为项目）+ multica/hindsight 配置 |
 | `collectors.d/` | 外部采集器投放目录（可执行，stdout 吐契约 JSON；见下） |
 
 ## 自建资产注册（registry.d）与通用 metadata

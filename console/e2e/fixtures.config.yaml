@@ -3,8 +3,8 @@ home: /home/jerry
 devforge: /home/jerry/tools/dev-forge
 fixturesDir: FIXTURES_DIR_PLACEHOLDER
 workspaces:
-  - id: kol
-    name: King of Likes
+  - id: jerry
+    name: Jerry's Forge
     projects:
       - git: https://github.com/tadki/KingOfLikes-Godot.git
         path: /e2e/king-of-likes
