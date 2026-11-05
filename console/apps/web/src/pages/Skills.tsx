@@ -79,12 +79,6 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
     </>
   );
 
-  const renderCard = (s: AssetLite) => (
-    <button key={s.id} className={`card ${s.id === selId ? 'sel' : ''}`} onClick={() => setSel(s.id)}>
-      <h3 className="mono" style={{ fontSize: 'var(--fs-l2)' }}>{s.name.startsWith('/') ? s.name : `/${s.name}`}</h3>
-      <div className="row">{badgesOf(s)}</div>
-    </button>
-  );
 
   return (
     <div className="fill-page">
@@ -105,8 +99,22 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
         <Panel title="技能清单" en="ALL SKILLS">
           <div className="panel-scroll" style={{ paddingRight: 'var(--sp-3)' }}>
             {tab === 'first-party' ? (
-              <div className="card-grid" style={{ gridTemplateColumns: 'repeat(2, 280px)' }}>
-                {[...rows].sort(byName).map(renderCard)}
+              <div>
+                {[...rows].sort(byName).map((s) => (
+                  <div
+                    key={s.id}
+                    className={`tree-node mono ${s.id === selId ? 'sel' : ''}`}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-2)' }}
+                    onClick={() => setSel(s.id)}
+                  >
+                    <span>{s.name.startsWith('/') ? s.name : `/${s.name}`}</span>
+                    <span className="row">
+                      {s.platforms.map((p) => (
+                        <Badge key={p} tone={p === 'multica' ? 'warn' : 'plain'}>{p}</Badge>
+                      ))}
+                    </span>
+                  </div>
+                ))}
               </div>
             ) : (
               tree.map(({ plat, locs }) => {
