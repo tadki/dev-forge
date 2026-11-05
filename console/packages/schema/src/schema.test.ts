@@ -177,6 +177,15 @@ describe('registry.d 声明契约（元信息层）', () => {
   it('缺 id 被拒绝', () => {
     expect(registryEntrySchema.safeParse({ match: { pathPrefix: '/x' } }).success).toBe(false);
   });
+
+  it('match.ids 精确清单与 exclude 组合', () => {
+    expect(
+      registryEntrySchema.safeParse({ id: 'x', match: { ids: ['skill:a', 'skill:b'], exclude: { ids: ['skill:b'] } } }).success
+    ).toBe(true);
+    expect(registryEntrySchema.safeParse({ id: 'x', match: { ids: 'skill:a' } }).success).toBe(false);
+    expect(registryEntrySchema.safeParse({ id: 'x', match: { exclude: { idPrefix: ['skill:'] } } }).success).toBe(true);
+    expect(registryEntrySchema.safeParse({ id: 'x', match: { exclude: { idPrefix: 1 } } }).success).toBe(false);
+  });
 });
 
 describe('json contract', () => {
