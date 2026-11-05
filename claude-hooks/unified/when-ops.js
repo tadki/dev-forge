@@ -152,6 +152,35 @@ function extractCommands(rawCmd) {
   return extractCommandsWithSeps(rawCmd).map(s => s.text);
 }
 
+// 引号感知的括号事件切分（R-A/O-5，SEE-1530 复验）：按出现顺序返回
+// [{ text, paren: '(' | ')' | null }]，供子 shell 组状态机使用。转义括号与
+// `$(` 命令替换不产生组事件（执行形态逃逸族不扩面，保持既有语义）。
+function splitParenPieces(text) {
+  const s = String(text || '');
+  const pieces = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === '\\' && !inSingle && i + 1 < s.length) { current += ch; i++; current += s[i]; i++; continue; }
+    if (ch.charCodeAt(0) === 39 && !inDouble) { inSingle = !inSingle; current += ch; i++; continue; }
+    if (ch.charCodeAt(0) === 34 && !inSingle) { inDouble = !inDouble; current += ch; i++; continue; }
+    if (!inSingle && !inDouble && (ch === '(' || ch === ')') && !(ch === '(' && i > 0 && s[i - 1] === '$')) {
+      if (current) pieces.push({ text: current, paren: null });
+      pieces.push({ text: '', paren: ch });
+      current = '';
+      i++;
+      continue;
+    }
+    current += ch;
+    i++;
+  }
+  if (current) pieces.push({ text: current, paren: null });
+  return pieces;
+}
+
 // ---- git push 实例级解析栈（SEE-1530 RC-A/C/D 精化）----
 
 function stripTokenQuotes(t) {
@@ -447,26 +476,51 @@ function createEvaluator(payload, opts) {
     let tracked = null;       // 前置 cd 链锚定目录；null = 未涉 cd（用会话 cwd）
     let unresolvable = false; // cd 链不可解析且未被后续 cd 重锚 → 后续目标不可信
     const dirs = [];
+    const groupStack = [];    // '(' 子 shell 组状态栈（进入压栈，')' 恢复组外链）
     let prevSep = '';
-    for (const seg of segments) {
-      // D-1（SEE-1530 QA）：cd 锚仅跨同 shell 边界（';'/换行/'&&'/'||'）传递；
-      // `&`/`|`/`|&` 左侧段在子 shell 执行、cwd 不外溢，重置锚（回退会话 cwd）。
-      // 不可解析毒化语义不变（仍随链携带，保守方向）。
-      if (prevSep === '&' || prevSep === '|' || prevSep === '|&') tracked = null;
-      prevSep = seg.sep;
-      const cd = parseCdDir(seg.text);
+    let savedTracked = null;
+    let savedUnresolvable = false;
+
+    const processPiece = (text) => {
+      const cd = parseCdDir(text);
       if (cd !== undefined) {
-        if (cd === null) { unresolvable = true; tracked = null; continue; }
+        if (cd === null) { unresolvable = true; tracked = null; return; }
         tracked = path.isAbsolute(cd) ? cd : path.resolve(tracked || cwd, cd);
         unresolvable = false;
-        continue;
+        return;
       }
-      for (const inst of scanGitPushInstances(seg.text).instances) {
+      for (const inst of scanGitPushInstances(text).instances) {
         const ev = evaluatePushInstance(inst, excludeRe);
         if (ev.isPureDelete) continue; // 纯删除 push 不入 belt 目标（Owner 定案）
         // OB-1（附着 `-C<path>` 由 scanGitInvocation 捕获）；OB-5 链按 git 语义
         // 锚定；OB-4 别名远端不在本函数语义面（origin-URL 身份判定冻结不改）。
         dirs.push(unresolvable ? null : resolveCdirChain(tracked || cwd, inst.cdirs));
+      }
+    };
+
+    for (const seg of segments) {
+      // R-B（SEE-1530 复验）：子 shell 边界（&/|/|&）左侧段自身的 cd 不外溢到
+      // 右侧段，但既有同 shell cwd 锚不得丢弃——恢复「左侧段执行前」状态
+      // （= 链上最后同 shell cd 的结果；后台/管道子 shell 继承已生效 cwd），
+      // 而非回退会话 cwd。不可解析毒化语义不变（保守方向）。
+      if (prevSep === '&' || prevSep === '|' || prevSep === '|&') {
+        tracked = savedTracked;
+        unresolvable = savedUnresolvable;
+      }
+      savedTracked = tracked;
+      savedUnresolvable = unresolvable;
+      prevSep = seg.sep;
+      // R-A/O-5（SEE-1530 复验）：'(' 子 shell 组内的 cd 只影响组内——'(' 压栈
+      // 继承当前 cwd（子 shell 继承父 cwd），')' 恢复组外链；组内 push 保持真
+      // 锚定（`(cd DF && git push)` allow）。花括号组是同 shell，不建栈。
+      for (const piece of splitParenPieces(seg.text)) {
+        if (piece.paren === '(') { groupStack.push({ tracked, unresolvable }); continue; }
+        if (piece.paren === ')') {
+          const saved = groupStack.pop();
+          if (saved) { tracked = saved.tracked; unresolvable = saved.unresolvable; }
+          continue;
+        }
+        processPiece(piece.text);
       }
     }
     const uniq = [];

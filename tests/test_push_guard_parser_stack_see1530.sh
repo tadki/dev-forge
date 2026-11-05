@@ -270,6 +270,41 @@ ea "D1-A2 kol: cd DF; push origin main → allow（; 同 shell 链传递）" "$F
 ea "D1-A3 kol: cd /tmp & cd DF && push → allow（& 重置后重锚）"     "$FIX/work_kol" "cd /tmp & cd $FIX/work_df_url && git push origin main" allow
 
 echo ""
+echo -e "${CYAN}--- Group RA: 圆括号子 shell 组 cd 不锚定组外链（§SPEC-008 / QA R-A）---${NC}"
+
+# R-A deny 面（Revy 复验 FAIL + Leader 三 ref 独立复现采信）：`(...)` 组内 cd 在
+# 子 shell 执行、不外溢（`( cd /tmp && (cd <DF>) && pwd )` → /tmp 实证），组外
+# push 实际落会话仓 master；旧实现把组内 cd 锚定到组外链（RC-D 剥壳使 `(cd`
+# 可识别），基线 `(cd` 不可识别 → 保守 deny，故为本 PR 引入的 FN 回归。
+# 修复 = '(' 压栈继承当前 cwd、')' 恢复组外链；O-5（`( cd <DF> )` 带空格，
+# 基线即 allow 的预存同族）经同一机制自然覆盖。
+ea "RA-1 kol: (cd DF) && push origin main → deny"                 "$FIX/work_kol" "(cd $FIX/work_df_url) && git push origin main" deny "禁止直接 push"
+ea "RA-2 kol: (cd DF); push origin main → deny"                   "$FIX/work_kol" "(cd $FIX/work_df_url); git push origin main" deny "禁止直接 push"
+ea "RA-3 kol: (cd DF) && push origin master → deny"               "$FIX/work_kol" "(cd $FIX/work_df_url) && git push origin master" deny "禁止直接 push"
+ea "RA-4 kol: (cd DF) && push -f origin feature/x → deny（force 门）" "$FIX/work_kol" "(cd $FIX/work_df_url) && git push -f origin feature/x" deny "禁止 force-push"
+ea "RA-5 kol: ( cd DF ) 带空格 && push origin main → deny（O-5 同轮闭合）" "$FIX/work_kol" "( cd $FIX/work_df_url ) && git push origin main" deny "禁止直接 push"
+ea "RA-6 gqt: (cd DF) && push origin main → deny"                 "$FIX/work_gqt" "(cd $FIX/work_df_url) && git push origin main" deny "禁止直接 push"
+ea "RA-7 kol: (cd DF && true) && push origin main → deny"         "$FIX/work_kol" "(cd $FIX/work_df_url && true) && git push origin main" deny "禁止直接 push"
+ea "RA-8 kol: (cd DF; true) && push origin main → deny"           "$FIX/work_kol" "(cd $FIX/work_df_url; true) && git push origin main" deny "禁止直接 push"
+
+# RA allow 对照（防修复外溢）：组内真锚定 push、花括号同 shell 组
+ea "RA-A1 kol: (cd DF && push origin main) 组内真锚定 → allow"      "$FIX/work_kol" "(cd $FIX/work_df_url && git push origin main)" allow
+ea "RA-A2 kol: { cd DF; } && push origin main → allow（花括号同级 shell）" "$FIX/work_kol" "{ cd $FIX/work_df_url; } && git push origin main" allow
+
+echo ""
+echo -e "${CYAN}--- Group RB: 边界重置保留既有同 shell cwd 锚（§SPEC-008 / QA R-B）---${NC}"
+
+# R-B allow 面（Revy 复验 FAIL + Leader 复现采信）：`&`/`|`/`|&` 左侧段自身的 cd
+# 不外溢，但既有同 shell cwd 锚不得丢弃——bash 后台/管道子 shell 继承已生效 cwd
+# （`( cd <DF> ; true & pwd )` → <DF> 实证）。旧实现重置回会话 cwd → 合法 dev-forge
+# 推送被误拦（基线/`b7bb159` allow → `31334e5` deny，MEDIUM FP 回归）。
+ea "RB-1 kol: cd DF; push main & push main → allow（后台继承 cwd）"   "$FIX/work_kol" "cd $FIX/work_df_url ; git push origin main & git push origin main" allow
+ea "RB-2 kol: cd DF; push main | push main → allow（管道继承 cwd）"   "$FIX/work_kol" "cd $FIX/work_df_url ; git push origin main | git push origin main" allow
+ea "RB-3 kol: cd DF; push main |& push main → allow"                 "$FIX/work_kol" "cd $FIX/work_df_url ; git push origin main |& git push origin main" allow
+ea "RB-4 kol: cd DF; push feature & push main → allow（混合目标）"    "$FIX/work_kol" "cd $FIX/work_df_url ; git push origin feature/x & git push origin main" allow
+ea "RB-5 kol: cd DF && push feature; push main & push main → allow"  "$FIX/work_kol" "cd $FIX/work_df_url && git push origin feature/x ; git push origin main & git push origin main" allow
+
+echo ""
 echo -e "${CYAN}--- OB-4 行为冻结登记（无断言）---${NC}"
 echo "  OB-4 别名远端逃逸（dev-forge 检出内 push 指向 KOL 的别名 remote）："
 echo "  origin-URL 身份判定固有边界，Owner 未裁决前冻结不改（本套件不为其加钉，"
