@@ -153,7 +153,12 @@ OLDHITS=$(grep -rn "$OLDREF" "$REPO_ROOT/.claude" "$REPO_ROOT/claude-hooks" "$RE
 
 # 4e: 既有 reconcile 套件锚定新路径（套件路径漂移即同步红）
 for S in test_reconcile_working_branch_args_see954.sh test_reconcile_working_branch_flow_see1042.sh; do
-    grep -q 'SCRIPT="$WORKTREE_DIR/claude-hooks/scripts/reconcile-working-branch.sh"' "$REPO_ROOT/tests/$S" \
+    # SEE-1525: the anchor tracks the live script location (scripts/, where the
+    # file has lived since the KOL→dev-forge migration); the previous anchor
+    # named claude-hooks/scripts/ — a path that no longer exists, which made
+    # both suites' script lookups vacuously pass their guards while asserting
+    # nothing. Keep the guard pointed at the real file.
+    grep -q 'SCRIPT="$WORKTREE_DIR/scripts/reconcile-working-branch.sh"' "$REPO_ROOT/tests/$S" \
         && pass "4e: $S 锚定新路径" \
         || fail "4e: $S 未锚定新路径"
 done

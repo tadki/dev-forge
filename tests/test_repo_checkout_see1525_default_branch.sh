@@ -82,14 +82,17 @@ EOF
     chmod +x "$bin_dir/multica"
 }
 
-# git passthrough shim that makes `ls-remote` fail (simulates unreachable
-# remote), used only inside scenario C's align run.
+# git passthrough shim that makes the default-branch SYMREF lookup fail
+# (simulates an origin that cannot report its HEAD symref), used only inside
+# scenario C's align run. Deliberately narrow: plain ls-remote queries
+# (branch existence checks) must keep working so the scenario exercises the
+# resolution chain, not unrelated guards.
 make_no_lsremote_git_shim() {
     local bin_dir="$1"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/git" <<EOF
 #!/bin/bash
-if [ "\$1" = "ls-remote" ]; then
+if [ "\$1" = "ls-remote" ] && [ "\${2:-}" = "--symref" ]; then
     exit 1
 fi
 exec "$(command -v git)" "\$@"

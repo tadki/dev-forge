@@ -7,19 +7,21 @@ set -euo pipefail
 #   scripts/reconcile-working-branch.sh [--issue-id <id>] <working_branch>
 #   scripts/reconcile-working-branch.sh --continue <working_branch>
 #
-# Normal flow: fetch → branch reconcile/<wb> off origin/<wb> → rebase
-#   origin/master → (on conflict: human resolves on reconcile/<wb>, then run
-#   --continue) → --force-with-lease push (first-reconciler-wins).
+# Normal flow: fetch → branch reconcile/<wb> off origin/<wb> → rebase onto the
+#   origin default branch (resolved per-repo — SEE-1525; never hardcoded) →
+#   (on conflict: human resolves on reconcile/<wb>, then run --continue)
+#   → --force-with-lease push (first-reconciler-wins).
 # --continue:  resume after a rebase conflict — finish `git rebase --continue`
 #   on the existing reconcile/<wb> branch and push with the lease baseline
 #   recorded when the normal run started, so a commit that landed on <wb>
 #   during conflict resolution still trips the lease instead of being lost.
 #
 # Exit codes (runtime; pre-flight arg errors stay exit 1 per SEE-954):
-#   0  success — <wb> now contains origin/master
+#   0  success — <wb> now contains the origin default branch
 #   1  rebase conflict — reconcile/<wb> retained; resolve there then --continue
 #   2  push lease lost — a commit landed on <wb>; rerun this script (normal mode)
-#   3  other error — not a repo, fetch/parse/checkout failure, etc.
+#   3  other error — not a repo, fetch/parse/checkout failure, unresolvable
+#      origin default branch (SEE-1525: hard error — never rebase a guessed base)
 
 CONTINUE_MODE=0
 ISSUE_ID_ARG=""
@@ -68,6 +70,30 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "[reconcile] 当前目录不是 git 仓库" >&2
     exit 3
 fi
+
+# Resolve origin's default branch per-repo (SEE-1525): the rebase base must
+# never be hardcoded (dev-forge defaults to main; master-default repos keep
+# identical behavior). Same resolution chain as repo-checkout.sh's
+# resolve_origin_default_branch, inlined because hook/reconcile scripts are
+# deployed independently — no shared lib ships with them. Echoes empty when
+# unresolvable (origin/HEAD absent AND ls-remote unreachable/unborn).
+resolve_origin_default_branch() {
+    local default_branch=""
+    default_branch=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    default_branch=${default_branch#origin/}
+    if [ -z "$default_branch" ] || ! git rev-parse --verify --quiet "origin/${default_branch}" >/dev/null 2>&1; then
+        # 30s matches repo-checkout.sh's GIT_FETCH_TIMEOUT for origin lookups.
+        # `|| true`: this script runs under `set -euo pipefail` — an unreachable
+        # remote must degrade to "empty" (callers report loudly), not kill the
+        # subshell before the readable error can be printed.
+        default_branch=$(timeout 30 git ls-remote --symref origin HEAD 2>/dev/null \
+            | awk '$1 == "ref:" { sub("^refs/heads/", "", $2); print $2; exit }') || true
+    fi
+    if [ -n "$default_branch" ] && ! git rev-parse --verify --quiet "origin/${default_branch}" >/dev/null 2>&1; then
+        default_branch=""
+    fi
+    echo "$default_branch"
+}
 
 RECONCILE_BRANCH="reconcile/${WORKING_BRANCH//\//-}"
 # Lease baseline file: persists the origin/<wb> tip captured at the start of a
@@ -160,6 +186,10 @@ if [ "$CONTINUE_MODE" -eq 1 ]; then
     # push or a lease-failure (exit 2) cleanup discards it.
     echo "[reconcile] --continue: fetching origin..." >&2
     git fetch origin >/dev/null 2>&1 || { echo "[reconcile] fetch 失败" >&2; exit 3; }
+    # Message-only resolution here: --continue never needs a rebase base (the
+    # rebase is already finished), so an unresolvable default branch must not
+    # block the push — fall back to generic wording instead.
+    DEFAULT_BRANCH=$(resolve_origin_default_branch)
     if ! git ls-remote --exit-code --heads origin "$WORKING_BRANCH" >/dev/null 2>&1; then
         echo "[reconcile] 远程不存在 origin/${WORKING_BRANCH}" >&2
         exit 3
@@ -190,7 +220,7 @@ if [ "$CONTINUE_MODE" -eq 1 ]; then
     rm -f "$LEASE_FILE" 2>/dev/null || true
 
     clear_blocked_metadata
-    echo "[reconcile] 完成 — ${WORKING_BRANCH} 现在已包含 origin/master。" >&2
+    echo "[reconcile] 完成 — ${WORKING_BRANCH} 现在已包含 origin/${DEFAULT_BRANCH:-默认分支}。" >&2
     exit 0
 fi
 
@@ -210,6 +240,17 @@ WB_OLD_SHA=$(git rev-parse "origin/${WORKING_BRANCH}" 2>/dev/null) || {
     echo "[reconcile] 无法解析 origin/${WORKING_BRANCH}" >&2
     exit 3
 }
+
+# Rebase base resolved per-repo (SEE-1525). Normal mode rebases for real, so
+# an unresolvable base is a HARD error before any state changes: this is a
+# Leader-facing manual tool — a loud stop beats rebasing against a guessed
+# ref (and beats pinning phantom conflict metadata downstream).
+DEFAULT_BRANCH=$(resolve_origin_default_branch)
+if [ -z "$DEFAULT_BRANCH" ]; then
+    echo "[reconcile] 无法解析 origin 默认分支（origin/HEAD 缺失且 ls-remote 不可达或结果未在本地）——不对猜测基准 rebase，已中止。" >&2
+    echo "[reconcile] 请检查 origin 配置/网络后重试。" >&2
+    exit 3
+fi
 
 # Record the lease baseline so a later --continue can still detect commits that
 # landed on <wb> during conflict resolution.
@@ -239,8 +280,8 @@ git checkout -b "$RECONCILE_BRANCH" "origin/${WORKING_BRANCH}" || {
     exit 3
 }
 
-echo "[reconcile] rebase 到 origin/master..." >&2
-if ! git rebase origin/master; then
+echo "[reconcile] rebase 到 origin/${DEFAULT_BRANCH}..." >&2
+if ! git rebase "origin/${DEFAULT_BRANCH}"; then
     echo "[reconcile] 发生冲突。请在 ${RECONCILE_BRANCH} 上解决冲突，然后运行：" >&2
     echo "  bash $0 --continue ${WORKING_BRANCH}" >&2
     echo "[reconcile]（不要重跑不带 --continue 的脚本，否则会丢弃已解决的冲突）" >&2
@@ -260,4 +301,4 @@ git branch -D "$RECONCILE_BRANCH" >/dev/null 2>&1 || true
 rm -f "$LEASE_FILE" 2>/dev/null || true
 
 clear_blocked_metadata
-echo "[reconcile] 完成 — ${WORKING_BRANCH} 现在已包含 origin/master。" >&2
+echo "[reconcile] 完成 — ${WORKING_BRANCH} 现在已包含 origin/${DEFAULT_BRANCH}。" >&2
