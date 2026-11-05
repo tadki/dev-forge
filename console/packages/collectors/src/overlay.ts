@@ -1,8 +1,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isMap, isSeq, parse, parseDocument, type YAMLSeq } from 'yaml';
-import type { Asset } from '@forge/schema';
-import type { Meta } from '@forge/schema';
+import { registryEntrySchema, type Asset, type Diagnostic, type Meta } from '@forge/schema';
 import type { RegistryState } from './registry.js';
 
 export interface RegistryMatch {
@@ -19,10 +18,6 @@ export interface RegistryEntry {
   file: string;
 }
 
-interface ManifestFile {
-  entries?: Array<{ id: string; match?: RegistryMatch; platforms?: string[]; meta?: Meta }>;
-}
-
 export function matchesRegistryEntry(asset: Asset, entry: RegistryEntry): boolean {
   const m = entry.match ?? {};
   if (m.idPrefix && asset.id.startsWith(m.idPrefix)) return true;
@@ -30,27 +25,49 @@ export function matchesRegistryEntry(asset: Asset, entry: RegistryEntry): boolea
   return false;
 }
 
-/** 读 console/registry.d/*.yaml（缺失目录 = 无声明，不报错） */
-export async function loadRegistryEntries(dir: string): Promise<RegistryEntry[]> {
+export interface LoadedRegistry {
+  entries: RegistryEntry[];
+  /** 加载/校验诊断（YAML 解析失败、entry 契约违规——逐条报，不静默） */
+  diagnostics: Diagnostic[];
+}
+
+/** 读 console/registry.d/*.yaml 并过 registryEntrySchema 校验（缺失目录 = 无声明，不报错） */
+export async function loadRegistryEntries(dir: string): Promise<LoadedRegistry> {
   let files: string[] = [];
   try {
     files = (await readdir(dir)).filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'));
   } catch {
-    return [];
+    return { entries: [], diagnostics: [] };
   }
   const out: RegistryEntry[] = [];
+  const diagnostics: Diagnostic[] = [];
   for (const f of files) {
-    let raw: ManifestFile;
+    let raw: unknown;
     try {
-      raw = parse(await readFile(join(dir, f), 'utf8')) as ManifestFile;
-    } catch {
+      raw = parse(await readFile(join(dir, f), 'utf8'));
+    } catch (e) {
+      diagnostics.push({ level: 'error', message: `[registry] YAML 解析失败：${f}（${String(e).slice(0, 200)}）`, path: join(dir, f) });
       continue;
     }
-    for (const e of raw.entries ?? []) {
-      if (e?.id) out.push({ id: e.id, match: e.match ?? {}, platforms: e.platforms, meta: e.meta, file: join(dir, f) });
+    const entries = (raw as { entries?: unknown[] } | null)?.entries;
+    if (!Array.isArray(entries)) continue;
+    for (const e of entries) {
+      const check = registryEntrySchema.safeParse(e);
+      if (!check.success) {
+        const issue = check.error.issues[0];
+        const idHint = e && typeof e === 'object' && 'id' in e ? String((e as { id?: unknown }).id) : '(无 id)';
+        diagnostics.push({
+          level: 'error',
+          message: `[registry] 声明 ${idHint} 违反 entry 契约：${issue.path.join('.') || '(root)'}: ${issue.message}`,
+          path: join(dir, f),
+        });
+        continue;
+      }
+      const d = check.data;
+      out.push({ id: d.id, match: d.match ?? {}, platforms: d.platforms, meta: d.meta, file: join(dir, f) });
     }
   }
-  return out;
+  return { entries: out, diagnostics };
 }
 
 /**

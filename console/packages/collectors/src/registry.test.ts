@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Asset, Collection } from '@forge/schema';
-import { mergeCollections } from './registry.js';
+import { mergeCollections, runCollectors } from './registry.js';
+import type { CollectContext, Collector } from './types.js';
 
 function instr(id: string, path: string, hash: string, ws?: string, lines = 100): Asset {
   return {
@@ -60,5 +61,37 @@ describe('merge order stability（修前端闪动）', () => {
     const b = mergeCollections([make(['instruction:a/CLAUDE.md', 'instruction:b/CLAUDE.md'])]);
     expect(a.assets.map((x) => x.id)).toEqual(['instruction:a/CLAUDE.md', 'instruction:b/CLAUDE.md']);
     expect(a.assets.map((x) => x.id)).toEqual(b.assets.map((x) => x.id));
+  });
+});
+
+describe('runCollectors 出口 payload 校验（fail-open 不静默）', () => {
+  const ctxBase = (): CollectContext => ({
+    config: {} as CollectContext['config'],
+    paths: { home: '/h', devforge: '/d', claude: '/c', multicaWorkspaces: '/m' },
+    now: new Date('2026-11-05T00:00:00Z'),
+    exec: async () => ({ ok: true, stdout: '', stderr: '' }),
+    diagnostics: [],
+  });
+
+  it('payload 违规资产保留 + [schema] warn 诊断，合规资产无诊断', async () => {
+    const bad: Asset = {
+      ...instr('instruction:bad/CLAUDE.md', '/bad/CLAUDE.md', 'h1'),
+      payload: { lines: 'not-a-number' },
+    };
+    const good = instr('instruction:good/CLAUDE.md', '/good/CLAUDE.md', 'h2');
+    const c: Collector = {
+      name: 'test-collector',
+      mode: 'on-request',
+      async collect() {
+        return { assets: [bad, good], relations: [], diagnostics: [] };
+      },
+    };
+    const state = await runCollectors(ctxBase(), [c]);
+    expect(state.assets).toHaveLength(2); // fail-open：违规资产仍在
+    const warn = state.diagnostics.filter((d) => d.message.includes('[schema]'));
+    expect(warn).toHaveLength(1);
+    expect(warn[0].message).toMatch(/instruction:bad\/CLAUDE\.md/);
+    expect(warn[0].message).toMatch(/payload 不符 instruction 契约：lines/);
+    expect(state.collectorStatus[0].ok).toBe(true); // 采集器本身不判失败
   });
 });

@@ -73,6 +73,234 @@ export const sourceSchema = z.object({
   git: z.object({ repo: z.string(), rev: z.string() }).optional(),
 });
 
+/** 平台 id 注册（当前两个运行时；新增平台 = 扩这里 + 对应采集器/投影） */
+export const PLATFORM_IDS = ['claude-code', 'multica'] as const;
+
+/**
+ * registry.d 声明 entry 契约：元信息层（归属/生命周期/平台声明），与资产 payload 契约互不重叠。
+ * platforms 收紧到 PLATFORM_IDS；meta 复用通用 metaSchema。
+ */
+export const registryEntrySchema = z.object({
+  id: z.string().min(1),
+  match: z.object({ idPrefix: z.string().optional(), pathPrefix: z.string().optional() }).optional(),
+  platforms: z.array(z.enum(PLATFORM_IDS)).optional(),
+  meta: metaSchema.optional(),
+});
+
+export type RegistryDeclaration = z.infer<typeof registryEntrySchema>;
+
+/**
+ * Per-kind payload 契约：字段取自各内置采集器实际产出 + 消费端（UI/effective/migration/reconcile）
+ * 实际读取的交集。语义是「已知名键的类型约束」，不是「必填字段清单」：
+ * - 全部字段 optional（缺失不报错）——REST 推送 / collectors.d 外部脚本可以只给子集
+ * - looseObject 允许未知键透传（overlay 盖戳的 registry、未来新增字段）
+ * - 已知键类型不符即拒绝——这是 payload 漂移的实际防线
+ * registry.d 声明是元信息层（归属/生命周期/平台声明），其字段不属于这里。
+ */
+const headingSchema = z.object({ level: z.number(), text: z.string() });
+
+const agentPayload = z.looseObject({
+  // CC subagent（claude-projects 从 .claude/agents/*.md 采集）
+  subagent: z.boolean().optional(),
+  project: z.string().optional(),
+  frontmatter: z.string().optional(),
+  bodyLines: z.number().optional(),
+  // multica 平台 agent（环境无关字段；运行时状态归 deployment）
+  description: z.string().optional(),
+  instructions: z.string().optional(),
+  instructionsHash: z.string().optional(),
+  model: z.string().optional(),
+  thinkingLevel: z.string().optional(),
+  skills: z.array(z.object({ name: z.string(), id: z.string().optional(), description: z.string().optional(), enabled: z.boolean().optional() })).optional(),
+  disabledRuntimeSkills: z.array(z.string()).optional(),
+  mcp: z.record(z.string(), z.unknown()).optional(),
+  mcpRedacted: z.boolean().optional(),
+  customEnvKeyCount: z.number().optional(),
+  customArgs: z.array(z.string()).optional(),
+});
+
+const deploymentPayload = z.looseObject({
+  platform: z.string().optional(),
+  agent: z.string().optional(),
+  platformId: z.string().optional(),
+  workspaceId: z.string().optional(),
+  status: z.string().optional(),
+  maxConcurrentTasks: z.number().optional(),
+  runtimeId: z.string().optional(),
+});
+
+const instructionPayload = z.looseObject({
+  group: z.string().optional(),
+  basename: z.string().optional(),
+  lines: z.number().optional(),
+  headings: z.array(headingSchema).optional(),
+  lang: z.string().optional(),
+  content: z.string().optional(),
+  contentHash: z.string().optional(),
+  projectName: z.string().optional(),
+});
+
+const skillPayload = z.looseObject({
+  hasBody: z.boolean().optional(),
+  lines: z.number().optional(),
+  scope: z.string().optional(),
+  content: z.string().optional(),
+  command: z.boolean().optional(),
+  // multica 平台技能
+  platformId: z.string().optional(),
+  labels: z.array(z.string()).optional(),
+  workspaceId: z.string().optional(),
+  files: z.array(z.object({ path: z.string(), content: z.string().optional() })).optional(),
+  // UI 平台物化徽章读取此键（当前无采集器产出——历史死读，字段保留）
+  platformSkill: z.boolean().optional(),
+});
+
+const hookRegistrationPayload = z.looseObject({
+  // settings.json hooks 挂载点
+  event: z.string().optional(),
+  matcher: z.string().optional(),
+  // dev-forge hooks-registration.json 清单（整份展开，含 hook_points/alias 等）
+  stateSentinels: z.number().optional(),
+});
+
+const hookRulePayload = z.looseObject({
+  harness: z.array(z.string()).optional(),
+  whenKind: z.enum(['none', 'payload', 'ops', 'mixed']).optional(),
+  on: z.array(z.string()).optional(),
+  onExcept: z.array(z.string()).optional(),
+  agents: z.object({ include: z.array(z.string()).optional(), except: z.array(z.string()).optional() }).optional(),
+  repoGating: z.object({ in: z.array(z.string()).optional(), registered: z.boolean().optional() }).optional(),
+  oneShot: z.string().optional(),
+  whenHuman: z.string().optional(),
+  actions: z.array(z.object({ op: z.string(), message: z.string().optional(), path: z.string().optional() })).optional(),
+  blocking: z.boolean().optional(),
+  versionNote: z.string().optional(),
+  fileDeclaredScope: z.string().optional(),
+  overlay: z.boolean().optional(),
+});
+
+const hookScriptPayload = z.looseObject({
+  lines: z.number().optional(),
+  purpose: z.string().optional(),
+});
+
+const servicePayload = z.looseObject({
+  // systemd 单元：active/sub/is-enabled 均为 systemctl 原文（active|dead|disabled|enabled…）
+  // repo-sync（devforge-launch）：active 为实值探测，enabled 为布尔（注册文件 enabled 取反）
+  active: z.string().optional(),
+  sub: z.string().optional(),
+  enabled: z.union([z.string(), z.boolean()]).optional(),
+  scope: z.string().optional(),
+  execStart: z.string().optional(),
+  envFile: z.string().optional(),
+  mainPid: z.number().optional(),
+  since: z.string().optional(),
+  description: z.string().optional(),
+  children: z.array(z.object({ pid: z.number(), up: z.string(), args: z.string() })).optional(),
+  trigger: z.string().optional(),
+  // repo-sync
+  daemon: z.string().optional(),
+  logDir: z.string().optional(),
+  // Windows 登录桥
+  script: z.union([z.string(), z.boolean()]).optional(),
+  taskStatus: z.string().optional(),
+  stale: z.boolean().optional(),
+  note: z.string().optional(),
+});
+
+const autopilotPayload = z.looseObject({
+  // multica 平台 autopilot
+  platformId: z.string().optional(),
+  description: z.string().optional(),
+  assignee: z.string().optional(),
+  status: z.string().optional(),
+  triggers: z.array(z.object({
+    id: z.string(),
+    kind: z.string(),
+    cron_expression: z.string().optional(),
+    timezone: z.string().optional(),
+    enabled: z.boolean().optional(),
+    next_run_at: z.string().optional(),
+    label: z.string().optional(),
+  })).optional(),
+  lastRunAt: z.string().optional(),
+  lastRunStatus: z.string().optional(),
+  nextRunAt: z.string().optional(),
+  workspaceId: z.string().optional(),
+  // dev-forge 脚本型 / agent 评审型
+  script: z.boolean().optional(),
+  lines: z.number().optional(),
+  purpose: z.string().optional(),
+  reviewKind: z.string().optional(),
+  templates: z.array(z.string()).optional(),
+});
+
+const adapterPayload = z.looseObject({
+  envContract: z.array(z.string()).optional(),
+  lines: z.number().optional(),
+});
+
+const mcpEndpointPayload = z.looseObject({
+  transport: z.string().optional(),
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  url: z.string().optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+  perAgent: z.boolean().optional(),
+});
+
+const projectPayload = z.looseObject({
+  path: z.string().optional(),
+  git: z.string().optional(),
+  workspace: z.string().optional(),
+  workspaceName: z.string().optional(),
+  harnesses: z.array(z.string()).optional(),
+  missing: z.boolean().optional(),
+  hasClaudeMd: z.boolean().optional(),
+  claudeMdLines: z.number().optional(),
+  claudeMdHash: z.string().optional(),
+  hasSettings: z.boolean().optional(),
+  hooksScripts: z.number().optional(),
+  skills: z.array(z.string()).optional(),
+  agents: z.array(z.string()).optional(),
+  mcpServers: z.array(z.string()).optional(),
+});
+
+const reportPayload = z.looseObject({
+  health: z.string().optional(),
+  generatedAt: z.string().optional(),
+  redlineCount: z.number().optional(),
+  redlines: z.array(z.unknown()).optional(),
+  dimensions: z.unknown().optional(),
+  inputMissing: z.unknown().optional(),
+  exitCode: z.number().optional(),
+  report: z.record(z.string(), z.unknown()).optional(),
+});
+
+const envPayload = z.looseObject({
+  values: z.record(z.string(), z.unknown()).optional(),
+  count: z.number().optional(),
+});
+
+export const payloadSchemas: Record<AssetKind, z.ZodType> = {
+  agent: agentPayload,
+  deployment: deploymentPayload,
+  instruction: instructionPayload,
+  skill: skillPayload,
+  'hook-registration': hookRegistrationPayload,
+  'hook-rule': hookRulePayload,
+  'hook-script': hookScriptPayload,
+  service: servicePayload,
+  autopilot: autopilotPayload,
+  adapter: adapterPayload,
+  'mcp-endpoint': mcpEndpointPayload,
+  project: projectPayload,
+  report: reportPayload,
+  env: envPayload,
+  // custom 是通用兜底 kind（sessions/activity/plugins/recent-tasks…），不做字段约束
+  custom: z.looseObject({}),
+};
+
 export const assetBase = {
   kind: kindEnum,
   name: z.string(),
@@ -100,7 +328,24 @@ export const assetSchema = z
         message: `id prefix must be "${prefix}" (got "${a.id}")`,
       });
     }
+    const payloadCheck = payloadSchemas[a.kind].safeParse(a.payload);
+    if (!payloadCheck.success) {
+      for (const issue of payloadCheck.error.issues.slice(0, 5)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `payload/${a.kind} ${issue.path.join('.') || '(root)'}: ${issue.message}`,
+        });
+      }
+    }
   });
+
+/** 单资产校验（采集出口 fail-open 用）：返回首个 payload 违规描述，null = 通过 */
+export function assetPayloadIssue(a: Pick<Asset, 'id' | 'kind' | 'payload'>): string | null {
+  const check = payloadSchemas[a.kind]?.safeParse(a.payload);
+  if (!check || check.success) return null;
+  const issue = check.error.issues[0];
+  return `${issue.path.join('.') || '(root)'}: ${issue.message}`;
+}
 
 export const relationSchema = z.object({
   from: z.string(),
