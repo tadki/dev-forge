@@ -126,7 +126,9 @@ export class Engine {
       const ctx = makeContext(this.config);
       let state = await runCollectors(ctx, this.collectors);
       const registryDir = this.config.registryDir ?? join(this.config.devforge, 'console', 'registry.d');
-      this.registryEntries = await loadRegistryEntries(registryDir);
+      const loaded = await loadRegistryEntries(registryDir);
+      this.registryEntries = loaded.entries;
+      state.diagnostics = [...state.diagnostics, ...loaded.diagnostics];
       state = applyRegistryOverlay(state, this.registryEntries);
       // 保留 push 型自定义资产
       const pushed = this.state.assets.filter((a) => a.source.collector === 'push');

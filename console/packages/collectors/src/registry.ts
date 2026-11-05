@@ -1,6 +1,6 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { Asset, Collection, Diagnostic, Relation } from '@forge/schema';
+import { assetPayloadIssue, type Asset, type Collection, type Diagnostic, type Relation } from '@forge/schema';
 import type { CollectContext, Collector } from './types.js';
 import type { ReconcileReport } from './reconcile.js';
 
@@ -56,6 +56,13 @@ export async function runCollectors(
       const started = Date.now();
       try {
         const result = await c.collect({ ...ctx, diagnostics: [] });
+        // per-kind payload 出口校验：违规不阻断采集（fail-open），但逐条 warn 诊断（不静默）
+        for (const a of result.assets) {
+          const issue = assetPayloadIssue(a);
+          if (issue) {
+            result.diagnostics.push({ level: 'warn', message: `[schema] 资产 ${a.id} payload 不符 ${a.kind} 契约：${issue}`, path: a.source.path });
+          }
+        }
         const collection: Collection = {
           collector: c.name,
           collectedAt: ctx.now.toISOString(),

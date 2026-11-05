@@ -57,18 +57,18 @@ describe('registry.d 声明盖戳（overlay）', () => {
   it('loads entries from yaml', async () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'owned.yaml'), MANIFEST);
-    const entries = await loadRegistryEntries(dir);
+    const { entries } = await loadRegistryEntries(dir);
     expect(entries.map((e) => e.id)).toEqual(['forge-console', 'devforge-hooks', 'never-matches']);
   });
 
   it('missing dir → no entries', async () => {
-    expect(await loadRegistryEntries(join(dir, 'nope'))).toEqual([]);
+    expect(await loadRegistryEntries(join(dir, 'nope'))).toEqual({ entries: [], diagnostics: [] });
   });
 
   it('stamps meta + provenance on matched assets; third-party overridden to ours when declared', async () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'owned.yaml'), MANIFEST);
-    const entries = await loadRegistryEntries(dir);
+    const { entries } = await loadRegistryEntries(dir);
     const a1 = mk('service:systemd-forge-console.service', 'systemd://user/forge-console.service', 'third-party');
     const a2 = mk('hook-rule:push-guard-master-gate', '/home/jerry/tools/dev-forge/claude-hooks/unified/rules.d/x.json');
     const out = applyRegistryOverlay(stateOf([a1, a2]), entries);
@@ -83,7 +83,7 @@ describe('registry.d 声明盖戳（overlay）', () => {
   it('unmatched declarations surface as assets + diagnostics; undeclared first-party flagged', async () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'owned.yaml'), MANIFEST);
-    const entries = await loadRegistryEntries(dir);
+    const { entries } = await loadRegistryEntries(dir);
     const stranger = mk('hook-rule:some-new-rule', '/home/jerry/elsewhere/new-rule.json');
     const third = mk('skill:ecc-x', '/x', 'third-party');
     const out = applyRegistryOverlay(stateOf([stranger, third]), entries);
@@ -95,6 +95,31 @@ describe('registry.d 声明盖戳（overlay）', () => {
     const tp = out.assets.find((x) => x.id === third.id)!;
     expect((s.payload as { registry?: { declared?: boolean } }).registry?.declared).toBe(false);
     expect((tp.payload as { registry?: { declared?: boolean } }).registry?.declared).toBeUndefined();
+  });
+
+  it('entry 契约违规 → 跳过该 entry 并报 error 诊断（坏平台枚举/坏 lifecycle）', async () => {
+    const badDir = join(dir, 'invalid');
+    await mkdir(badDir, { recursive: true });
+    await writeFile(
+      join(badDir, 'bad.yaml'),
+      `entries:
+  - id: ok-entry
+    match: { pathPrefix: "/home/jerry/tools/" }
+    platforms: [claude-code]
+  - id: bad-platform
+    match: { pathPrefix: "/x" }
+    platforms: [hermes]
+  - id: bad-lifecycle
+    match: { pathPrefix: "/y" }
+    meta: { lifecycle: stablee }
+`
+    );
+    const { entries, diagnostics } = await loadRegistryEntries(badDir);
+    expect(entries.map((e) => e.id)).toEqual(['ok-entry']);
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics.every((d) => d.level === 'error')).toBe(true);
+    expect(diagnostics.map((d) => d.message).join(';')).toMatch(/bad-platform/);
+    expect(diagnostics.map((d) => d.message).join(';')).toMatch(/bad-lifecycle/);
   });
 
   afterAll(async () => {
