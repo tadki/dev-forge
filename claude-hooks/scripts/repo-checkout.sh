@@ -14,7 +14,7 @@ REPO_NAME="KingOfLikes-Godot"
 #      timeout the op fails soft and the existing fallback paths take over.
 GIT_FETCH_TIMEOUT=30      # git fetch / ls-remote against origin
 GIT_PUSH_TIMEOUT=45       # git push (force-with-lease, shared-branch create)
-GIT_REBASE_TIMEOUT=60     # §B auto-rebase (worktree add + rebase origin/master)
+GIT_REBASE_TIMEOUT=60     # §B auto-rebase (worktree add + rebase origin/<default>)
 MULTICA_CLI_TIMEOUT=20    # multica issue / agent / metadata CLI calls
 REPO_CHECKOUT_TIMEOUT=120 # multica repo checkout (full clone can be large)
 MARKER_FRESH_SECS=600     # treat .cc-aligned-* marker as valid for 10 min
@@ -165,14 +165,44 @@ is_worktree_dirty() {
 }
 
 # List agent-produced commits that would be lost on reset: between upstream_ref
-# and HEAD, excluding anything already on master. In the SEE-954 model origin/
-# <working_branch> already contains master (via the §B auto-rebase below), so
-# `--not origin/master` never hides real agent commits and keeps a freshly
-# aligned checkout — whose HEAD is an ancestor of master — from falsely
-# tripping the protection.
+# and HEAD, excluding anything already on the origin default branch. In the
+# SEE-954 model origin/<working_branch> already contains the default branch
+# (via the §B auto-rebase below), so `--not origin/<default>` never hides real
+# agent commits and keeps a freshly aligned checkout — whose HEAD is an
+# ancestor of the default branch — from falsely tripping the protection.
+# default_branch empty (unresolvable, SEE-1525) → exclude nothing: the guard
+# may then over-block on an already-merged commit (safe direction) but never
+# silently under-protects.
 list_unpushed_commits() {
     local upstream_ref="$1"
-    git log "${upstream_ref}..HEAD" --not origin/master --oneline 2>/dev/null
+    local default_branch="${2:-}"
+    if [ -n "$default_branch" ]; then
+        git log "${upstream_ref}..HEAD" --not "origin/${default_branch}" --oneline 2>/dev/null
+    else
+        git log "${upstream_ref}..HEAD" --oneline 2>/dev/null
+    fi
+}
+
+# Resolve origin's default branch per-repo (SEE-1525 §B fix): §B, the unpushed
+# guard, and recovery hints must never hardcode a branch name (dev-forge
+# defaults to main; master-default repos keep identical behavior). Resolution
+# chain: origin/HEAD symref → ls-remote --symref → empty. Empty (unresolvable —
+# origin/HEAD absent AND ls-remote unreachable/unborn) ⇒ callers degrade
+# safely: §B skips with a readable hint (no rebase against a guessed ref, no
+# phantom blocked_reason pinning), the unpushed guard excludes nothing
+# (over-block beats silent under-protection).
+resolve_origin_default_branch() {
+    local default_branch=""
+    default_branch=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    default_branch=${default_branch#origin/}
+    if [ -z "$default_branch" ] || ! git rev-parse --verify --quiet "origin/${default_branch}" >/dev/null 2>&1; then
+        default_branch=$(timeout "$GIT_FETCH_TIMEOUT" git ls-remote --symref origin HEAD 2>/dev/null \
+            | awk '$1 == "ref:" { sub("^refs/heads/", "", $2); print $2; exit }')
+    fi
+    if [ -n "$default_branch" ] && ! git rev-parse --verify --quiet "origin/${default_branch}" >/dev/null 2>&1; then
+        default_branch=""
+    fi
+    echo "$default_branch"
 }
 
 # Idempotently point the current branch's upstream at origin/<working_branch>.
@@ -193,17 +223,20 @@ set_agent_upstream() {
 # source of truth for the A/B/C entry points (Refacty §3, Revy R8), so the
 # race/early-exit path inherits the same protection as the main path (Revy E8).
 #
-# SEE-954: the per-SessionStart `git rebase origin/master` is gone. A §B
-# auto-rebase advances origin/<working_branch> to contain master (first-agent
-# -wins via --force-with-lease) before the reset below, so the agent branch
-# picks up master transitively and the per-tool-call rebase hook is no longer
-# needed. On conflict it aborts, pins blocked_reason/waiting_on metadata for
-# Leader, emits conflict_msg, and falls through — the agent keeps working on
-# the (unchanged) origin/<working_branch> until Leader reconciles.
+# SEE-954: the per-SessionStart rebase against the origin default branch is
+# gone (folded into §B). §B auto-rebase advances origin/<working_branch> to
+# contain the origin default
+# branch (first-agent-wins via --force-with-lease; base resolved per-repo —
+# SEE-1525) before the reset below, so the agent branch picks it up
+# transitively and the per-tool-call rebase hook is no longer needed. On
+# conflict it aborts, pins blocked_reason/waiting_on metadata for Leader,
+# emits conflict_msg, and falls through — the agent keeps working on the
+# (unchanged) origin/<working_branch> until Leader reconciles. When the
+# default branch cannot be resolved, §B skips explicitly (SEE-1525).
 #
 # Internal order:
-#   fetch → remote-exists → detached guard → unpushed guard
-#   → §B auto-rebase master (first-agent-wins) → dirty stash → reset
+#   fetch → remote-exists → detached guard → default-branch resolve → unpushed guard
+#   → §B auto-rebase origin/<default> (first-agent-wins) → dirty stash → reset
 #   → set upstream → stash pop → touch .cc-aligned marker → success → exit 0
 #
 # success_msg / conflict_msg are supplied by the caller so each entry point
@@ -245,6 +278,11 @@ align_agent_branch_to_working_branch() {
     # can fall back (R9 network-vs-missing distinction is the caller's job).
     timeout "$GIT_FETCH_TIMEOUT" git fetch origin "refs/heads/${working_branch}" >/dev/null 2>&1 || return 1
 
+    # Resolve origin's default branch once per dispatch (SEE-1525) — §B base,
+    # unpushed-guard exclusion, and hints all consume this single resolution.
+    local default_branch
+    default_branch=$(resolve_origin_default_branch)
+
     # Detached HEAD guard (§1.3): symbolic-ref returns empty on detached HEAD.
     local current_branch
     current_branch=$(get_current_branch)
@@ -258,7 +296,7 @@ align_agent_branch_to_working_branch() {
     # working-tree state. Hook aborts BEFORE stashing so the agent's working tree
     # stays visible (§2.1 order fix — Revy T21).
     local unpushed
-    unpushed=$(list_unpushed_commits "$desired_upstream")
+    unpushed=$(list_unpushed_commits "$desired_upstream" "$default_branch")
     if [ -n "$unpushed" ]; then
         output_hint "[repo-checkout] 本地未推送 commit 保护：当前分支有未推送到 ${desired_upstream} 的 commit，自动 reset 会丢失它们，已中止。失败命令： git reset --hard ${desired_upstream}。受影响 commit：
 ${unpushed}
@@ -274,23 +312,30 @@ ${unpushed}
     # did not create — auto_stashed tracks only our own.
     git stash list >/dev/null 2>&1 || true
 
-    # §B auto-rebase master onto the shared working branch (SEE-954). Advances
-    # origin/<working_branch> to contain master BEFORE the reset, so the agent
-    # branch picks up master transitively and the per-tool-call rebase hook is
-    # no longer needed. Runs in an isolated worktree so the agent's worktree
-    # (possibly dirty, not yet stashed) is never touched. Idempotent: skipped
-    # when origin/master is already an ancestor of origin/<working_branch>.
-    # On conflict: abort, pin blocked_reason/waiting_on metadata for Leader,
-    # emit conflict_msg, and fall through — the reset below aligns the agent to
-    # the (unchanged) origin/<working_branch> until Leader reconciles.
-    if ! git merge-base --is-ancestor origin/master "$desired_upstream" 2>/dev/null; then
+    # §B auto-rebase the origin default branch onto the shared working branch
+    # (SEE-954). Advances origin/<working_branch> to contain origin/<default>
+    # BEFORE the reset, so the agent branch picks it up transitively and the
+    # per-tool-call rebase hook is no longer needed. Runs in an isolated
+    # worktree so the agent's worktree (possibly dirty, not yet stashed) is
+    # never touched. Idempotent: skipped when origin/<default> is already an
+    # ancestor of origin/<working_branch>. The base is resolved per-repo
+    # (default_branch above — SEE-1525); when unresolvable, §B skips with a
+    # readable reason: no rebase against a guessed ref and NO blocked_reason
+    # pinning (the old origin/master hardcode produced exactly those phantom
+    # pins on main-default repos). On a real conflict: abort, pin
+    # blocked_reason/waiting_on metadata for Leader, emit conflict_msg, and
+    # fall through — the reset below aligns the agent to the (unchanged)
+    # origin/<working_branch> until Leader reconciles.
+    if [ -z "$default_branch" ]; then
+        output_hint "[repo-checkout] §B 跳过：无法解析 origin 默认分支（origin/HEAD 缺失且 ls-remote 不可达或结果未在本地）。不对猜测基准 rebase、不钉 blocked 元数据；本地分支仍对齐 origin/${working_branch}。当前仓库： $repo_dir"
+    elif ! git merge-base --is-ancestor "origin/${default_branch}" "$desired_upstream" 2>/dev/null; then
         local _issue_id wb_old_sha rebase_tmp_branch rebase_wt
         wb_old_sha=$(git rev-parse "$desired_upstream" 2>/dev/null || true)
         rebase_tmp_branch="cc-rebase-${working_branch//\//-}"
         rebase_wt="${TEMP:-/tmp}/cc-rebase-wt.$$"
         [ -e "$rebase_wt" ] && rm -rf "$rebase_wt" 2>/dev/null || true
         if [ -n "$wb_old_sha" ] && timeout "$GIT_REBASE_TIMEOUT" git worktree add -b "$rebase_tmp_branch" "$rebase_wt" "$desired_upstream" >/dev/null 2>&1; then
-            if timeout "$GIT_REBASE_TIMEOUT" git -C "$rebase_wt" rebase origin/master >/dev/null 2>&1; then
+            if timeout "$GIT_REBASE_TIMEOUT" git -C "$rebase_wt" rebase "origin/${default_branch}" >/dev/null 2>&1; then
                 # first-agent-wins: the explicit lease is the lock. A losing
                 # agent's push is rejected silently and origin/<wb> still ends
                 # up containing master — safe either way.
@@ -563,15 +608,19 @@ try_auto_create_shared_branch() {
     # If working_branch already set by another agent, try to reset to it
     working_branch=$(resolve_working_branch_from_metadata "$issue_id")
     if [ -n "$working_branch" ]; then
+        # SEE-1525: recovery hints / conflict wording reference the resolved
+        # default branch, never a hardcoded name.
+        local default_branch
+        default_branch=$(cd "$repo_dir" 2>/dev/null && resolve_origin_default_branch || true)
         align_agent_branch_to_working_branch "$repo_dir" "$working_branch" \
             "已成功将本 issue 的 working branch checkout 到 ${working_branch}。如需进行代码工作或探索，请 cd 到 '$repo_dir'。严禁直接修改本地 main repo，除非有 owner 命令。推送到共享分支：git push origin HEAD:refs/heads/${working_branch}。push-guard 钩子会自动验证 push 目标分支正确性。" \
-            "本 issue 的 working branch ${working_branch} auto-rebase master 冲突，已通知 Leader reconcile（脚本：bash .dev/scripts/reconcile-working-branch.sh ${working_branch}）。agent 暂时继续基于旧 origin/${working_branch} 工作。如需进行代码工作或探索，请 cd 到 '$repo_dir'。严禁直接修改本地 main repo，除非有 owner 命令。" \
+            "本 issue 的 working branch ${working_branch} auto-rebase origin 默认分支冲突，已通知 Leader reconcile（脚本：bash .dev/scripts/reconcile-working-branch.sh ${working_branch}）。agent 暂时继续基于旧 origin/${working_branch} 工作。如需进行代码工作或探索，请 cd 到 '$repo_dir'。严禁直接修改本地 main repo，除非有 owner 命令。" \
             || {
                 # helper returned 1: remote branch missing (R10) or reset failed (R9).
                 if ! timeout "$GIT_FETCH_TIMEOUT" git ls-remote --exit-code --heads origin "$working_branch" >/dev/null 2>&1; then
                     output_hint "[repo-checkout] metadata 与远程不一致：issue metadata 的 working_branch 为 ${working_branch}，但远程不存在该分支。请 Owner 确认 metadata，或手动创建：git push origin HEAD:refs/heads/${working_branch}。不要直接 push 到 origin/master。当前仓库： $repo_dir"
                 else
-                    output_hint "本 issue 已设置 working branch ${working_branch}，但本地 reset 失败。请尝试手动执行：git fetch origin && git reset --hard origin/${working_branch} && git rebase origin/master"
+                    output_hint "本 issue 已设置 working branch ${working_branch}，但本地 reset 失败。请尝试手动执行：git fetch origin && git reset --hard origin/${working_branch} && git rebase origin/${default_branch:-HEAD}"
                 fi
                 exit 0
             }
