@@ -102,22 +102,43 @@ run_activation() { # $1 = 标签
 count_started() { grep -c "^started:" "$SANDBOX/stub-calls.log" 2>/dev/null || echo 0; }
 reset_calls() { : > "$SANDBOX/stub-calls.log"; }
 
+# SEE-1525 CI 修复轮：stub 守护由 toolchain-start.sh 后台拉起，"started:" 行与
+# devforge.pid 都异步落盘——激活返回后立即断言会与后台启动竞速（GitHub runner
+# 实证 run1 started=0 而同批实例到 run2 才可见；本地从不可复现）。有界等待到
+# 期望状态可观察再断言；永不达标仍按实际计数响亮失败——零断言弱化。
+await_daemons() {
+    local want="$1" tries=50 n pid
+    while [ "$tries" -gt 0 ]; do
+        n=$(count_started)
+        pid=$(cat "$SANDBOX/devforge.pid" 2>/dev/null || true)
+        if [ "$n" = "$want" ] && [ -n "$pid" ]; then
+            echo "$n|$pid"
+            return 0
+        fi
+        sleep 0.2
+        tries=$((tries - 1))
+    done
+    echo "$n|$pid"
+}
+
 # ---------- 2. 双跑幂等: 第二次激活不 double-start ----------
 setup_sandbox
 : > "$SANDBOX/stub-calls.log"
 run_activation "1st"
 RC1=$(cat "$SANDBOX/exit-code")
 [ "$RC1" = "0" ] && pass "run1: 激活成功 exit 0" || fail "run1: exit=$RC1"
-S1=$(count_started)
+STATE1=$(await_daemons 2)
+S1=${STATE1%%|*}
+PID1=${STATE1#*|}
 [ "$S1" = "2" ] && pass "run1: 两仓实例拉起 (started=$S1)" || fail "run1: started=$S1 (期望 2)"
-PID1=$(cat "$SANDBOX/devforge.pid" 2>/dev/null)
 run_activation "2nd"
 RC2=$(cat "$SANDBOX/exit-code")
 [ "$RC2" = "0" ] && pass "run2: 二次激活成功 exit 0" || fail "run2: exit=$RC2"
-S2=$(count_started)
+STATE2=$(await_daemons 2)
+S2=${STATE2%%|*}
+PID2=${STATE2#*|}
 [ "$S2" = "2" ] && pass "run2: 存活实例未被 double-start (started 仍=$S2)" \
   || fail "run2: double-start! started=$S2 (期望 2)"
-PID2=$(cat "$SANDBOX/devforge.pid" 2>/dev/null)
 [ "$PID1" = "$PID2" ] && pass "run2: pid 未变（同一实例存活）" \
   || fail "run2: pid $PID1 → $PID2（实例被换）"
 
