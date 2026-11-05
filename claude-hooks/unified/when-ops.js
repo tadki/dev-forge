@@ -96,7 +96,6 @@ function splitShellCommands(str) {
       // 重定向组合不算分隔：`&>`/`>&`/`>|` 中 & / | 紧邻 `>` 为字面量；`|&` 属
       // 管道分隔（按双字符切）。
       if (ch === '|') {
-        if (str[i + 1] === '|') { flush(); i += 2; continue; }
         if (str[i + 1] === '&' && str[i - 1] !== '>') { flush(); i += 2; continue; }
         if (str[i - 1] === '>') { current += ch; i++; continue; }
         flush(); i++;
@@ -412,12 +411,11 @@ function createEvaluator(payload, opts) {
     }
     const raw = tokens[i];
     if (!raw) return null; // null = 不可解析（cd 无参 / 纯旗标）
-    if (afterDashDash || !raw.startsWith('-')) {
-      if (/[$`]/.test(raw)) return null; // 变量插值不可解析（毒化链语义保留）
-      const tok = stripTokenQuotes(raw); // OB-2 同源：引号剥离（与 -C 捕获一致）
-      return tok || null;
-    }
-    return null;
+    // 循环不变量：此处 afterDashDash 必为 true，或 raw 不以 '-' 开头（二者皆因
+    // 旗标跳值 while 只在两条件下 break）——非 cd 段/纯旗标形态已先行返回。
+    if (/[$`]/.test(raw)) return null; // 变量插值不可解析（毒化链语义保留）
+    const tok = stripTokenQuotes(raw); // OB-2 同源：引号剥离（与 -C 捕获一致）
+    return tok || null;
   }
 
   const pushTargetsCache = new Map(); // exclude 正则串 → 目标仓 info 数组

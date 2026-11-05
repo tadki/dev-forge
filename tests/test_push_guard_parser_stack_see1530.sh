@@ -49,7 +49,6 @@ KOL_GIT="https://github.com/tadki/KingOfLikes-Godot.git"
 DF_GIT="https://github.com/tadki/dev-forge.git"
 
 FIX="$(mktemp -d /tmp/pgps-fixture.XXXXXX)"
-NEUTRAL="$(mktemp -d /tmp/pgps-neutral.XXXXXX)"
 STATE_DIR="$(mktemp -d /tmp/pgps-state.XXXXXX)"
 FIRE_LOG="$(mktemp -u /tmp/pgps-fire.XXXXXX)"
 
@@ -239,7 +238,7 @@ echo "  origin-URL 身份判定固有边界，Owner 未裁决前冻结不改（�
 echo "  零行为变化以 git diff 5320966..HEAD -- claude-hooks/ 审查留证）。"
 
 # --- Summary ---
-rm -rf "$FIX" "$NEUTRAL" "$STATE_DIR"; rm -f "$FIRE_LOG"
+rm -rf "$FIX" "$STATE_DIR"; rm -f "$FIRE_LOG"
 echo ""
 echo "============================================"
 echo -e "${CYAN}Results:${NC} ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}"
