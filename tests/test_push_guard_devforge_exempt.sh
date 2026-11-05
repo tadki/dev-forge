@@ -17,7 +17,8 @@
 #   B. 引擎层：devforge 作用域外放行；注册仓（含 URL 归一化形态）deny；
 #      未注册仓作用域外放行（正式语义：门禁只管注册仓）；注册表缺失 fail-open
 #      + WARN 审计；belt = push 目标仓 URL 豁免（B8 家族 allow/deny 两侧对照，
-#      断言与套件检出位置解耦）。
+#      断言与套件检出位置解耦）。hardener 轮补强（SEE-1527）：B8g–B8t 对抗钉
+#      （解析链健壮性 + 不可解析保守语义 + 删除形态边界）、B9c–B9d 注册表损坏审计钉。
 #   C. validator：gates 规则 VALID + repo op 结构校验（in[] XOR registered，
 #      target:"push" 值域）。
 #
@@ -149,6 +150,13 @@ git -C "$FIX/work_df_url" remote add origin "https://github.com/tadki/dev-forge.
 git init -q -b main "$FIX/dev-forge-literal"
 git -C "$FIX/dev-forge-literal" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 git -C "$FIX/dev-forge-literal" remote add origin "$FIX/origin.git"
+# hardener 对抗钉 fixtures（SEE-1527）：scp 形态 origin 的 devforge 检出（belt 侧
+# URL 归一化钉）+ 无 origin 的 git 检出（目标不可解析保守方向钉）
+git init -q -b main "$FIX/work_df_scp"
+git -C "$FIX/work_df_scp" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$FIX/work_df_scp" remote add origin "git@github.com:tadki/dev-forge"
+git init -q -b master "$FIX/work_noorigin"
+git -C "$FIX/work_noorigin" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 
 # --- Group B: 引擎层 repo 作用域门禁 ---
 echo ""
@@ -188,12 +196,44 @@ ea "B8d kol 会话 -C 未注册仓 push → 不豁免 deny" "$FIX/work_kol" "git
 ea "B8e kol 会话 devforge+未注册 复合 push → all 口径不豁免 deny" "$FIX/work_kol" "git -C $FIX/work_df_url push origin main && git -C $FIX/work push origin main" deny "禁止直接 push"
 ea "B8f kol 会话 -C 含字面量路径但 origin 未注册 push → 字面量不再豁免 deny" "$FIX/work_kol" "git -C $FIX/dev-forge-literal push origin main" deny "禁止直接 push"
 
+# B8g–B8t（hardener 对抗补强，SEE-1527）：现有断言未覆盖的豁免形态与保守方向。
+# allow 侧钉解析链健壮性（相对 -C/cd、多跳 cd 重锚、尾斜杠、scp origin、
+# all 口径满足的复合命令）；deny 侧钉不可解析保守语义（cd 变量插值/无参/
+# 毒化未被重锚、非 git 目录、无 origin 检出）与删除形态边界（纯 --delete
+# 不走本门、冒号 refspec 删除仍属 master 门）。LOW 观察项实测中发现的
+# 门禁弱化形态（-p/-P 吞词、单 &/| 复合、--delete 混合 refspec 等）行为
+# 当前为 allow，不属钉子范围，已另行登记上报。
+ea "B8g kol 会话 -C 相对路径 devforge 检出 → 相对解析豁免" "$FIX/work_kol" "git -C ../work_df_url push origin main" allow
+ea "B8h kol 会话 cd 相对路径 devforge 检出 → cd 链相对解析豁免" "$FIX/work_kol" "cd ../work_df_url && git push origin main" allow
+ea "B8i kol 会话 -C scp 形态 origin devforge 检出 → 归一化豁免" "$FIX/work_kol" "git -C $FIX/work_df_scp push origin main" allow
+ea "B8j kol 会话 cd 多跳重锚 devforge 检出 → 链尾锚豁免" "$FIX/work_kol" "cd /tmp && cd $FIX/work_df_url && git push origin main" allow
+ea "B8k kol 会话 -C 尾斜杠路径 → resolve 归一豁免" "$FIX/work_kol" "git -C $FIX/work_df_url/ push origin main" allow
+ea "B8l kol 会话 双 devforge 复合 push → all 口径满足豁免" "$FIX/work_kol" "git -C $FIX/work_df_url push origin main && git -C $FIX/work_df_url push origin feature/x" allow
+ea "B8m kol 会话 cd 后相对 -C devforge → 链上相对解析豁免" "$FIX/work_kol" "cd $FIX && git -C work_df_url push origin main" allow
+ea "B8n kol 会话 cd 变量插值 + -C devforge → 插值毒化不豁免 deny" "$FIX/work_kol" "cd \$PGDF_NOVAR && git -C $FIX/work_df_url push origin main" deny "禁止直接 push"
+ea "B8o kol 会话 cd 无参 + -C devforge → 无参毒化不豁免 deny" "$FIX/work_kol" "cd && git -C $FIX/work_df_url push origin main" deny "禁止直接 push"
+ea "B8p kol 会话 -C 非 git 目录 → 目标不可解析不豁免 deny" "$FIX/work_kol" "git -C $NEUTRAL push origin main" deny "禁止直接 push"
+ea "B8q kol 会话 -C 无 origin git 检出 → 无 URL 不豁免 deny" "$FIX/work_kol" "git -C $FIX/work_noorigin push origin main" deny "禁止直接 push"
+ea "B8r kol 会话 好锚→插值 cd→-C devforge → 毒化未被重锚不豁免 deny" "$FIX/work_kol" "cd $FIX/work_df_url && cd \$PGDF_NOVAR && git -C $FIX/work_df_url push origin main" deny "禁止直接 push"
+ea "B8s kol 会话 --delete 纯删除 → 不走本门放行" "$FIX/work_kol" "git -C $FIX/work_kol push origin --delete tmpb" allow
+ea "B8t kol 会话 :refs/heads/main 冒号删除形态 → 仍属 master 门 deny" "$FIX/work_kol" "git -C $FIX/work_kol push origin :refs/heads/main" deny "禁止直接 push"
+
 # 注册表缺失 → repo op 恒 false（fail-open 门禁）+ WARN 审计
 ea "B9 注册表缺失 → 门禁 fail-open 放行" "$FIX/work_kol" "git push origin main" allow "" "/nonexistent/pgdf-registry.json"
 if grep -q "repo-registry-unavailable" "$FIRE_LOG" 2>/dev/null; then
   pass "B9b 注册表缺失 WARN 已入 firelog 审计"
 else
   fail "B9b — firelog 缺 repo-registry-unavailable 行"
+fi
+
+# B9c/B9d（hardener 补强，SEE-1527）：注册表损坏（JSON 不可解析）→ 与缺失路径
+# 同族 fail-open 放行，但走 repo-registry-parse 告警码——审计码分形钉。
+BAD_REG="$FIX/reg-bad.json"; printf '{oops' > "$BAD_REG"
+ea "B9c 注册表损坏 → 门禁 fail-open 放行" "$FIX/work_kol" "git push origin main" allow "" "$BAD_REG"
+if grep -q "repo-registry-parse" "$FIRE_LOG" 2>/dev/null; then
+  pass "B9d 注册表损坏 parse WARN 已入 firelog 审计"
+else
+  fail "B9d — firelog 缺 repo-registry-parse 行"
 fi
 
 # B10（CRITICAL 回归，review PR#51）：生产默认口径——configFile = unified/rules-v2.json
