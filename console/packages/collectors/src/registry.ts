@@ -2,6 +2,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Asset, Collection, Diagnostic, Relation } from '@forge/schema';
 import type { CollectContext, Collector } from './types.js';
+import type { ReconcileReport } from './reconcile.js';
 
 export interface CollectorStatus {
   name: string;
@@ -18,6 +19,8 @@ export interface RegistryState {
   diagnostics: Diagnostic[];
   collectorStatus: CollectorStatus[];
   lastCollectedAt: string;
+  /** 平台对账报告（collectNow 末尾计算；push 型资产不触发重算） */
+  reconcile?: ReconcileReport;
 }
 
 export function mergeCollections(collections: Collection[]): Omit<RegistryState, 'collectorStatus' | 'lastCollectedAt'> {

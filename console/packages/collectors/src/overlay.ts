@@ -1,6 +1,6 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parse } from 'yaml';
+import { isMap, isSeq, parse, parseDocument, type YAMLSeq } from 'yaml';
 import type { Asset } from '@forge/schema';
 import type { Meta } from '@forge/schema';
 import type { RegistryState } from './registry.js';
@@ -13,15 +13,17 @@ export interface RegistryMatch {
 export interface RegistryEntry {
   id: string;
   match: RegistryMatch;
+  /** 声明该资产已应用到的平台（claude-code / multica）。不写 = 不参与平台归属对账 */
+  platforms?: string[];
   meta?: Meta;
   file: string;
 }
 
 interface ManifestFile {
-  entries?: Array<{ id: string; match?: RegistryMatch; meta?: Meta }>;
+  entries?: Array<{ id: string; match?: RegistryMatch; platforms?: string[]; meta?: Meta }>;
 }
 
-function matches(asset: Asset, entry: RegistryEntry): boolean {
+export function matchesRegistryEntry(asset: Asset, entry: RegistryEntry): boolean {
   const m = entry.match ?? {};
   if (m.idPrefix && asset.id.startsWith(m.idPrefix)) return true;
   if (m.pathPrefix && asset.source.path.startsWith(m.pathPrefix)) return true;
@@ -45,10 +47,39 @@ export async function loadRegistryEntries(dir: string): Promise<RegistryEntry[]>
       continue;
     }
     for (const e of raw.entries ?? []) {
-      if (e?.id) out.push({ id: e.id, match: e.match ?? {}, meta: e.meta, file: join(dir, f) });
+      if (e?.id) out.push({ id: e.id, match: e.match ?? {}, platforms: e.platforms, meta: e.meta, file: join(dir, f) });
     }
   }
   return out;
+}
+
+/**
+ * 平台对账「平台→本地/本地→平台」声明回写：对 registry.d entry 的 platforms 做最小编辑。
+ * parseDocument 保留文件头注释与其他字段；返回编辑后的 platforms。
+ */
+export async function editRegistryPlatforms(
+  file: string,
+  entryId: string,
+  op: 'add-platform' | 'remove-platform',
+  platform: string
+): Promise<string[]> {
+  const text = await readFile(file, 'utf8');
+  const doc = parseDocument(text);
+  const seq = doc.get('entries');
+  if (!isSeq(seq)) throw new Error(`registry 文件无 entries 列表：${file}`);
+  const node = seq.items.find((it) => isMap(it) && it.get('id') === entryId);
+  if (!isMap(node)) throw new Error(`registry 文件 ${file} 中未找到 entry「${entryId}」`);
+  const raw = node.get('platforms');
+  const current = isSeq(raw) ? raw.items.map((x) => String(x)) : Array.isArray(raw) ? raw.map(String) : [];
+  const next =
+    op === 'add-platform'
+      ? current.includes(platform) ? current : [...current, platform]
+      : current.filter((p) => p !== platform);
+  const seqNode = doc.createNode(next) as YAMLSeq;
+  seqNode.flow = true; // 保持行内 [a, b] 风格，与 owned.yaml 现有写法一致
+  node.set('platforms', seqNode);
+  await writeFile(file, doc.toString(), 'utf8');
+  return next;
 }
 
 /**
@@ -58,7 +89,7 @@ export async function loadRegistryEntries(dir: string): Promise<RegistryEntry[]>
 export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntry[]): RegistryState {
   const matchedEntryIds = new Set<string>();
   const assets = state.assets.map((asset) => {
-    const entry = entries.find((e) => matches(asset, e));
+    const entry = entries.find((e) => matchesRegistryEntry(asset, e));
     if (!entry) {
       if (asset.provenance === 'first-party') {
         return { ...asset, payload: { ...asset.payload, registry: { declared: false } } };
@@ -70,7 +101,10 @@ export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntr
       ...asset,
       provenance: 'first-party' as const,
       meta: { ...entry.meta, ...asset.meta },
-      payload: { ...asset.payload, registry: { declared: true, declaredBy: entry.id } },
+      payload: {
+        ...asset.payload,
+        registry: { declared: true, declaredBy: entry.id, ...(entry.platforms ? { declaredPlatforms: entry.platforms } : {}) },
+      },
     };
   });
 

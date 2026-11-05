@@ -106,6 +106,29 @@ beforeAll(async () => {
       }
       return { ok: true, output: `fake ${action} ${unit}` };
     },
+    getReconcileReport: () => ({
+      generatedAt: '2026-11-05T00:00:00Z',
+      items: [
+        {
+          key: 'undeclared:demo:multica',
+          type: 'undeclared-platform' as const,
+          severity: 'warn' as const,
+          platform: 'multica',
+          entryId: 'demo',
+          name: 'demo',
+          detail: '资产实际出现在 multica，但声明未包含该平台',
+          copies: [],
+          actions: [{ id: 'adopt', direction: 'platform-to-local' as const, label: '采纳现状', executable: true, steps: [{ type: 'registry-edit', file: '/tmp/owned.yaml', entryId: 'demo', op: 'add-platform', platform: 'multica' }] }],
+        },
+      ],
+      summary: { missing: 0, undeclared: 1, drift: 0, uncovered: 0, total: 1 },
+    }),
+    reconcileAction: async (key, actionId) => {
+      actionLog.push({ unit: `reconcile:${key}:${actionId}`, action: 'run' });
+      if (key === 'vanished') return { status: 'gone' as const, ok: false, output: '' };
+      if (actionId === 'nope') return { status: 'invalid' as const, ok: false, output: `动作不存在：${actionId}` };
+      return { status: 'ok' as const, ok: true, output: `已更新 /tmp/owned.yaml：demo.platforms = [claude-code, multica]` };
+    },
   });
   server = createServer((req, res) => void handler(req, res));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -258,6 +281,30 @@ describe('api endpoints', () => {
     expect(deniedBody.output).toContain('enabled=false');
     expect(deniedBody.output).toContain("journalctl --user --since '-5 min'");
     expect(deniedBody.output.length).toBeLessThanOrEqual(400);
+  });
+
+  it('reconcile: 报告可读、写操作必须 confirm、gone 409、invalid 400', async () => {
+    const report = await get('/api/reconcile', TOKEN);
+    expect(report.status).toBe(200);
+    expect(report.body.summary.total).toBe(1);
+    expect(report.body.items[0].actions[0].steps[0].type).toBe('registry-edit');
+
+    const post = (body: unknown) =>
+      fetch(base + '/api/reconcile/actions', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    expect((await post({ key: 'undeclared:demo:multica', actionId: 'adopt' })).status).toBe(400); // 缺 confirm
+    expect((await post({ key: 'undeclared:demo:multica', actionId: 'nope', confirm: true })).status).toBe(400); // 动作不存在
+    expect((await post({ key: 'vanished', actionId: 'adopt', confirm: true })).status).toBe(409); // 对账项已变化
+    const ok = await post({ key: 'undeclared:demo:multica', actionId: 'adopt', confirm: true });
+    expect(ok.status).toBe(200);
+    const okBody = await ok.json();
+    expect(okBody.ok).toBe(true);
+    expect(okBody.output).toContain('platforms');
+    expect(actionLog.at(-1)).toEqual({ unit: 'reconcile:undeclared:demo:multica:adopt', action: 'run' });
   });
 
   it('unknown path 404s as json', async () => {

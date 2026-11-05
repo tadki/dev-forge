@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { execCapture } from '@forge/collectors';
+import { buildReconcileReport, execCapture } from '@forge/collectors';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { watch } from 'chokidar';
@@ -7,6 +7,7 @@ import { loadConfig } from './engine.js';
 import { Engine } from './engine.js';
 import { createHandler } from './app.js';
 import { createRepoSyncAction, DEFAULT_START_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS } from './repo-sync-action.js';
+import { executeReconcileAction } from './reconcile-action.js';
 import { SSEBus } from './sse.js';
 
 const consoleRoot = join(import.meta.dirname, '..', '..', '..');
@@ -56,6 +57,17 @@ const handler = createHandler({
         return { ok: r.ok && (!r.stdout || !/failed/i.test(r.stdout)), output: `${r.stdout}${r.stderr}`.slice(0, 400) };
       },
   onAfterAction: () => void engine.collectNow(),
+  getReconcileReport: () => engine.state.reconcile ?? buildReconcileReport(engine.state, engine.getRegistryEntries()),
+  reconcileAction: async (key, actionId) => {
+    // 对账项按当前 state 重算，步骤完全由服务端生成；客户端只提交 key + actionId + confirm
+    const item = engine.findReconcileItem(key);
+    if (!item) return { status: 'gone' as const, ok: false, output: '' };
+    const result = await executeReconcileAction(item, actionId, engine.state, {
+      exec: execCapture,
+      dryRun: dryActions,
+    });
+    return { status: result.status, ok: result.ok, output: result.output };
+  },
 });
 
 await engine.start();

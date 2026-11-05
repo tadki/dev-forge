@@ -40,5 +40,17 @@ export { devforgeLaunchCollector } from './collectors/devforge-launch.js';
 export { parseFirelogLine } from './collectors/devforge-firelog.js';
 export { loadExternalCollectors } from './external.js';
 
-export { loadRegistryEntries, applyRegistryOverlay } from './overlay.js';
+export { loadRegistryEntries, applyRegistryOverlay, matchesRegistryEntry, editRegistryPlatforms } from './overlay.js';
 export type { RegistryEntry, RegistryMatch } from './overlay.js';
+export { MULTICA_PREFIX_MARK, extractAgentInstructions, spliceAgentInstructions } from './collectors/multica.js';
+export { buildReconcileReport, reconcileDiagnostics } from './reconcile.js';
+export type {
+  ReconcileAction,
+  ReconcileCopy,
+  ReconcileDirection,
+  ReconcileItem,
+  ReconcileItemType,
+  ReconcileReport,
+  WriteStep,
+  ContentRef,
+} from './reconcile.js';

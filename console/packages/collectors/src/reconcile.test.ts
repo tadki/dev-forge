@@ -1,0 +1,219 @@
+import { describe, expect, it } from 'vitest';
+import type { Asset } from '@forge/schema';
+import { buildReconcileReport, reconcileDiagnostics } from './reconcile.js';
+import type { RegistryEntry } from './overlay.js';
+
+function mk(id: string, kind: Asset['kind'], over: Partial<Asset> = {}): Asset {
+  return {
+    id,
+    kind,
+    name: id.split(':')[1] ?? id,
+    summary: '',
+    attach: { level: 'user' },
+    enforcement: 'enforced',
+    platforms: ['claude-code'],
+    provenance: 'first-party',
+    tags: [],
+    enabled: true,
+    source: { collector: 'test', path: `/tmp/${id}` },
+    payload: {},
+    ...over,
+  };
+}
+
+function entry(over: Partial<RegistryEntry> & { id: string }): RegistryEntry {
+  return { match: {}, file: '/tmp/registry.d/owned.yaml', ...over };
+}
+
+describe('平台归属对账', () => {
+  it('声明的平台没有实际实例 → missing-on-platform，撤销声明可执行、应用需手动', () => {
+    const assets = [mk('skill:local-only', 'skill', { platforms: [] })];
+    const report = buildReconcileReport(
+      { assets },
+      [entry({ id: 'local-skills', match: { idPrefix: 'skill:local' }, platforms: ['multica'] })]
+    );
+    const item = report.items.find((i) => i.key === 'missing:local-skills:multica');
+    expect(item?.type).toBe('missing-on-platform');
+    expect(item?.actions.find((a) => a.id === 'apply')?.executable).toBe(false);
+    const retract = item?.actions.find((a) => a.id === 'retract');
+    expect(retract?.executable).toBe(true);
+    expect(retract?.steps[0]).toMatchObject({ type: 'registry-edit', op: 'remove-platform', platform: 'multica' });
+  });
+
+  it('实际平台未在声明中 → undeclared-platform，采纳动作回写声明', () => {
+    const assets = [mk('skill:deployed', 'skill', { platforms: ['multica'] })];
+    const report = buildReconcileReport(
+      { assets },
+      [entry({ id: 'deployed-skills', match: { idPrefix: 'skill:deployed' }, platforms: ['claude-code'] })]
+    );
+    const item = report.items.find((i) => i.key === 'undeclared:deployed-skills:multica');
+    expect(item?.type).toBe('undeclared-platform');
+    expect(item?.copies).toHaveLength(1);
+    const adopt = item?.actions.find((a) => a.id === 'adopt');
+    expect(adopt?.executable).toBe(true);
+    expect(adopt?.steps[0]).toMatchObject({ type: 'registry-edit', op: 'add-platform', platform: 'multica' });
+  });
+
+  it('声明与实际一致 → 无归属差异', () => {
+    const assets = [mk('skill:ok', 'skill', { platforms: ['claude-code', 'multica'] })];
+    const report = buildReconcileReport(
+      { assets },
+      [entry({ id: 'ok-skills', match: { idPrefix: 'skill:ok' }, platforms: ['claude-code', 'multica'] })]
+    );
+    expect(report.summary.total).toBe(0);
+  });
+
+  it('entry 不写 platforms → 不参与归属对账，但资产进入未覆盖兜底', () => {
+    const assets = [mk('skill:unchecked', 'skill', { platforms: ['multica'] })];
+    const report = buildReconcileReport({ assets }, [entry({ id: 'unchecked', match: { idPrefix: 'skill:unchecked' } })]);
+    const uncovered = report.items.find((i) => i.key === 'uncovered:skill:multica');
+    expect(uncovered?.type).toBe('uncovered-assets');
+    expect(uncovered?.copies).toHaveLength(1);
+    expect(uncovered?.actions[0].executable).toBe(false);
+    expect(report.summary.uncovered).toBe(1);
+  });
+
+  it('诊断输出带 reconcile 前缀且截断', () => {
+    const assets = [mk('skill:unchecked', 'skill', { platforms: ['multica'] })];
+    const report = buildReconcileReport(
+      { assets },
+      [entry({ id: 'e1', match: { idPrefix: 'skill:unchecked' }, platforms: ['claude-code'] })]
+    );
+    const diags = reconcileDiagnostics(report);
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags[0].message.startsWith('[reconcile]')).toBe(true);
+  });
+
+  it('被 platforms 声明覆盖的资产不进未覆盖兜底', () => {
+    const assets = [mk('skill:ok', 'skill', { platforms: ['claude-code'] })];
+    const report = buildReconcileReport(
+      { assets },
+      [entry({ id: 'ok', match: { idPrefix: 'skill:ok' }, platforms: ['claude-code'] })]
+    );
+    expect(report.items).toHaveLength(0);
+    expect(report.summary.total).toBe(0);
+  });
+});
+
+describe('跨平台技能内容对账', () => {
+  const pair = () => [
+    mk('skill:user-taskassign', 'skill', {
+      name: 'taskassign',
+      platforms: ['claude-code'],
+      source: { collector: 'test', path: '/home/jerry/.claude/skills/taskassign/SKILL.md' },
+      payload: { content: 'local version' },
+    }),
+    mk('skill:multica-task-assign', 'skill', {
+      name: 'task-assign',
+      platforms: ['multica'],
+      source: { collector: 'multica', path: 'multica://skills/s1' },
+      payload: { content: 'remote version', platformId: 's1' },
+    }),
+  ];
+  const decl = entry({ id: 'skill-taskassign', match: { pathPrefix: '/home/jerry/.claude/skills/taskassign/' }, platforms: ['claude-code'] });
+
+  it('名称归一化配对（taskassign ↔ task-assign），内容分叉 → drift + 双向可执行', () => {
+    const report = buildReconcileReport({ assets: pair() }, [decl]);
+    const item = report.items.find((i) => i.key === 'drift:skill:skill:user-taskassign');
+    expect(item?.type).toBe('content-drift');
+    expect(item?.diff?.length).toBeGreaterThan(0);
+    const writeLocal = item?.actions.find((a) => a.id === 'write-local');
+    expect(writeLocal?.executable).toBe(true);
+    expect(writeLocal?.steps[0]).toMatchObject({ type: 'file-write', path: '/home/jerry/.claude/skills/taskassign/SKILL.md' });
+    const updatePlatform = item?.actions.find((a) => a.id === 'update-platform');
+    expect(updatePlatform?.executable).toBe(true);
+    expect(updatePlatform?.steps[0]).toMatchObject({ type: 'command', cmd: ['multica', 'skill', 'update', 's1', '--content', '{content}'] });
+  });
+
+  it('内容一致 → 无 drift；未声明本地技能不配对', () => {
+    const assets = pair();
+    (assets[1].payload as { content: string }).content = 'local version';
+    expect(buildReconcileReport({ assets }, [decl]).items.filter((i) => i.type === 'content-drift')).toHaveLength(0);
+    const different = pair();
+    (different[1].payload as { content: string }).content = 'other';
+    const report = buildReconcileReport({ assets: different }, []);
+    expect(report.items.filter((i) => i.key.startsWith('drift:skill:'))).toHaveLength(0);
+  });
+});
+
+describe('内容漂移', () => {
+  it('multica agent instructions 与物化 workdir 不一致 → 双向动作齐备', () => {
+    const assets = [
+      mk('agent:fronti', 'agent', {
+        name: 'Fronti',
+        platforms: [],
+        payload: { instructions: 'You are Fronti v2', instructionsHash: 'abc' },
+        source: { collector: 'multica', path: 'multica://agents/f1' },
+      }),
+      mk('deployment:multica:fronti', 'deployment', {
+        name: 'Fronti @ multica',
+        platforms: ['multica'],
+        attach: { level: 'platform', ref: 'multica' },
+        payload: { platformId: 'f1', agent: 'Fronti' },
+        source: { collector: 'multica', path: 'multica://agents/f1' },
+      }),
+      mk('custom:multica-materialized-instructions', 'custom', {
+        platforms: ['multica'],
+        payload: { samples: [{ agent: 'Fronti', path: '/tmp/workdir-a/CLAUDE.md', hash: 'deadbeef', body: 'You are Fronti v1' }] },
+      }),
+    ];
+    const report = buildReconcileReport({ assets }, []);
+    const item = report.items.find((i) => i.key === 'drift:multica:fronti');
+    expect(item?.type).toBe('content-drift');
+    expect(item?.diff?.length).toBeGreaterThan(0);
+    expect(item?.detail).toContain('abc'); // 优先展示 instructionsHash 而非内容前缀
+    const writeWorkdir = item?.actions.find((a) => a.id === 'write-workdir');
+    expect(writeWorkdir?.executable).toBe(true);
+    expect(writeWorkdir?.steps[0]).toMatchObject({
+      type: 'file-write',
+      path: '/tmp/workdir-a/CLAUDE.md',
+      preserveMulticaPrefix: true,
+      contentFrom: { assetId: 'agent:fronti', field: 'instructions' },
+    });
+    const updateAgent = item?.actions.find((a) => a.id === 'update-agent');
+    expect(updateAgent?.executable).toBe(true);
+    expect(updateAgent?.steps[0]).toMatchObject({
+      type: 'command',
+      cmd: ['multica', 'agent', 'update', 'f1', '--instructions', '{content}'],
+      contentFrom: { assetId: 'custom:multica-materialized-instructions', field: 'materialized-body', agent: 'Fronti' },
+    });
+  });
+
+  it('物化样本与 instructions 一致 → 无漂移项', () => {
+    const assets = [
+      mk('agent:fronti', 'agent', { name: 'Fronti', platforms: [], payload: { instructions: 'same text' } }),
+      mk('custom:multica-materialized-instructions', 'custom', {
+        payload: { samples: [{ agent: 'Fronti', path: '/tmp/workdir-a/CLAUDE.md', hash: 'x', body: 'same text' }] },
+      }),
+    ];
+    const report = buildReconcileReport({ assets }, []);
+    expect(report.items.filter((i) => i.type === 'content-drift')).toHaveLength(0);
+  });
+
+  it('同 entry 同名副本 sha 分叉 → drift；不同名不算', () => {
+    const assets = [
+      mk('instruction:a/CLAUDE.md', 'instruction', {
+        name: 'shared.md',
+        source: { collector: 'test', path: '/tmp/a/shared.md', sha256: 'sha-a' },
+        payload: { content: 'aaa' },
+      }),
+      mk('instruction:b/CLAUDE.md', 'instruction', {
+        name: 'shared.md',
+        source: { collector: 'test', path: '/tmp/b/shared.md', sha256: 'sha-b' },
+        payload: { content: 'bbb' },
+      }),
+      mk('instruction:c/other.md', 'instruction', {
+        name: 'other.md',
+        source: { collector: 'test', path: '/tmp/c/other.md', sha256: 'sha-c' },
+      }),
+    ];
+    const report = buildReconcileReport(
+      { assets },
+      [entry({ id: 'copies', match: { pathPrefix: '/tmp/' } })]
+    );
+    const items = report.items.filter((i) => i.type === 'content-drift');
+    expect(items).toHaveLength(1);
+    expect(items[0].copies).toHaveLength(2);
+    expect(items[0].actions.some((a) => a.executable && a.steps[0]?.type === 'file-write')).toBe(true);
+  });
+});

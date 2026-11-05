@@ -199,6 +199,27 @@ test('registry: mgmt section shows declared/undeclared/unmatched', async ({ page
   await expect(page.getByText('未登记清单', { exact: false }).first()).toBeVisible(); // fixture 自建未声明 → 有清单
 });
 
+test('registry: reconcile section lists drift and executes dry-run after confirm', async ({ page }) => {
+  await page.goto('/registry');
+  await expect(page.getByText('平台对账', { exact: false })).toBeVisible();
+  // fixture：Fronti instructions 与物化 CLAUDE.md 分叉 → drift 项 + 双向动作
+  await expect(page.getByText('drift:multica:fronti', { exact: false })).toBeVisible();
+  await expect(page.locator('pre.mono').first()).toBeVisible(); // 漂移内容逐行 diff 内联展示
+  await expect(page.getByRole('button', { name: /以 agent instructions 为准/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /以物化 CLAUDE.md 为准/ })).toBeVisible();
+
+  // 写操作必须过 window.confirm；dry-run 服务端只回显计划
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: /以物化 CLAUDE.md 为准/ }).click();
+  await expect(page.getByText('[dry-run]', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('已执行', { exact: false })).toBeVisible();
+
+  // 拒绝确认 → 不发请求、无输出面板
+  page.once('dialog', (d) => d.dismiss());
+  await page.getByRole('button', { name: /以 agent instructions 为准/ }).click();
+  await page.waitForTimeout(300);
+});
+
 test('registry: stats table + first-party inventory', async ({ page }) => {
   await page.goto('/registry');
   await expect(page.getByText('统计表').first()).toBeVisible();
