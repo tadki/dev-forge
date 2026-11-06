@@ -251,6 +251,15 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .diff-minus { background: #ffebe9; color: #cf222e; padding: 1px 4px; display: block; font-family: var(--font-mono); font-size: var(--fs-l1); }
 .diff-line { display: block; font-family: var(--font-mono); font-size: var(--fs-l1); padding: 1px 4px; color: var(--text-sub); }
 
+/* ===== 左右对照 diff（对账区） ===== */
+.split-diff { font-family: var(--font-mono); font-size: var(--fs-l1); }
+.split-diff-head { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; margin-bottom: 4px; }
+.split-diff-head-cell { font-family: var(--font-mono); font-size: var(--fs-label); color: var(--text-sub); border-bottom: 1px solid var(--khaki); padding: 2px 4px; }
+.split-diff-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+.split-diff-cell { padding: 1px 4px; white-space: pre-wrap; word-break: break-all; }
+.split-diff-empty { color: var(--text-sub); opacity: 0.35; }
+.split-diff-span { grid-column: 1 / -1; }
+
 /* ===== markdown 渲染 ===== */
 .md { font-size: var(--fs-l2); line-height: 1.65; }
 .md h1 { font-size: var(--fs-l4); border-bottom: var(--bw-thin) solid var(--ink); padding-bottom: var(--sp-1); margin: var(--sp-3) 0; }
