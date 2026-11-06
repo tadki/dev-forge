@@ -1,0 +1,17 @@
+# E2E 专用声明：只覆盖 fixture 的 multica:// 资产（store-drift 用例需要 agent:fronti declared）
+# 不能依赖真实 console/registry.d/owned.yaml——CI 机器上没有 /home/jerry/tools/dev-forge 路径
+entries:
+  - id: multica-platform-agents
+    match: { pathPrefix: "multica://agents/" }
+    platforms: [multica]
+    meta: { owner: jerry, category: platform, lifecycle: stable, criticality: high, runtime: multica }
+
+  - id: multica-platform-autopilots
+    match: { pathPrefix: "multica://autopilots/" }
+    platforms: [multica]
+    meta: { owner: jerry, category: platform, lifecycle: stable, criticality: medium, runtime: multica }
+
+  - id: multica-platform-skills
+    match: { pathPrefix: "multica://skills/" }
+    platforms: [multica]
+    meta: { owner: jerry, category: platform, lifecycle: stable, criticality: medium, runtime: multica }

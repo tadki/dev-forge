@@ -2,8 +2,10 @@
 home: /home/jerry
 devforge: /home/jerry/tools/dev-forge
 fixturesDir: FIXTURES_DIR_PLACEHOLDER
+# E2E 自带声明（CI 机器上没有 /home/jerry/tools/dev-forge 绝对路径，不能依赖真实 registry.d）
+registryDir: REGISTRY_DIR_PLACEHOLDER
 # 入库隔离到测试产物目录（gitignored），不污染真实本地源 console/state/first-party
-firstPartyStoreDir: /home/jerry/tools/dev-forge/console/e2e/test-results/first-party
+firstPartyStoreDir: STORE_DIR_PLACEHOLDER
 workspaces:
   - id: jerry
     name: Jerry's Forge
