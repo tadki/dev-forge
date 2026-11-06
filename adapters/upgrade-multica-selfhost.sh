@@ -2,7 +2,7 @@
 # Multica self-hosted upgrade script — run from WSL, upgrades remote Mac + local CLI/daemon
 #
 # Usage (from WSL):
-#   bash .dev/launch/upgrade-multica-selfhost.sh
+#   bash adapters/upgrade-multica-selfhost.sh
 #
 # The script copies itself to the remote Mac via SCP and runs the Docker
 # upgrade over SSH. After the remote upgrade succeeds, it upgrades the
@@ -24,7 +24,7 @@
 #     4. Wait for backend API to respond
 #     5. Restart frontend to flush stale DNS cache
 #   Local (WSL):
-#     6. Upgrade multica CLI to match remote server version
+#     6. Upgrade multica CLI to match remote server version (atomic replace)
 #     7. Restart local daemon
 
 set -euo pipefail
@@ -34,23 +34,21 @@ set -euo pipefail
 # defaults in the "Remote execution bootstrap" section below.
 
 # SEE-1001: the local daemon is supervised by systemd (toolchain-start-all.
-# service, Restart=always). Stopping/restarting it through `multica daemon
-# stop|start` makes the daemon exit 0 — which systemd immediately undoes by
-# restarting it, racing the binary replacement and breaking the upgrade. Route
-# daemon stop/restart through systemctl so Restart= is suppressed during an
-# intended stop. Fall back to the bare CLI on hosts where the unit is not
-# installed (legacy bare-daemon setup).
+# service, Restart=always). Restarting it through `multica daemon stop|start`
+# makes the daemon exit 0 — which systemd immediately undoes by restarting it,
+# racing the binary replacement and breaking the upgrade. Route the restart
+# through systemctl so Restart= is suppressed for the intended stop. Fall back
+# to the bare CLI on hosts where the unit is not installed (legacy bare-daemon
+# setup).
+#
+# The binary is never overwritten in place: a same-directory staging file is
+# renamed over it (rename(2) is immune to ETXTBSY). Any process still executing
+# the old inode — the daemon, or a short-lived CLI invocation from a poller —
+# keeps running the old binary until the restart below re-execs the new one.
 TOOLCHAIN_SERVICE="toolchain-start-all.service"
 
 _toolchain_service_installed() {
     systemctl list-unit-files --no-legend 2>/dev/null | grep -q "^${TOOLCHAIN_SERVICE}\b"
-}
-
-_kol_service_stop() {
-    if _toolchain_service_installed && sudo systemctl stop "$TOOLCHAIN_SERVICE" 2>/dev/null; then
-        return 0
-    fi
-    multica daemon stop 2>/dev/null || true
 }
 
 _kol_service_restart() {
@@ -89,13 +87,8 @@ _upgrade_local_cli() {
 
     echo "[upgrade] Upgrading local multica CLI: $current → ${latest#v}"
 
-    # Stop daemon first so binary can be replaced
-    if multica daemon status 2>/dev/null | grep -q "running"; then
-        echo "[upgrade] Stopping local daemon to replace binary..."
-        _kol_service_stop
-        sleep 2
-    fi
-
+    # Download fully first, so the only step between the old binary and the
+    # daemon restart is the atomic replace below.
     download_url="https://github.com/multica-ai/multica/releases/download/${latest}/multica-cli-${latest#v}-linux-amd64.tar.gz"
     tmp_dir=$(mktemp -d)
     curl -sL "$download_url" -o "$tmp_dir/multica-cli.tar.gz" || {
@@ -108,7 +101,20 @@ _upgrade_local_cli() {
         rm -rf "$tmp_dir"
         return 0
     }
-    sudo cp "$tmp_dir/multica" /usr/local/bin/multica && sudo chmod +x /usr/local/bin/multica
+    # Atomic replace: stage in the same directory (guarantees rename(2), which
+    # never fails with ETXTBSY), then rename over the target. An in-place `cp`
+    # fails with "Text file busy" whenever any process — the daemon or a
+    # short-lived CLI poller — is executing the current binary. Failure must
+    # abort loudly: `set -e` does not fire for a non-final `cp` inside an
+    # `&&` list, which once let the script report success on a failed upgrade.
+    if ! sudo cp "$tmp_dir/multica" /usr/local/bin/multica.new \
+        || ! sudo chmod 755 /usr/local/bin/multica.new \
+        || ! sudo mv -f /usr/local/bin/multica.new /usr/local/bin/multica; then
+        sudo rm -f /usr/local/bin/multica.new 2>/dev/null || true
+        rm -rf "$tmp_dir"
+        echo "[upgrade] ERROR: failed to replace /usr/local/bin/multica — CLI NOT upgraded." >&2
+        return 1
+    fi
     rm -rf "$tmp_dir"
     echo "[upgrade] multica CLI upgraded to $(multica version | head -1)"
 }
