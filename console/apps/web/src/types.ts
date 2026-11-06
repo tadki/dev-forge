@@ -141,6 +141,8 @@ export interface PlatformAssetLite {
 export interface PlatformKindContract {
   kind: string;
   declared: boolean;
+  applicable?: false;
+  note?: string;
   read?: PlatformReadChannel;
   write?: PlatformWriteChannel;
   assetCount: number;

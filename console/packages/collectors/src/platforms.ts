@@ -37,8 +37,12 @@ export interface PlatformRead {
 }
 
 export interface PlatformKindDef {
+  /** false = 平台结构上无此对象类型（不适用，非未适配）；声明后不得再有 read/write，note 必填说明 */
+  applicable?: false;
+  note?: string;
   read?: PlatformRead;
-  write: PlatformWrite;
+  /** 适用 kind 必填；applicable=false 时禁止 */
+  write?: PlatformWrite;
 }
 
 export interface PlatformDef {
@@ -185,6 +189,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         },
         write: { type: 'none', advice: '聚合/观测型资产，无写通道' },
       },
+      deployment: {
+        applicable: false,
+        note: 'Claude Code 无部署实例对象：deployment 是 multica 的 agent×运行环境绑定（platformId/workspaceId/status），本地文件系统平台不存在此概念',
+      },
     },
   },
   {
@@ -326,6 +334,14 @@ function platformDefIssue(def: unknown): string | null {
   if (d.kinds === undefined) return null;
   if (!d.kinds || typeof d.kinds !== 'object') return 'kinds 必须是映射';
   for (const [kind, v] of Object.entries(d.kinds as Record<string, unknown>)) {
+    const kv = (v ?? {}) as { applicable?: unknown; note?: unknown };
+    if (kv.applicable !== undefined) {
+      if (kv.applicable !== false) return `kinds.${kind}.applicable 只接受 false（缺省即适用）`;
+      if (typeof kv.note !== 'string') return `kinds.${kind}.applicable=false 需要 note 说明缘由`;
+      const body = v as { read?: unknown; write?: unknown };
+      if (body.read !== undefined || body.write !== undefined) return `kinds.${kind}.applicable=false 时不得声明 read/write`;
+      continue;
+    }
     const write = (v as { write?: unknown } | null)?.write as { type?: unknown; cmd?: unknown; platformIdFrom?: unknown; advice?: unknown } | undefined;
     if (!write || typeof write.type !== 'string') return `kinds.${kind}.write.type 缺失`;
     if (!['file-write', 'command', 'none'].includes(write.type)) return `kinds.${kind}.write.type 未知：${String(write.type)}`;
@@ -380,6 +396,9 @@ export function resolveWriteChannel(asset: Asset, assets: Asset[], platforms: Pl
   if (!kindDef) {
     return { write: { type: 'none', advice: `平台 ${platform.id} 未声明 kind ${asset.kind} 的写通道，请手动处理` }, platform };
   }
+  if (kindDef.applicable === false || !kindDef.write) {
+    return { write: { type: 'none', advice: `平台 ${platform.id} 无 ${asset.kind} 对象（契约声明不适用）` }, platform };
+  }
   const write = kindDef.write;
   if (write.type === 'command') {
     const from = write.platformIdFrom ?? 'self';
@@ -414,6 +433,9 @@ export interface PlatformKindView {
   kind: string;
   /** 是否在 platforms.d 声明（false = 仅有实有资产、YAML 未覆盖） */
   declared: boolean;
+  /** true（序列化为 false）= 契约声明平台无此对象类型（不适用） */
+  applicable?: false;
+  note?: string;
   read?: PlatformRead;
   write?: PlatformWrite;
   assetCount: number;
@@ -482,11 +504,14 @@ export function buildPlatformsView(assets: Asset[], platforms: PlatformDef[]): P
     const kindKeys = [...new Set([...Object.keys(declared), ...byKind.keys()])].sort(sortKinds);
     const kinds: PlatformKindView[] = kindKeys.map((kind) => {
       const list = byKind.get(kind) ?? [];
+      const d = declared[kind];
       return {
         kind,
         declared: kind in declared,
-        ...(declared[kind]?.read ? { read: declared[kind].read } : {}),
-        ...(declared[kind]?.write ? { write: declared[kind].write } : {}),
+        ...(d?.applicable === false ? { applicable: false as const } : {}),
+        ...(d?.note !== undefined ? { note: d.note } : {}),
+        ...(d?.read ? { read: d.read } : {}),
+        ...(d?.write ? { write: d.write } : {}),
         assetCount: list.length,
         collectors: [...new Set(list.map((a) => a.source.collector))].sort(),
         assets: list.slice(0, ASSETS_PER_KIND_CAP).map(assetLite),

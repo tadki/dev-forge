@@ -62,6 +62,8 @@ describe('平台适配层（platforms.d）', () => {
     expect(resolveWriteChannel(ap, [ap], platforms)?.write).toMatchObject({ type: 'none' });
     const file = mkAsset('instruction:l', '/home/x/CLAUDE.md', 'instruction', {});
     expect(resolveWriteChannel(file, [file], platforms)?.write.type).toBe('file-write');
+    const na = mkAsset('deployment:cc', '/does/not/happen', 'deployment', {});
+    expect(resolveWriteChannel(na, [na], platforms)?.write).toMatchObject({ type: 'none', advice: expect.stringContaining('不适用') });
   });
 
   afterAll(async () => {
@@ -99,6 +101,20 @@ describe('platforms.d 结构校验（坏文件出诊断并跳过）', () => {
     expect(diagnostics).toHaveLength(4);
     expect(diagnostics.every((d) => d.message.includes('结构违规'))).toBe(true);
   });
+
+  it('applicable 校验：只接受 false + note 必填 + 不得带 read/write；合法声明通过', async () => {
+    const badDir = join(dir, 'bad-na');
+    await mkdir(badDir, { recursive: true });
+    await writeFile(join(badDir, 'a.yaml'), 'id: bad-true\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { applicable: true, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'b.yaml'), 'id: bad-nonote\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { applicable: false, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'c.yaml'), 'id: bad-with-rw\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { applicable: false, note: 无对象, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'd.yaml'), 'id: good-na\nmatch: { pathPrefix: ["ok://"] }\nkinds: { skill: { applicable: false, note: 无对象 } }\n');
+    const { platforms, diagnostics } = await loadPlatforms(badDir);
+    expect(platforms.map((p) => p.id)).toEqual(['good-na']);
+    expect(platforms[0].kinds?.skill).toEqual({ applicable: false, note: '无对象' });
+    expect(diagnostics).toHaveLength(3);
+    expect(diagnostics.every((d) => d.message.includes('结构违规'))).toBe(true);
+  });
 });
 
 describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
@@ -124,6 +140,11 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     expect(multica?.kinds?.instruction?.read?.note).toContain('workdir');
     const cc = platforms.find((p) => p.id === 'claude-code');
     expect(cc?.kinds?.instruction?.read?.paths).toContain('<project>/CLAUDE.md');
+    // deployment 对 claude-code 是「不适用」（平台无此对象），非「未适配」
+    expect(cc?.kinds?.deployment).toEqual({
+      applicable: false,
+      note: expect.stringContaining('deployment'),
+    });
     // hook-registration 只认平台实测挂载点（settings.json）；dev-forge 注册清单是自研面工件（custom），不进平台契约
     expect(cc?.kinds?.['hook-registration']?.read?.paths).toEqual(['~/.claude/settings.json']);
     expect(cc?.kinds?.['hook-registration']?.write).toEqual({ type: 'file-write' });
@@ -154,6 +175,12 @@ describe('buildPlatformsView', () => {
     expect(agentRow?.assets[0]).not.toHaveProperty('instructions');
     const cc = v.platforms.find((p) => p.id === 'claude-code');
     expect(cc?.kinds.find((k) => k.kind === 'instruction')?.assetCount).toBe(1);
+    expect(cc?.kinds.find((k) => k.kind === 'deployment')).toMatchObject({
+      declared: true,
+      applicable: false,
+      assetCount: 0,
+      note: expect.stringContaining('deployment'),
+    });
     expect(v.unadapted.assetCount).toBe(1);
     expect(v.unadapted.kinds[0]).toMatchObject({ kind: 'service', count: 1 });
     expect(v.unadapted.kinds[0].paths).toEqual(['systemd://user/grepai-watch.service']);

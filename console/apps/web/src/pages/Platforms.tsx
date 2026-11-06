@@ -49,10 +49,16 @@ function FieldLine({ label, children }: { label: string; children: React.ReactNo
 }
 
 /** 读通道全字段：缺失字段显示 —，与未适配一眼可辨 */
-function ReadCell({ read }: { read?: PlatformReadChannel }) {
+function ReadCell({ read, notApplicable }: { read?: PlatformReadChannel; notApplicable?: boolean }) {
   return (
     <div>
-      <FieldLine label="方式">{read ? <Badge tone={readTone(read)}>{READ_HOW_LABEL[read.how]}</Badge> : <Badge tone="off">未适配</Badge>}</FieldLine>
+      <FieldLine label="方式">
+        {read ? (
+          <Badge tone={readTone(read)}>{READ_HOW_LABEL[read.how]}</Badge>
+        ) : (
+          <Badge tone="off">{notApplicable ? '不适用' : '未适配'}</Badge>
+        )}
+      </FieldLine>
       <FieldLine label="采集器">
         {read?.collector ? (
           <span className="mono" style={SMALL}>
@@ -103,10 +109,16 @@ function ReadCell({ read }: { read?: PlatformReadChannel }) {
 }
 
 /** 写通道全字段：缺失字段显示 — */
-function WriteCell({ write }: { write?: PlatformWriteChannel }) {
+function WriteCell({ write, notApplicable }: { write?: PlatformWriteChannel; notApplicable?: boolean }) {
   return (
     <div>
-      <FieldLine label="方式">{write ? <Badge tone={writeTone(write)}>{WRITE_TYPE_LABEL[write.type]}</Badge> : <Badge tone="off">未适配</Badge>}</FieldLine>
+      <FieldLine label="方式">
+        {write ? (
+          <Badge tone={writeTone(write)}>{WRITE_TYPE_LABEL[write.type]}</Badge>
+        ) : (
+          <Badge tone="off">{notApplicable ? '不适用' : '未适配'}</Badge>
+        )}
+      </FieldLine>
       <FieldLine label="命令">
         {write?.cmd ? (
           <span className="mono" style={SMALL}>
@@ -151,6 +163,8 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
       id: `${p.id}:${kind}`,
       kind,
       declared: !!decl,
+      ...(decl?.applicable === false ? { applicable: false as const } : {}),
+      ...(decl?.note !== undefined ? { note: decl.note } : {}),
       read: decl?.read,
       write: decl?.write,
       assetCount: decl?.assetCount ?? 0,
@@ -276,10 +290,14 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                       </span>
                       <span className="row" style={{ gap: 4 }}>
                         {r.declared ? (
-                          <>
-                            <Badge tone={readTone(r.read)}>{r.read ? READ_HOW_LABEL[r.read.how] : '读未声明'}</Badge>
-                            <Badge tone={writeTone(r.write)}>{r.write ? WRITE_TYPE_LABEL[r.write.type] : '写未声明'}</Badge>
-                          </>
+                          r.applicable === false ? (
+                            <Badge tone="off">不适用</Badge>
+                          ) : (
+                            <>
+                              <Badge tone={readTone(r.read)}>{r.read ? READ_HOW_LABEL[r.read.how] : '读未声明'}</Badge>
+                              <Badge tone={writeTone(r.write)}>{r.write ? WRITE_TYPE_LABEL[r.write.type] : '写未声明'}</Badge>
+                            </>
+                          )
                         ) : (
                           <Badge tone="off">未适配</Badge>
                         )}
@@ -297,22 +315,28 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                   </span>
                   <Badge tone={sel.assetCount > 0 ? 'ok' : 'off'}>{sel.assetCount} 资产</Badge>
                   {!sel.declared && <Badge tone="warn">未声明该 kind</Badge>}
+                  {sel.declared && sel.applicable === false && <Badge tone="off">不适用</Badge>}
                   {sel.collectors.map((c) => (
                     <Chip key={c}>{c}</Chip>
                   ))}
                 </div>
+                {sel.declared && sel.note && (
+                  <div className="dim" style={{ ...SMALL, marginBottom: 'var(--sp-2)' }}>
+                    {sel.note}
+                  </div>
+                )}
                 <div className="grid grid-2" style={{ alignItems: 'start' }}>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
                       读通道 READ
                     </div>
-                    <ReadCell read={sel.read} />
+                    <ReadCell read={sel.read} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
                       写通道 WRITE
                     </div>
-                    <WriteCell write={sel.write} />
+                    <WriteCell write={sel.write} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
                 </div>
                 {sel.assets.length > 0 && (

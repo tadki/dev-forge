@@ -106,3 +106,7 @@ kinds:
       collector: claude-global
       note: 'settings.json permissions/enabledPlugins、hindsight 配置、firelog 等杂项（各采集器附带产出）'
     write: { type: none, advice: '聚合/观测型资产，无写通道' }
+  # deployment 平台页显示「不适用」而非「未适配」：Claude Code 结构上无部署实例对象
+  deployment:
+    applicable: false
+    note: 'Claude Code 无部署实例对象：deployment 是 multica 的 agent×运行环境绑定（platformId/workspaceId/status），本地文件系统平台不存在此概念'
