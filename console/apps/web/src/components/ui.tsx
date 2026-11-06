@@ -175,7 +175,8 @@ function toSplitRows(lines: string[]): SplitRow[] {
 }
 
 /**
- * 左右对照 diff：左栏基准文本（红=仅基准侧有，将被替换），右栏对比文本（绿=仅对比侧有，新增/变更）。
+ * 左右对照 diff：左栏基准文本纯展示（无底色），红绿标记只出现在右栏对比文本的 +/- 行上——
+ * 修改/新增行绿；基准侧有而对比侧无的行，在右栏以红色删除行呈现。
  * Registry 对账用：左=库内真源，右=生产实测（平台/文件）。
  */
 export function SplitDiff({ lines, leftLabel = '基准侧', rightLabel = '对比侧' }: { lines: string[]; leftLabel?: string; rightLabel?: string }) {
@@ -183,8 +184,8 @@ export function SplitDiff({ lines, leftLabel = '基准侧', rightLabel = '对比
   return (
     <div className="split-diff">
       <div className="split-diff-head">
-        <span className="split-diff-head-cell">− {leftLabel}</span>
-        <span className="split-diff-head-cell">+ {rightLabel}</span>
+        <span className="split-diff-head-cell">{leftLabel}</span>
+        <span className="split-diff-head-cell">{rightLabel}</span>
       </div>
       {rows.map((r, i) =>
         r.context !== undefined ? (
@@ -193,8 +194,14 @@ export function SplitDiff({ lines, leftLabel = '基准侧', rightLabel = '对比
           </div>
         ) : (
           <div key={i} className="split-diff-row">
-            <span className={r.left !== undefined ? 'diff-minus split-diff-cell' : 'split-diff-cell split-diff-empty'}>{r.left ?? ''}</span>
-            <span className={r.right !== undefined ? 'diff-plus split-diff-cell' : 'split-diff-cell split-diff-empty'}>{r.right ?? ''}</span>
+            <span className="diff-line split-diff-cell">{r.left ?? ''}</span>
+            {r.right !== undefined ? (
+              <span className="diff-plus split-diff-cell">+ {r.right}</span>
+            ) : r.left !== undefined ? (
+              <span className="diff-minus split-diff-cell">- {r.left}</span>
+            ) : (
+              <span className="split-diff-cell split-diff-empty" />
+            )}
           </div>
         )
       )}
