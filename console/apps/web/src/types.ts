@@ -136,6 +136,7 @@ export interface PlatformAssetLite {
   path: string;
   platformId?: string;
   enabled: boolean;
+  provenance?: 'first-party' | 'third-party';
 }
 export interface PlatformKindContract {
   kind: string;

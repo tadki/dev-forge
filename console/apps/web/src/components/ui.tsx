@@ -1,8 +1,22 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
-export function Panel({ title, en, children, ink, className = '' }: { title?: string; en?: string; children: ReactNode; ink?: boolean; className?: string }) {
+export function Panel({
+  title,
+  en,
+  children,
+  ink,
+  className = '',
+  style,
+}: {
+  title?: string;
+  en?: string;
+  children: ReactNode;
+  ink?: boolean;
+  className?: string;
+  style?: CSSProperties;
+}) {
   return (
-    <section className={`${ink ? 'panel-ink' : 'panel'} ${className}`}>
+    <section className={`${ink ? 'panel-ink' : 'panel'} ${className}`} style={style}>
       {title && (
         <div className={`panel-title ${ink ? '' : ''}`}>
           {title}

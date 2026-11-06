@@ -134,22 +134,32 @@ test('projects: single project card, git identity, harness badge, workspace grou
   await expect(page.getByText("Jerry's Forge").first()).toBeVisible();
 });
 
-test('platforms: contract renders per platform with read/write channels', async ({ page }) => {
+test('platforms: platform rail + kind list, detail pane on the right', async ({ page }) => {
   await page.goto('/platforms');
   await expect(page.locator('.page-head h2')).toContainText('平台');
-  await expect(page.getByText('multica 平台').first()).toBeVisible();
-  await expect(page.getByText('Claude Code（本地文件系统）').first()).toBeVisible();
-  // multica agent：读 = multica agent list；写 = multica agent update {platformId} --instructions {content}
-  const agentRow = page.locator('tr', { hasText: 'multica agent list' }).first();
-  await expect(agentRow).toBeVisible();
-  await expect(agentRow.getByText('multica agent update {platformId} --instructions {content}')).toBeVisible();
+  // 左栏：所有已适配平台
+  await expect(page.locator('.platform-item').filter({ hasText: 'Claude Code（本地文件系统）' })).toBeVisible();
+  const multicaItem = page.locator('.platform-item').filter({ hasText: 'multica 平台' });
+  await expect(multicaItem).toBeVisible();
+  // 默认平台（claude-code）：契约列表全 15 kind，默认详情在右侧（agent）
+  await expect(page.locator('.kind-item')).toHaveCount(15);
+  await expect(page.getByText('CC subagent 定义文件').first()).toBeVisible();
+  // 切到 multica：列表单行 + 右侧详情（默认 agent：读/写命令 + 资产）
+  await multicaItem.click();
+  await expect(page.getByText('multica agent list').first()).toBeVisible();
+  await expect(page.getByText('multica agent update {platformId} --instructions {content}').first()).toBeVisible();
+  await expect(page.getByText('发现命令').first()).toBeVisible();
+  await expect(page.getByText('详情命令').first()).toBeVisible();
+  await expect(page.getByText('Fronti').first()).toBeVisible(); // agent 详情含资产清单
+  // 点选 skill 契约 → 右侧详情切换（detailCmd + platformId 来源）
+  await page.locator('.kind-item').filter({ hasText: 'skill' }).first().click();
   await expect(page.getByText('multica skill get {id} --with-content').first()).toBeVisible();
-  await expect(page.locator('tr', { hasText: '<project>/CLAUDE.md' }).first()).toBeVisible();
-  // 点击 kind 行 → 资产面板（fixture：multica agent Fronti / Revy）
-  await agentRow.click();
-  await expect(page.getByText('Fronti').first()).toBeVisible();
+  await expect(page.getByText('multica skill update {platformId} --content {content}').first()).toBeVisible();
+  await expect(page.getByText('platformId ← self').first()).toBeVisible();
+  // 未声明 kind 也占一行且标未适配（multica 未声明 hook-registration）
+  await expect(page.locator('.kind-item').filter({ hasText: 'hook-registration' }).first()).toBeVisible();
   // 未适配桶：systemd:// 3 个 service
-  await expect(page.getByText('未适配').first()).toBeVisible();
+  await expect(page.locator('.sect', { hasText: '未适配' })).toBeVisible();
   await expect(page.getByText('systemd://user/grepai-watch.service').first()).toBeVisible();
 });
 

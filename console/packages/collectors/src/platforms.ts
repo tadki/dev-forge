@@ -407,6 +407,7 @@ export interface PlatformAssetLite {
   path: string;
   platformId?: string;
   enabled: boolean;
+  provenance?: 'first-party' | 'third-party';
 }
 
 export interface PlatformKindView {
@@ -459,6 +460,7 @@ function assetLite(a: Asset): PlatformAssetLite {
     path: a.source.path,
     ...(platformId !== undefined ? { platformId } : {}),
     enabled: a.enabled,
+    ...(a.provenance ? { provenance: a.provenance } : {}),
   };
 }
 

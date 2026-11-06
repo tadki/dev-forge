@@ -3,9 +3,9 @@ import { useMemo, useState } from 'react';
 import { apiGet, apiPost } from '../api';
 import type { AssetLite, ReconcileAction, ReconcileItem, ReconcileReport } from '../types';
 import { Badge, Chip, DataTable, SplitDiff, Panel, SectionHeader } from '../components/ui';
+import { KIND_ORDER } from '../kinds';
 import type { PageCtx } from './ctx';
 
-const KIND_ORDER = ['agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'project', 'report', 'env', 'custom'];
 
 const RECONCILE_LABEL: Record<ReconcileItem['type'], string> = {
   'missing-on-platform': '声明未落地',
