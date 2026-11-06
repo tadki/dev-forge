@@ -41,30 +41,39 @@ export const claudeGlobalCollector: Collector = {
 
     const settings = (await readJson<Record<string, unknown>>(join(claude, 'settings.json'))) ?? {};
 
-    // hooks 注册（user 层）
+    // hooks 注册（user 层）：按 CC hooks schema 整表遍历（event → matcher entry → hooks[] 全量命令）。
+    // 归属判定：自研统一入口对照 bootstrap/hooks-registration.json 声明（wrapper 路径锚定，不按仓库名猜）；
+    // hindsight 旁挂按部署根目录识别（根规则，非逐条登记）；其余为外部挂载。
+    const hookManifest = await readJson<{ wrapper?: string; alias?: string }>(
+      join(ctx.paths.devforge, 'bootstrap', 'hooks-registration.json')
+    );
+    const wrapperToken = hookManifest?.wrapper ? `claude-hooks/${hookManifest.wrapper}` : null;
     const hooks = (settings.hooks ?? {}) as SettingsHooks;
     for (const [event, entries] of Object.entries(hooks)) {
       for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
-        const command = entry.hooks?.[0]?.command ?? '';
-        if (!command) continue;
-        const isDevforge = command.includes('dev-forge');
-        const isHindsight = command.includes('.hindsight');
-        assets.push(
-          asset({
-            id: `hook-registration:${event}-${i}-${isDevforge ? 'devforge' : isHindsight ? 'hindsight' : 'other'}`,
-            kind: 'hook-registration',
-            name: `${event} → ${isDevforge ? 'dev-forge 统一入口' : isHindsight ? 'hindsight 旁挂' : '自定义'}`,
-            summary: command.length > 120 ? command.slice(0, 120) + '…' : command,
-            attach: { level: 'user' },
-            enforcement: 'enforced',
-            platforms: ['claude-code'],
-            provenance: isDevforge || isHindsight ? 'first-party' : 'third-party',
-            tags: [event, isDevforge ? 'devforge' : isHindsight ? 'hindsight' : 'custom'],
-            source: { collector: 'claude-global', path: join(claude, 'settings.json'), locator: `$.hooks.${event}[${i}]` },
-            payload: { event, matcher: entry.matcher ?? '*', command: redactObject(command) },
-          })
-        );
+        const allCmds = entry.hooks ?? [];
+        for (let j = 0; j < allCmds.length; j++) {
+          const command = allCmds[j]?.command ?? '';
+          if (!command) continue;
+          const isDevforge = wrapperToken !== null && command.includes(wrapperToken);
+          const isHindsight = command.includes('.hindsight');
+          assets.push(
+            asset({
+              id: `hook-registration:${event}-${i}-${j}-${isDevforge ? 'devforge' : isHindsight ? 'hindsight' : 'other'}`,
+              kind: 'hook-registration',
+              name: `${event} → ${isDevforge ? 'dev-forge 统一入口' : isHindsight ? 'hindsight 旁挂' : '自定义'}`,
+              summary: command.length > 120 ? command.slice(0, 120) + '…' : command,
+              attach: { level: 'user' },
+              enforcement: 'enforced',
+              platforms: ['claude-code'],
+              provenance: isDevforge || isHindsight ? 'first-party' : 'third-party',
+              tags: [event, isDevforge ? 'devforge' : isHindsight ? 'hindsight' : 'custom'],
+              source: { collector: 'claude-global', path: join(claude, 'settings.json'), locator: `$.hooks.${event}[${i}][${j}]` },
+              payload: { event, matcher: entry.matcher ?? '*', command: redactObject(command) },
+            })
+          );
+        }
       }
     }
 

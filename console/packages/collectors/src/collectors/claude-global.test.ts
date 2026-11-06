@@ -93,6 +93,77 @@ describe('claude-global collector（rules → instruction）', () => {
   });
 });
 
+describe('claude-global collector（hook-registration 归属按声明清单判定）', () => {
+  let hookRoot = '';
+
+  beforeAll(async () => {
+    hookRoot = await mkdtemp(join(tmpdir(), 'forge-hook-reg-'));
+    await mkdir(join(hookRoot, 'bootstrap'), { recursive: true });
+    await mkdir(join(hookRoot, '.claude'), { recursive: true });
+    await writeFile(
+      join(hookRoot, 'bootstrap', 'hooks-registration.json'),
+      JSON.stringify({ version: 2, alias: 'unified-hook', wrapper: 'hook-wrapper.sh', matcher: '*', hook_points: ['PreToolUse', 'SessionStart'] })
+    );
+    // 统一入口命令刻意不含 "dev-forge" 字样：命中依据是清单声明的 wrapper 路径，不是仓库名字符串
+    await writeFile(
+      join(hookRoot, '.claude', 'settings.json'),
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: '/opt/anywhere/claude-hooks/hook-wrapper.sh PreToolUse unified-hook' }] }],
+          SessionStart: [
+            {
+              matcher: '*',
+              hooks: [
+                { type: 'command', command: '/opt/anywhere/claude-hooks/hook-wrapper.sh SessionStart unified-hook' },
+                { type: 'command', command: 'node "/home/x/.hindsight/coding-agents/dist/claude-sessionstart-hook.js"' },
+              ],
+            },
+          ],
+          Notification: [{ matcher: '*', hooks: [{ type: 'command', command: 'bash /opt/other/notify.sh' }] }],
+        },
+      })
+    );
+  });
+
+  afterAll(async () => {
+    if (hookRoot) await rm(hookRoot, { recursive: true, force: true });
+  });
+
+  it('wrapper 路径命中清单 → first-party/devforge；hindsight 根 → hindsight；其余 → 外部', async () => {
+    const r = await claudeGlobalCollector.collect(makeContext(defaultConfig({ home: hookRoot, devforge: hookRoot })));
+    const pre = r.assets.find((a) => a.id === 'hook-registration:PreToolUse-0-0-devforge');
+    expect(pre).toBeDefined();
+    expect(pre!.provenance).toBe('first-party');
+    expect(pre!.tags).toContain('devforge');
+    expect(pre!.name).toContain('统一入口');
+
+    // 同一 matcher entry 内的多条命令全部采集（schema 全量遍历，不只取首条）
+    const ss = r.assets.filter((a) => a.id.startsWith('hook-registration:SessionStart-0-'));
+    expect(ss.map((a) => a.id)).toEqual(['hook-registration:SessionStart-0-0-devforge', 'hook-registration:SessionStart-0-1-hindsight']);
+
+    const ext = r.assets.find((a) => a.id === 'hook-registration:Notification-0-0-other');
+    expect(ext!.provenance).toBe('third-party');
+    expect(ext!.tags).toContain('custom');
+  });
+
+  it('清单缺失时不做名义猜测：统一入口挂载降级为外部挂载', async () => {
+    const noManifest = await mkdtemp(join(tmpdir(), 'forge-hook-nomanifest-'));
+    try {
+      await mkdir(join(noManifest, '.claude'), { recursive: true });
+      await writeFile(
+        join(noManifest, '.claude', 'settings.json'),
+        JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: '/opt/anywhere/claude-hooks/hook-wrapper.sh PreToolUse unified-hook' }] }] } })
+      );
+      const r = await claudeGlobalCollector.collect(makeContext(defaultConfig({ home: noManifest, devforge: noManifest })));
+      const pre = r.assets.find((a) => a.id === 'hook-registration:PreToolUse-0-0-other');
+      expect(pre).toBeDefined();
+      expect(pre!.provenance).toBe('third-party');
+    } finally {
+      await rm(noManifest, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('claude-global collector（agents）', () => {
   it('用户级 ~/.claude/agents 采集为第三方 agent', async () => {
     const r = await claudeGlobalCollector.collect(ctx());
