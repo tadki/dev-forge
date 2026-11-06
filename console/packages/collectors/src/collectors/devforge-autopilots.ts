@@ -28,14 +28,17 @@ export const devforgeAutopilotsCollector: Collector = {
           enforcement: 'derived',
           platforms: ['multica'],
           source: { collector: 'devforge-autopilots', path: p, sha256: sha256(md) },
-          payload: { script: true, lines: md.split('\n').length, purpose: docstring || header },
+          // 正文随 payload 归档（不进内容指纹）：库内真源可全文对照 / 回滚，避免只存哈希看不出改了什么
+          payload: { script: true, lines: md.split('\n').length, purpose: docstring || header, content: md },
           tags: ['autopilot', 'devforge', 'scripted'],
         })
       );
     }
 
-    const kolCfg = await readJson<Record<string, unknown>>(join(dir, 'configs', 'kol.json'));
+    const kolPath = join(dir, 'configs', 'kol.json');
+    const kolCfg = await readJson<Record<string, unknown>>(kolPath);
     if (kolCfg) {
+      const kolRaw = (await readText(kolPath)) ?? '';
       assets.push(
         asset({
           id: 'autopilot:config-kol',
@@ -45,8 +48,8 @@ export const devforgeAutopilotsCollector: Collector = {
           attach: { level: 'user' },
           enforcement: 'enforced',
           platforms: ['multica'],
-          source: { collector: 'devforge-autopilots', path: join(dir, 'configs', 'kol.json') },
-          payload: kolCfg,
+          source: { collector: 'devforge-autopilots', path: kolPath },
+          payload: { ...kolCfg, content: kolRaw },
           tags: ['autopilot', 'config'],
         })
       );

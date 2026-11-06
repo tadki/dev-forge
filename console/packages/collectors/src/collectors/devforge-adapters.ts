@@ -27,7 +27,7 @@ export const devforgeAdaptersCollector: Collector = {
           enforcement: 'derived',
           platforms: ['claude-code'],
           source: { collector: 'devforge-adapters', path: p, sha256: sha256(md) },
-          payload: { envContract: envNames, lines: md.split('\n').length },
+          payload: { envContract: envNames, lines: md.split('\n').length, content: md },
           tags: ['adapter', 'devforge'],
         })
       );

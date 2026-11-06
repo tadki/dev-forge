@@ -364,6 +364,35 @@ describe('store-drift（库 vs 生产）', () => {
     expect(item?.diff?.some((l) => l.includes('old-model') || l.includes('new-model'))).toBe(true);
     expect(item?.splitRows?.some((r) => r.kind !== 'same')).toBe(true);
   });
+
+  it('脚本型 autopilot 两侧有正文 → 全文 diff 能看出删掉的代码，push 可恢复库内旧脚本', () => {
+    const oldBody = '#!/usr/bin/env python3\n# Architecture sweep\n\ndef run_ok(cmd):\n    return True\n\ndef main():\n    print("sweep")\n';
+    const newBody = '#!/usr/bin/env python3\n# Architecture sweep\n\ndef main():\n    print("sweep")\n';
+    const prod = declared(
+      mk('autopilot:script-sweep', 'autopilot', {
+        source: { collector: 'devforge-autopilots', path: '/x/autopilots/sweep.py', sha256: 'prod-sha-aaa' },
+        payload: { script: true, lines: newBody.split('\n').length, purpose: 'sweep', content: newBody },
+      })
+    );
+    const stored = {
+      ...prod,
+      source: { ...prod.source, sha256: 'store-sha-bbb' },
+      payload: { script: true, lines: oldBody.split('\n').length, purpose: 'sweep', content: oldBody },
+    };
+    const store = new Map([[prod.id, { ...v2Record(prod, ''), asset: stored, hash: 'not-matching' }]] as const);
+    const report = buildReconcileReport({ assets: [prod] }, [], new Date(), { store });
+    const item = report.items.find((i) => i.key === `store:${prod.id}`);
+    // 全文对照：被删掉的 run_ok 在库内旧文中、生产侧没有（del 行），而不是只剩 sha 字段差异
+    expect(item?.splitRows?.some((r) => r.kind === 'del' && r.left?.includes('run_ok'))).toBe(true);
+    expect(item?.diff?.some((l) => l.startsWith('- ') && l.includes('run_ok'))).toBe(true);
+    const push = item?.actions.find((a) => a.id === 'push');
+    expect(push?.executable).toBe(true);
+    expect(push?.steps[0]).toMatchObject({
+      type: 'file-write',
+      path: '/x/autopilots/sweep.py',
+      contentFrom: { assetId: prod.id, field: 'content', from: 'store' },
+    });
+  });
 });
 
 describe('审核回归：未注册平台与截断保护', () => {

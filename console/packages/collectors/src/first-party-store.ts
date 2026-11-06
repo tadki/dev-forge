@@ -15,6 +15,8 @@ import { contentFingerprint, isTruthKind } from './store-content.js';
 export interface StoreSyncResult {
   written: number;
   migrated: number;
+  /** 指纹一致但旧记录缺正文 → 原地补写正文（不改哈希，不影响对账结论） */
+  backfilled: number;
   unchanged: number;
   /** 库内保留但本轮采集未见对应声明资产的条目数（消失资产 + 非内容型历史记录） */
   kept: number;
@@ -105,6 +107,7 @@ export async function syncFirstPartyStore(
   const records = opts?.records ?? (await loadFirstPartyStore(dir)).records;
   let written = 0;
   let migrated = 0;
+  let backfilled = 0;
   let unchanged = 0;
   const touched = new Set<string>();
 
@@ -122,10 +125,20 @@ export async function syncFirstPartyStore(
       migrated++;
       continue;
     }
+    // 正文回填：早期 v3 记录只存指纹快照（正文归档政策之前），store-drift 无从全文对照。
+    // 仅在指纹一致（无漂移）且生产正文在手、库内缺正文时原地补写——哈希与 savedAt 不变，不改对账结论；
+    // 指纹有漂移的记录不动（回填以生产正文为准会掩盖「谁改的」这一事实，正文只能经 adopt 落库）。
+    const prodContent = (a.payload as { content?: unknown }).content;
+    const recContent = (existing.asset.payload as { content?: unknown }).content;
+    if (existing.hash === contentFingerprint(a) && typeof prodContent === 'string' && typeof recContent !== 'string') {
+      await writeStoreRecord(dir, a, existing);
+      backfilled++;
+      continue;
+    }
     unchanged++;
   }
 
   let kept = 0;
   for (const id of records.keys()) if (!touched.has(id)) kept++;
-  return { written, migrated, unchanged, kept };
+  return { written, migrated, backfilled, unchanged, kept };
 }

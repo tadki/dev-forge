@@ -184,7 +184,9 @@ export class Engine {
         const store = await loadFirstPartyStore(storeDir);
         this.storeRecords = store.records;
         state.diagnostics = [...state.diagnostics, ...store.diagnostics];
-        await syncFirstPartyStore(state.assets, storeDir, { records: store.records });
+        const synced = await syncFirstPartyStore(state.assets, storeDir, { records: store.records });
+        // 正文回填已落盘：本轮报告的库内副本要带上正文，否则全文对照要等下一轮采集才出现
+        if (synced.backfilled > 0) this.storeRecords = (await loadFirstPartyStore(storeDir)).records;
       } catch (e) {
         state.diagnostics.push({ level: 'warn', message: `[first-party-store] 入库失败：${String(e).slice(0, 200)}`, path: storeDir });
       }

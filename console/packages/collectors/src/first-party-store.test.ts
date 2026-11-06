@@ -95,6 +95,56 @@ describe('first-party store（真源：create-only）', () => {
     expect(updated.savedAt).toBe(first.savedAt);
     expect(updated.updatedAt > first.updatedAt).toBe(true);
   });
+
+  const scriptAsset = (sha256: string, content?: string): Asset => ({
+    id: 'hook-script:patch.sh',
+    kind: 'hook-script',
+    name: 'patch.sh',
+    summary: '',
+    attach: { level: 'user' },
+    enforcement: 'enforced',
+    platforms: ['claude-code'],
+    provenance: 'first-party',
+    tags: [],
+    enabled: true,
+    source: { collector: 'test', path: '/tmp/hooks/patch.sh', sha256 },
+    payload: {
+      lines: 3,
+      purpose: '修补',
+      registry: { declared: true, declaredBy: 'e' },
+      ...(content !== undefined ? { content } : {}),
+    },
+  });
+
+  it('正文回填：指纹一致且旧记录缺正文 → 原地补写正文，哈希与 savedAt 不变', async () => {
+    const sub = join(dir, 'backfill');
+    const old = scriptAsset('sha-old');
+    await writeStoreRecord(sub, old);
+    const oldRec = (await loadFirstPartyStore(sub)).records.get(old.id)!;
+    const prod = scriptAsset('sha-old', '#!/bin/sh\necho hi\n');
+    const r = await syncFirstPartyStore([prod], sub);
+    expect(r.backfilled).toBe(1);
+    expect(r.unchanged).toBe(0);
+    const rec = (await loadFirstPartyStore(sub)).records.get(old.id)!;
+    expect((rec.asset.payload as { content?: string }).content).toBe('#!/bin/sh\necho hi\n');
+    expect(rec.hash).toBe(oldRec.hash); // 指纹不变（content 不参与）
+    expect(rec.savedAt).toBe(oldRec.savedAt);
+    // 已回填后再次同步 → 未变，不重写
+    const r2 = await syncFirstPartyStore([prod], sub);
+    expect(r2.backfilled).toBe(0);
+    expect(r2.unchanged).toBe(1);
+  });
+
+  it('正文回填不越过漂移：指纹不同时不回填（正文只能经 adopt 落库）', async () => {
+    const sub = join(dir, 'backfill-drift');
+    const old = scriptAsset('sha-old');
+    const oldRec = await writeStoreRecord(sub, old);
+    const r = await syncFirstPartyStore([scriptAsset('sha-new', '#!/bin/sh\necho new\n')], sub);
+    expect(r.backfilled).toBe(0);
+    const rec = (await loadFirstPartyStore(sub)).records.get(old.id)!;
+    expect((rec.asset.payload as { content?: string }).content).toBeUndefined();
+    expect(rec.hash).toBe(oldRec.hash); // 库内真源未被生产覆写
+  });
 });
 
 describe('contentFingerprint（按 kind 内容字段，volatile 剔除）', () => {
@@ -170,5 +220,20 @@ describe('contentFingerprint 审核回归', () => {
     expect(f('Fronti', [{ id: 't1', kind: 'cron', cron_expression: '0 9 * * *', next_run_at: 'x' }]))
       .toBe(f('uuid-123', [{ id: 't1', kind: 'cron', cron_expression: '0 9 * * *', next_run_at: 'y' }]));
     expect(() => contentFingerprint({ ...base, payload: { platformId: 'z', triggers: [{ kind: 'cron' }] } } as Asset)).not.toThrow();
+  });
+
+  it('文件型 kind（autopilot/hook-script/adapter）：payload.content 不参与指纹（正文归档不制造假漂移）', () => {
+    const fp = (kind: Asset['kind'], path: string, content: string) =>
+      contentFingerprint({
+        ...base, kind, source: { collector: 't', path },
+        payload: content === '' ? { purpose: 'p' } : { purpose: 'p', content },
+      } as Asset);
+    for (const [kind, path] of [
+      ['autopilot', '/x/a.py'],
+      ['hook-script', '/x/b.sh'],
+      ['adapter', '/x/c.sh'],
+    ] as const) {
+      expect(fp(kind, path, '')).toBe(fp(kind, path, '任意正文'));
+    }
   });
 });

@@ -173,7 +173,7 @@ export const devforgeHooksCollector: Collector = {
           enforcement: 'enforced',
           platforms: ['claude-code'],
           source: { collector: 'devforge-hooks', path: p, sha256: sha256(md) },
-          payload: { lines: md.split('\n').length, purpose },
+          payload: { lines: md.split('\n').length, purpose, content: md },
           tags: ['devforge', 'script'],
         })
       );

@@ -111,6 +111,12 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
   const contentField = (a: Asset): 'content' | 'instructions' | undefined => {
     if (a.kind === 'agent') return 'instructions';
     if (a.kind === 'instruction' || a.kind === 'skill') return 'content';
+    // 文件型 kind（autopilot 脚本/配置、hook-script、adapter）：正文已随 payload 归档（content），
+    // 生产侧真有正文且是绝对路径文件时走全文 diff / 可执行 push；缺正文 → 内容视图逐字段对照
+    if (a.kind === 'autopilot' || a.kind === 'hook-script' || a.kind === 'adapter') {
+      const path = a.source.path;
+      if (path.startsWith('/') && typeof (a.payload as { content?: unknown }).content === 'string') return 'content';
+    }
     return undefined;
   };
 
@@ -126,8 +132,8 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
     const field = contentField(a);
     const storeText = field ? (record.asset.payload as Record<string, unknown>)[field] : undefined;
     const prodText = field ? (a.payload as Record<string, unknown>)[field] : undefined;
-    // 有文本字段 → 全文 diff；无文本字段（autopilot/hook-script/adapter 等，库内只存指纹快照）
-    // 或文本一致而指纹仍漂移（差异来自元数据，如 skill 附带文件、agent model）→ 内容视图逐字段对照
+    // 有文本字段 → 全文 diff；两侧缺正文（旧记录未回填 / 无文件资产）或文本一致而指纹仍漂移
+    // （差异来自元数据，如 skill 附带文件、agent model）→ 内容视图逐字段对照
     const bothText = typeof storeText === 'string' && typeof prodText === 'string';
     const viewSide = { left: contentViewLines(record.asset).join('\n'), right: contentViewLines(a).join('\n') };
     const textSide = bothText ? { left: storeText, right: prodText } : viewSide;

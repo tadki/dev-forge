@@ -36,11 +36,11 @@ try {
   store = await syncFirstPartyStore(state.assets, storeDir, { records: loadedStore.records });
 } catch (e) {
   // 与 engine 一致：入库失败只 warn，不阻断快照/对账输出
-  store = { written: 0, migrated: 0, unchanged: 0, kept: loadedStore.records.size };
+  store = { written: 0, migrated: 0, backfilled: 0, unchanged: 0, kept: loadedStore.records.size };
   state.diagnostics.push({ level: 'warn', message: `[first-party-store] 入库失败：${String(e).slice(0, 200)}`, path: storeDir });
 }
 console.error(
-  `first-party store: ${store.written} 新建 · ${store.migrated} 迁移 · ${store.unchanged} 未变 · ${store.kept} 本地保留(采集未见) -> ${storeDir}`
+  `first-party store: ${store.written} 新建 · ${store.migrated} 迁移 · ${store.backfilled} 正文回填 · ${store.unchanged} 未变 · ${store.kept} 本地保留(采集未见) -> ${storeDir}`
 );
 const loadedPlatforms = await loadPlatforms(config.platformsDir ?? join(config.devforge, 'console', 'platforms.d'));
 state.diagnostics = [...state.diagnostics, ...loadedPlatforms.diagnostics];
