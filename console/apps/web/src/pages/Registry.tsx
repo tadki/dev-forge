@@ -164,12 +164,13 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
                   style={{
                     margin: '6px 0 0',
                     padding: '6px 8px',
-                    maxHeight: 220,
+                    maxHeight: item.splitRows ? 320 : 220,
                     overflow: 'auto',
                     border: '1px dashed var(--khaki)',
                   }}
                 >
                   <SplitDiff
+                    rows={item.splitRows}
                     lines={item.diff}
                     leftLabel={item.key.startsWith('store:') ? '库内真源' : item.key.startsWith('drift:multica:') ? 'multica 平台' : item.key.startsWith('drift:skill:') ? 'multica 副本' : '基准侧'}
                     rightLabel={item.key.startsWith('store:') ? '生产实测' : item.key.startsWith('drift:multica:') ? '物化 workdir' : item.key.startsWith('drift:skill:') ? '本地副本' : '对比侧'}
