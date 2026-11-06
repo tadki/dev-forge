@@ -6,7 +6,14 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const tpl = readFileSync(join(here, 'fixtures.config.yaml'), 'utf8');
 const configPath = '/tmp/forge-console-e2e.config.yaml';
-writeFileSync(configPath, tpl.replace('FIXTURES_DIR_PLACEHOLDER', join(here, 'fixtures')));
+writeFileSync(
+  configPath,
+  tpl
+    .replace('FIXTURES_DIR_PLACEHOLDER', join(here, 'fixtures'))
+    // 声明与本地库都落在 e2e 目录内：CI 机器上没有 /home/jerry/... 绝对路径
+    .replace('REGISTRY_DIR_PLACEHOLDER', join(here, 'fixtures', 'registry.d'))
+    .replace('STORE_DIR_PLACEHOLDER', join(here, 'test-results', 'first-party'))
+);
 
 // 预置一条与 fixture 指纹不符的库内副本（hash 故意不匹配）→ 触发 store-drift 双向动作用例
 const storeDir = join(here, 'test-results', 'first-party');
