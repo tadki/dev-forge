@@ -144,6 +144,11 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   // 默认平台（claude-code）：契约列表全 15 kind，默认详情在右侧（agent）
   await expect(page.locator('.kind-item')).toHaveCount(15);
   await expect(page.getByText('CC subagent 定义文件').first()).toBeVisible();
+  // deployment 契约声明不适用（平台无此对象），显示「不适用」而非「未适配」
+  const depRow = page.locator('.kind-item').filter({ hasText: 'deployment' }).first();
+  await expect(depRow).toContainText('不适用');
+  await depRow.click();
+  await expect(page.getByText('Claude Code 无部署实例对象').first()).toBeVisible();
   // 切到 multica：列表单行 + 右侧详情（默认 agent：读/写命令 + 资产）
   await multicaItem.click();
   await expect(page.getByText('multica agent list').first()).toBeVisible();
@@ -228,16 +233,21 @@ test('registry: reconcile section lists drift and executes dry-run after confirm
   await expect(page.getByRole('button', { name: /以 agent instructions 为准/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /以物化 CLAUDE.md 为准/ })).toBeVisible();
 
-  // 写操作必须过 window.confirm；dry-run 服务端只回显计划
-  page.once('dialog', (d) => d.accept());
+  // 写操作必须先过页内确认卡；dry-run 服务端只回显计划
   await page.getByRole('button', { name: /以物化 CLAUDE.md 为准/ }).click();
+  const card = page.locator('.confirm-card');
+  await expect(card).toBeVisible();
+  await expect(card.getByText('执行命令', { exact: false }).first()).toBeVisible(); // 卡内列出将执行步骤
+  await card.getByRole('button', { name: '确认执行', exact: true }).click();
   await expect(page.getByText('[dry-run]', { exact: false }).first()).toBeVisible();
   await expect(page.getByText('已执行', { exact: false })).toBeVisible();
 
-  // 拒绝确认 → 不发请求、无输出面板
-  page.once('dialog', (d) => d.dismiss());
+  // 取消确认 → 卡片关闭，不发请求
   await page.getByRole('button', { name: /以 agent instructions 为准/ }).click();
-  await page.waitForTimeout(300);
+  const cancelCard = page.locator('.confirm-card');
+  await expect(cancelCard).toBeVisible();
+  await cancelCard.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(cancelCard).not.toBeVisible();
 });
 
 test('registry: store drift（库 vs 生产）adopt/push 双向 dry-run', async ({ page }) => {
@@ -249,16 +259,20 @@ test('registry: store drift（库 vs 生产）adopt/push 双向 dry-run', async 
   await expect(panel.getByRole('button', { name: /以生产为准/ })).toBeVisible();
   await expect(panel.getByRole('button', { name: /以库为准/ })).toBeVisible();
 
-  // adopt（以生产为准）→ dry-run 只回显重写库副本，不落盘
-  page.once('dialog', (d) => d.accept());
+  // adopt（以生产为准）→ 页内确认卡 → dry-run 只回显重写库副本，不落盘
   await panel.getByRole('button', { name: /以生产为准/ }).click();
+  const adoptCard = page.locator('.confirm-card');
+  await expect(adoptCard).toBeVisible();
+  await adoptCard.getByRole('button', { name: '确认执行', exact: true }).click();
   await expect(page.getByText('[dry-run]', { exact: false }).first()).toBeVisible();
   await expect(page.getByText('重写库内副本', { exact: false })).toBeVisible();
   await expect(page.getByText('已执行', { exact: false })).toBeVisible();
 
   // push（以库为准）→ dry-run 回显 multica 命令，platformId 从 deployment 解析
-  page.once('dialog', (d) => d.accept());
   await panel.getByRole('button', { name: /以库为准/ }).click();
+  const pushCard = page.locator('.confirm-card');
+  await expect(pushCard).toBeVisible();
+  await pushCard.getByRole('button', { name: '确认执行', exact: true }).click();
   await expect(page.getByText('multica agent update fronti-1 --instructions', { exact: false })).toBeVisible();
 });
 
@@ -296,8 +310,10 @@ test('services: disabled repo-sync is neutral and has no start/restart', async (
   await expect(dead.getByText('dead', { exact: true })).toBeVisible();
   await expect(dead.getByRole('button', { name: '▶ 启动' })).toBeVisible();
   await expect(dead.getByRole('button', { name: '↻' })).toBeVisible();
-  page.on('dialog', (d) => d.accept());
   await dead.getByRole('button', { name: '▶ 启动' }).click();
+  const startCard = page.locator('.confirm-card');
+  await expect(startCard).toBeVisible();
+  await startCard.getByRole('button', { name: '确认执行', exact: true }).click();
   await expect(dead.getByText('start ✓')).toBeVisible({ timeout: 10_000 });
 
   const active = page.locator('tr', { hasText: 'repo-sync · kol' }).first();
@@ -308,9 +324,11 @@ test('services: disabled repo-sync is neutral and has no start/restart', async (
 
 test('services: dry-run stop returns ok message', async ({ page }) => {
   await page.goto('/services');
-  page.on('dialog', (d) => d.accept());
   const grepaiRow = page.locator('tr', { hasText: 'grepai-watch' });
   await grepaiRow.locator('button', { hasText: '■ 停止' }).click();
+  const stopCard = page.locator('.confirm-card');
+  await expect(stopCard).toBeVisible();
+  await stopCard.getByRole('button', { name: '确认执行', exact: true }).click();
   await expect(grepaiRow.getByText('stop ✓').first()).toBeVisible({ timeout: 10_000 });
 });
 

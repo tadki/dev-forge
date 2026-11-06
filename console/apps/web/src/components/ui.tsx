@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 export function Panel({
@@ -247,4 +248,68 @@ export function SplitDiff({
 
 export function Chip({ children }: { children: ReactNode }) {
   return <span className="chip">{children}</span>;
+}
+
+/**
+ * 页内确认卡（替代浏览器 window.confirm/alert）。
+ * - 默认双按钮（取消 + 确认执行），danger 时确认键用警示色；
+ * - notice 单按钮提示卡（「知道了」），用于不可自动执行的说明；
+ * - Esc / 点击遮罩 = 取消。
+ */
+export function ConfirmCard({
+  title,
+  en,
+  body,
+  notice = false,
+  confirmLabel = '确认执行',
+  cancelLabel = '取消',
+  danger = false,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  en?: string;
+  body: ReactNode;
+  notice?: boolean;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  onConfirm?: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div className="confirm-backdrop" onClick={onCancel}>
+      <div className="confirm-card" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <div className="confirm-head">
+          {title}
+          {en && <span className="en">{en}</span>}
+        </div>
+        <div className="confirm-body">{body}</div>
+        <div className="confirm-actions">
+          {notice ? (
+            <button className="btn small" autoFocus onClick={onCancel}>
+              {confirmLabel}
+            </button>
+          ) : (
+            <>
+              <button className="btn small btn-ghost" autoFocus onClick={onCancel}>
+                {cancelLabel}
+              </button>
+              <button className={`btn small ${danger ? 'btn-amber' : 'btn-mint'}`} onClick={onConfirm}>
+                {confirmLabel}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }

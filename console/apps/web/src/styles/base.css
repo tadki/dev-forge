@@ -313,3 +313,13 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .reconcile-warn-head { font-weight: 800; font-size: var(--fs-l2); margin-bottom: var(--sp-2); }
 .reconcile-warn-head .en { font-weight: 400; opacity: 0.65; margin-left: var(--sp-2); font-size: var(--fs-l1); font-family: var(--font-mono); }
 .reconcile-warn .panel { margin-bottom: var(--sp-2); }
+
+/* ===== 页内确认卡（替代浏览器 confirm/alert；Neo-Brutalism 同款硬影零圆角） ===== */
+.confirm-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(25, 20, 34, 0.55); display: flex; align-items: center; justify-content: center; padding: var(--sp-4); }
+.confirm-card { width: min(620px, 100%); max-height: 82vh; display: flex; flex-direction: column; background: var(--paper-warm); border: var(--bw-main) solid var(--ink); box-shadow: var(--shadow-panel); }
+.confirm-head { background: var(--ink); color: var(--text-on-dark); padding: var(--sp-2) var(--sp-3); font-weight: 800; font-size: var(--fs-l3); letter-spacing: 1px; }
+.confirm-head .en { font-family: var(--font-mono); font-weight: 400; font-size: var(--fs-label); color: var(--khaki); margin-left: var(--sp-2); letter-spacing: 1.5px; }
+.confirm-body { padding: var(--sp-3); overflow: auto; font-size: var(--fs-l2); line-height: 1.6; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-3); }
+.confirm-steps { font-family: var(--font-mono); font-size: var(--fs-l1); border: 1px dashed var(--khaki); background: var(--paper); padding: var(--sp-2); margin: var(--sp-2) 0 0; }
+.confirm-warn { border: 2px solid var(--amber); background: rgba(232, 185, 58, 0.12); padding: var(--sp-2); font-weight: 700; margin-bottom: var(--sp-2); }

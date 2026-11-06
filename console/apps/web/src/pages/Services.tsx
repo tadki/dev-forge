@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { apiGet, apiPost } from '../api';
 import type { AssetLite } from '../types';
-import { Badge, Chip, DataTable, KV, Panel, SectionHeader, StatusBadge } from '../components/ui';
+import { Badge, Chip, ConfirmCard, DataTable, KV, Panel, SectionHeader, StatusBadge } from '../components/ui';
 import type { PageCtx } from './ctx';
 
 interface ServicePayload {
@@ -89,20 +89,27 @@ function MetaChips({ meta }: { meta?: AssetLite['meta'] }) {
   );
 }
 
+function unitFor(a: AssetLite): string {
+  return a.id.startsWith('service:repo-sync-') ? `repo-sync-${unitOfRs(a)}` : unitOf(a);
+}
+
+type ServiceAction = 'start' | 'stop' | 'restart';
+
+const SERVICE_ACTION_LABEL: Record<ServiceAction, string> = { start: '启动', stop: '停止', restart: '重启' };
+
 export function ServicesPage(_props: { ctx: PageCtx }) {
   const queryClient = useQueryClient();
   const services = useQuery({ queryKey: ['assets', 'service'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=service'), refetchInterval: 20_000 });
   const [sel, setSel] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<{ a: AssetLite; action: ServiceAction } | null>(null);
 
-  async function runAction(a: AssetLite, action: 'start' | 'stop' | 'restart'): Promise<void> {
-    const unit = a.id.startsWith('service:repo-sync-') ? `repo-sync-${unitOfRs(a)}` : unitOf(a);
-    const isConsole = unit.startsWith('forge-console');
-    const tip =
-      action === 'stop' && isConsole
-        ? `即将停止 forge-console 自身！停止后本页面失联，恢复需在终端执行 systemctl --user start forge-console。确认停止 ${unit}？`
-        : `确认对自建服务 ${unit} 执行 ${action}？`;
-    if (!window.confirm(tip)) return;
+  function askAction(a: AssetLite, action: ServiceAction) {
+    setPending({ a, action });
+  }
+
+  async function runAction(a: AssetLite, action: ServiceAction): Promise<void> {
+    const unit = unitFor(a);
     setActionMsg((m) => ({ ...m, [a.id]: `${action}…` }));
     try {
       const r = await apiPost<{ ok: boolean; output?: string }>('/api/services/actions', { unit, action });
@@ -160,7 +167,7 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
                 {
                   key: 'switch',
                   head: '启停开关',
-                  render: (r) => <ServiceSwitch row={r} actionMsg={actionMsg[r.id]} onAction={(a, action) => void runAction(a, action)} />,
+                  render: (r) => <ServiceSwitch row={r} actionMsg={actionMsg[r.id]} onAction={askAction} />,
                 },
               ]}
             />
@@ -208,6 +215,39 @@ export function ServicesPage(_props: { ctx: PageCtx }) {
           )}
         </div>
       </div>
+
+      {pending &&
+        (() => {
+          const unit = unitFor(pending.a);
+          const stoppingConsole = pending.action === 'stop' && unit.startsWith('forge-console');
+          return (
+            <ConfirmCard
+              title={`确认${SERVICE_ACTION_LABEL[pending.action]}服务`}
+              en={unit}
+              danger={pending.action !== 'start'}
+              onCancel={() => setPending(null)}
+              onConfirm={() => {
+                const { a, action } = pending;
+                setPending(null);
+                void runAction(a, action);
+              }}
+              body={
+                <>
+                  {stoppingConsole ? (
+                    <div className="confirm-warn">
+                      即将停止 forge-console 自身！停止后本页面失联，恢复需在终端执行 systemctl --user start forge-console。
+                    </div>
+                  ) : (
+                    <div>
+                      对自建服务 <span className="mono">{unit}</span> 执行 {SERVICE_ACTION_LABEL[pending.action]}。
+                    </div>
+                  )}
+                  <div className="confirm-steps">$ systemctl --user {pending.action} {unit}</div>
+                </>
+              }
+            />
+          );
+        })()}
     </div>
   );
 }

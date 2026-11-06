@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { apiGet, apiPost } from '../api';
 import type { AssetLite, ReconcileAction, ReconcileItem, ReconcileReport } from '../types';
-import { Badge, Chip, DataTable, SplitDiff, Panel, SectionHeader } from '../components/ui';
+import { Badge, Chip, ConfirmCard, DataTable, SplitDiff, Panel, SectionHeader } from '../components/ui';
 import { KIND_ORDER } from '../kinds';
 import type { PageCtx } from './ctx';
 
@@ -41,11 +41,6 @@ function humanizeStep(step: ReconcileAction['steps'][number]): string {
   return step.type;
 }
 
-function confirmTip(item: ReconcileItem, action: ReconcileAction): string {
-  const steps = action.steps.length > 0 ? action.steps.map((s) => `  · ${humanizeStep(s)}`).join('\n') : '  （无自动步骤）';
-  return `平台对账 · ${RECONCILE_LABEL[item.type]} · ${item.platform}\n${item.detail}\n\n动作：${action.label}\n\n将执行：\n${steps}\n\n确认执行？写操作会先备份目标文件，执行后可回滚。`;
-}
-
 interface StatRow {
   id: string;
   kind: string;
@@ -68,13 +63,18 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
   const [busyKey, setBusyKey] = useState('');
   const [actionResult, setActionResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [kindFilter, setKindFilter] = useState('');
+  const [pending, setPending] = useState<{ item: ReconcileItem; action: ReconcileAction } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  async function runReconcileAction(item: ReconcileItem, action: ReconcileAction) {
+  function askReconcileAction(item: ReconcileItem, action: ReconcileAction) {
     if (!action.executable) {
-      window.alert(action.note ?? '该方向没有安全的自动执行路径，请手动处理。');
+      setNotice(action.note ?? '该方向没有安全的自动执行路径，请手动处理。');
       return;
     }
-    if (!window.confirm(confirmTip(item, action))) return;
+    setPending({ item, action });
+  }
+
+  async function runReconcileAction(item: ReconcileItem, action: ReconcileAction) {
     setBusyKey(`${item.key}:${action.id}`);
     setActionResult(null);
     try {
@@ -186,7 +186,7 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
                       className={`btn small ${a.executable ? (a.direction === 'platform-to-local' ? 'btn-amber' : 'btn-mint') : 'btn-ghost'}`}
                       disabled={busy}
                       title={!a.executable ? a.note : DIRECTION_LABEL[a.direction]}
-                      onClick={() => void runReconcileAction(item, a)}
+                      onClick={() => askReconcileAction(item, a)}
                     >
                       {a.direction === 'platform-to-local' ? '⇠' : '⇢'} {busy ? '执行中…' : a.label}
                       {!busy && !a.executable ? ' ·手动' : ''}
@@ -205,6 +205,44 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
           </span>
           <pre style={{ whiteSpace: 'pre-wrap', margin: '6px 0 0', fontSize: 'var(--fs-l1)', fontFamily: 'var(--font-mono)' }}>{actionResult.text}</pre>
         </div>
+      )}
+
+      {pending && (
+        <ConfirmCard
+          title={`确认 · ${RECONCILE_LABEL[pending.item.type]}`}
+          en={`${pending.item.platform} · ${pending.action.label}`}
+          danger={pending.action.direction === 'platform-to-local'}
+          onCancel={() => setPending(null)}
+          onConfirm={() => {
+            const { item, action } = pending;
+            setPending(null);
+            void runReconcileAction(item, action);
+          }}
+          body={
+            <>
+              <div className="dim">{pending.item.detail}</div>
+              <div className="mt">
+                动作：<span className="mono">{pending.action.label}</span>（{DIRECTION_LABEL[pending.action.direction]}）
+              </div>
+              <div className="confirm-steps">
+                {pending.action.steps.length > 0
+                  ? pending.action.steps.map((s, i) => <div key={i}>· {humanizeStep(s)}</div>)
+                  : '（无自动步骤）'}
+              </div>
+              <div className="dim mt">写操作会先备份目标文件，执行后可回滚。Esc 取消。</div>
+            </>
+          }
+        />
+      )}
+      {notice && (
+        <ConfirmCard
+          notice
+          title="无法自动执行"
+          en="MANUAL"
+          confirmLabel="知道了"
+          onCancel={() => setNotice(null)}
+          body={<div style={{ whiteSpace: 'pre-wrap' }}>{notice}</div>}
+        />
       )}
 
       <Panel title="统计表" en={`BY KIND × PROVENANCE · ${assets.length} 总量`}>
