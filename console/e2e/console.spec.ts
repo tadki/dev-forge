@@ -141,8 +141,8 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   await expect(page.locator('.platform-item').filter({ hasText: 'Claude Code（本地文件系统）' })).toBeVisible();
   const multicaItem = page.locator('.platform-item').filter({ hasText: 'multica 平台' });
   await expect(multicaItem).toBeVisible();
-  // 默认平台（claude-code）：契约列表全 15 kind，默认详情在右侧（agent）
-  await expect(page.locator('.kind-item')).toHaveCount(15);
+  // 默认平台（claude-code）：契约列表全 16 kind（含 patch），默认详情在右侧（agent）
+  await expect(page.locator('.kind-item')).toHaveCount(16);
   await expect(page.getByText('CC subagent 定义文件').first()).toBeVisible();
   // deployment 契约声明不适用（平台无此对象），显示「不适用」而非「未适配」
   const depRow = page.locator('.kind-item').filter({ hasText: 'deployment' }).first();
