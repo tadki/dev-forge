@@ -5,6 +5,7 @@ import { buildMigrationView, lineDiff } from './migration.js';
 import { contentFingerprint, isTruthKind } from './store-content.js';
 import type { StoreRecord } from './first-party-store.js';
 import { DEFAULT_PLATFORMS, resolvePlatform, resolveWriteChannel, type PlatformDef } from './platforms.js';
+import { splitDiff, type SplitRow } from './split-diff.js';
 
 export type ReconcileItemType =
   | 'missing-on-platform'
@@ -61,6 +62,8 @@ export interface ReconcileItem {
   detail: string;
   /** content-drift 时的逐行差异（- 平台侧 / + 物化侧，与迁移页同源，截断 40 行） */
   diff?: string[];
+  /** 全文对照（LCS 行对齐）：same 白底 / add 右栏绿 / del 右栏红；文本差异时提供 */
+  splitRows?: SplitRow[];
   copies: ReconcileCopy[];
   actions: ReconcileAction[];
   /** 关联差异项（如 store-drift ↔ drift:multica 同一 agent），互链展示不合并 */
@@ -165,6 +168,7 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
       name: a.name,
       detail: `库内真源与生产实测分叉（${record.hash.slice(0, 8)} vs ${fp.slice(0, 8)}）`,
       diff: diff?.slice(0, 40),
+      ...(typeof storeText === 'string' && typeof prodText === 'string' ? { splitRows: splitDiff(storeText, prodText) } : {}),
       copies: [
         { assetId: record.asset.id, name: `${record.asset.name}（库内）`, path: record.asset.source.path, sha: record.hash.slice(0, 16), platforms: ['store'] },
         copyOf(a),
@@ -354,6 +358,7 @@ export function buildReconcileReport(
       name: `${local.name} · SKILL.md`,
       detail: `claude-code 与 multica 两侧同名技能内容不一致（跨平台副本分叉）`,
       diff: lineDiff(remoteContent, localContent), // - multica 副本 / + 本地
+      splitRows: splitDiff(remoteContent, localContent),
       copies: [copyOf(local), copyOf(remote)],
       actions: [
         {
@@ -443,6 +448,7 @@ export function buildReconcileReport(
       name: `${d.agent} · instructions`,
       detail: `平台 instructions 与物化 workdir CLAUDE.md 不一致（${instructionsHash.slice(0, 8)} vs ${d.materializedHash}）`,
       diff: d.diff.slice(0, 40),
+      ...(hasInstructions && sampleBody ? { splitRows: splitDiff(instructionsText, sampleBody) } : {}),
       copies: [
         ...(agentAsset ? [copyOf(agentAsset)] : []),
         { assetId: sampleAsset?.id ?? 'custom:multica-materialized-instructions', name: `${d.agent} workdir CLAUDE.md`, path: d.materializedPath ?? '', sha: d.materializedHash, platforms: ['multica'] },

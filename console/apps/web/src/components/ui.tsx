@@ -175,36 +175,58 @@ function toSplitRows(lines: string[]): SplitRow[] {
 }
 
 /**
- * 左右对照 diff：左栏基准文本纯展示（无底色），红绿标记只出现在右栏对比文本的 +/- 行上——
- * 修改/新增行绿；基准侧有而对比侧无的行，在右栏以红色删除行呈现。
- * Registry 对账用：左=库内真源，右=生产实测（平台/文件）。
+ * 左右对照 diff。两种数据形态：
+ * - rows（全文 LCS 对齐，优先）：左栏基准全文白底；右栏对比全文——same 白底、add 绿底 +、del 红底 -（显示被删原文）
+ * - lines（差异行回退）：`-`/`+` 行对，左栏基准纯文本，右栏只渲染差异行
  */
-export function SplitDiff({ lines, leftLabel = '基准侧', rightLabel = '对比侧' }: { lines: string[]; leftLabel?: string; rightLabel?: string }) {
-  const rows = toSplitRows(lines);
+export function SplitDiff({
+  lines,
+  rows,
+  leftLabel = '基准侧',
+  rightLabel = '对比侧',
+}: {
+  lines?: string[];
+  rows?: Array<{ left: string | null; right: string | null; kind: 'same' | 'add' | 'del' }>;
+  leftLabel?: string;
+  rightLabel?: string;
+}) {
   return (
     <div className="split-diff">
       <div className="split-diff-head">
         <span className="split-diff-head-cell">{leftLabel}</span>
         <span className="split-diff-head-cell">{rightLabel}</span>
       </div>
-      {rows.map((r, i) =>
-        r.context !== undefined ? (
-          <div key={i} className="split-diff-row">
-            <span className="diff-line split-diff-span">{r.context}</span>
-          </div>
-        ) : (
-          <div key={i} className="split-diff-row">
-            <span className="diff-line split-diff-cell">{r.left ?? ''}</span>
-            {r.right !== undefined ? (
-              <span className="diff-plus split-diff-cell">+ {r.right}</span>
-            ) : r.left !== undefined ? (
-              <span className="diff-minus split-diff-cell">- {r.left}</span>
+      {rows
+        ? rows.map((r, i) => (
+            <div key={i} className="split-diff-row">
+              <span className="diff-line split-diff-cell">{r.left ?? ''}</span>
+              {r.kind === 'add' ? (
+                <span className="diff-plus split-diff-cell">+ {r.right ?? ''}</span>
+              ) : r.kind === 'del' ? (
+                <span className="diff-minus split-diff-cell">- {r.right ?? ''}</span>
+              ) : (
+                <span className="diff-line split-diff-cell">{r.right ?? ''}</span>
+              )}
+            </div>
+          ))
+        : toSplitRows(lines ?? []).map((r, i) =>
+            r.context !== undefined ? (
+              <div key={i} className="split-diff-row">
+                <span className="diff-line split-diff-span">{r.context}</span>
+              </div>
             ) : (
-              <span className="split-diff-cell split-diff-empty" />
-            )}
-          </div>
-        )
-      )}
+              <div key={i} className="split-diff-row">
+                <span className="diff-line split-diff-cell">{r.left ?? ''}</span>
+                {r.right !== undefined ? (
+                  <span className="diff-plus split-diff-cell">+ {r.right}</span>
+                ) : r.left !== undefined ? (
+                  <span className="diff-minus split-diff-cell">- {r.left}</span>
+                ) : (
+                  <span className="split-diff-cell split-diff-empty" />
+                )}
+              </div>
+            )
+          )}
     </div>
   );
 }

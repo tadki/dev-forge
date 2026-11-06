@@ -55,6 +55,12 @@ export interface ReconcileCopy {
   platforms: string[];
 }
 
+export interface SplitRow {
+  left: string | null;
+  right: string | null;
+  kind: 'same' | 'add' | 'del';
+}
+
 export interface ReconcileAction {
   id: string;
   direction: 'platform-to-local' | 'local-to-platform';
@@ -73,6 +79,8 @@ export interface ReconcileItem {
   name: string;
   detail: string;
   diff?: string[];
+  /** 全文对照（LCS 对齐）：same 白底 / add 右栏绿 / del 右栏红 */
+  splitRows?: SplitRow[];
   copies: ReconcileCopy[];
   actions: ReconcileAction[];
   /** 关联差异项（如 store-drift ↔ drift:multica 同一资产），互链展示不合并 */

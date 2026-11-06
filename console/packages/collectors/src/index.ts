@@ -45,6 +45,8 @@ export type { RegistryEntry, RegistryMatch, LoadedRegistry } from './overlay.js'
 export { syncFirstPartyStore, loadFirstPartyStore, writeStoreRecord, storeFileName } from './first-party-store.js';
 export type { StoreSyncResult, StoreRecord, LoadedStore } from './first-party-store.js';
 export { contentFingerprint, isTruthKind, TRUTH_KINDS } from './store-content.js';
+export { splitDiff } from './split-diff.js';
+export type { SplitRow } from './split-diff.js';
 export { loadPlatforms, resolvePlatform, resolveWriteChannel, DEFAULT_PLATFORMS } from './platforms.js';
 export type { PlatformDef, PlatformWrite, ResolvedWrite, LoadedPlatforms } from './platforms.js';
 export { MULTICA_PREFIX_MARK, extractAgentInstructions, spliceAgentInstructions } from './collectors/multica.js';
