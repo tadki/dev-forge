@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { apiGet, apiPost } from '../api';
 import type { AssetLite, ReconcileAction, ReconcileItem, ReconcileReport } from '../types';
-import { Badge, Chip, DataTable, Panel, SectionHeader } from '../components/ui';
+import { Badge, Chip, DataTable, DiffView, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
 
 const KIND_ORDER = ['agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'project', 'report', 'env', 'custom'];
@@ -160,21 +160,17 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
                 </div>
               ))}
               {item.diff && item.diff.length > 0 && item.diff[0] !== '(一致)' && (
-                <pre
-                  className="mono"
+                <div
                   style={{
                     margin: '6px 0 0',
                     padding: '6px 8px',
-                    fontSize: 'var(--fs-label)',
-                    lineHeight: 1.5,
-                    whiteSpace: 'pre-wrap',
                     maxHeight: 180,
                     overflow: 'auto',
                     border: '1px dashed var(--khaki)',
                   }}
                 >
-                  {item.diff.join('\n')}
-                </pre>
+                  <DiffView lines={item.diff} />
+                </div>
               )}
               <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
                 {item.actions.map((a) => (

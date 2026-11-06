@@ -246,9 +246,9 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .log-warn { color: var(--amber); }
 .log-bad { color: #ff7a6e; }
 
-/* ===== diff ===== */
-.diff-plus { background: #f2d9e4; color: #7a2050; padding: 1px 4px; display: block; font-family: var(--font-mono); font-size: var(--fs-l1); }
-.diff-minus { background: #ecdff7; color: var(--accent); padding: 1px 4px; display: block; font-family: var(--font-mono); font-size: var(--fs-l1); }
+/* ===== diff（IDE 惯例：+ 绿 / - 红） ===== */
+.diff-plus { background: #dafbe1; color: #116329; padding: 1px 4px; display: block; font-family: var(--font-mono); font-size: var(--fs-l1); }
+.diff-minus { background: #ffebe9; color: #cf222e; padding: 1px 4px; display: block; font-family: var(--font-mono); font-size: var(--fs-l1); }
 .diff-line { display: block; font-family: var(--font-mono); font-size: var(--fs-l1); padding: 1px 4px; color: var(--text-sub); }
 
 /* ===== markdown 渲染 ===== */

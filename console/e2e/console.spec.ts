@@ -204,7 +204,7 @@ test('registry: reconcile section lists drift and executes dry-run after confirm
   await expect(page.getByText('平台对账', { exact: false })).toBeVisible();
   // fixture：Fronti instructions 与物化 CLAUDE.md 分叉 → drift 项 + 双向动作
   await expect(page.getByText('multica · drift:multica:fronti', { exact: false }).first()).toBeVisible();
-  await expect(page.locator('pre.mono').first()).toBeVisible(); // 漂移内容逐行 diff 内联展示
+  await expect(page.locator('.diff-plus').first()).toBeVisible(); // 漂移内容逐行 diff（+ 绿 / - 红着色）
   await expect(page.getByRole('button', { name: /以 agent instructions 为准/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /以物化 CLAUDE.md 为准/ })).toBeVisible();
 
