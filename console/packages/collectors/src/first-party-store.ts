@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Asset, Diagnostic } from '@forge/schema';
 import { sha256 } from './util.js';
 import { contentFingerprint, isTruthKind } from './store-content.js';
+import { recoverBodyFromGit } from './git-history.js';
 
 /**
  * 本地自建资产源（first-party store）——真源（Owner 2026-11-06）：
@@ -15,7 +16,7 @@ import { contentFingerprint, isTruthKind } from './store-content.js';
 export interface StoreSyncResult {
   written: number;
   migrated: number;
-  /** 指纹一致但旧记录缺正文 → 原地补写正文（不改哈希，不影响对账结论） */
+  /** 旧记录缺正文 → 原地补写正文（生产侧指纹一致时取生产正文；漂移时经 git 考古按记录 sha256 复原旧版。不改哈希，不影响对账结论） */
   backfilled: number;
   unchanged: number;
   /** 库内保留但本轮采集未见对应声明资产的条目数（消失资产 + 非内容型历史记录） */
@@ -134,6 +135,20 @@ export async function syncFirstPartyStore(
       await writeStoreRecord(dir, a, existing);
       backfilled++;
       continue;
+    }
+    // 考古回填：库内缺正文且记录带内容 sha256 时，从 git 历史复原「记录当时认可的那一版」正文。
+    // sha256 精确匹配才落库——指纹不变、漂移不掩盖，卡片照常呈现，但能出全文 diff（看到删了什么）。
+    if (
+      typeof recContent !== 'string' &&
+      existing.asset.source.path.startsWith('/') &&
+      typeof existing.asset.source.sha256 === 'string'
+    ) {
+      const body = await recoverBodyFromGit(existing.asset.source.path, existing.asset.source.sha256);
+      if (body !== undefined) {
+        await writeStoreRecord(dir, { ...existing.asset, payload: { ...existing.asset.payload, content: body } }, existing);
+        backfilled++;
+        continue;
+      }
     }
     unchanged++;
   }

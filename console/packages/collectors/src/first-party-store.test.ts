@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -144,6 +144,48 @@ describe('first-party store（真源：create-only）', () => {
     const rec = (await loadFirstPartyStore(sub)).records.get(old.id)!;
     expect((rec.asset.payload as { content?: string }).content).toBeUndefined();
     expect(rec.hash).toBe(oldRec.hash); // 库内真源未被生产覆写
+  });
+
+  it('考古回填：漂移记录可按记录 sha256 从 git 历史复原旧正文（哈希不变、漂移保留）', async () => {
+    const { execCapture } = await import('./util.js');
+    const { resetGitRecoveryCache } = await import('./git-history.js');
+    const { createHash } = await import('node:crypto');
+    const repo = join(dir, 'archaeo-repo');
+    const scriptsDir = join(repo, 'autopilots');
+    await mkdir(scriptsDir, { recursive: true });
+    const init = await execCapture('git', ['-C', repo, 'init'], 10000);
+    expect(init.ok, init.stderr).toBe(true);
+    const oldBody = '#!/usr/bin/env python3\n# v1 has run_ok\n\ndef run_ok():\n    return True\n';
+    const newBody = '#!/usr/bin/env python3\n# v2 dropped run_ok\n';
+    for (const [body, msg] of [
+      [oldBody, 'v1'],
+      [newBody, 'v2'],
+    ] as const) {
+      await writeFile(join(scriptsDir, 'sweep.py'), body);
+      for (const args of [['add', '.'], ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', msg]]) {
+        const r = await execCapture('git', ['-C', repo, ...args], 10000);
+        expect(r.ok, r.stderr).toBe(true);
+      }
+    }
+    const oldSha = createHash('sha256').update(oldBody).digest('hex');
+    resetGitRecoveryCache();
+
+    const sub = join(dir, 'archaeo');
+    const old = { ...scriptAsset(oldSha), source: { collector: 't', path: join(scriptsDir, 'sweep.py'), sha256: oldSha } };
+    const oldRec = await writeStoreRecord(sub, old);
+    const prod = { ...scriptAsset('sha-new'), source: { collector: 't', path: join(scriptsDir, 'sweep.py'), sha256: 'sha-new' } };
+    (prod.payload as Record<string, unknown>).content = newBody;
+
+    const r = await syncFirstPartyStore([prod], sub);
+    expect(r.backfilled).toBe(1);
+    const rec = (await loadFirstPartyStore(sub)).records.get(old.id)!;
+    expect((rec.asset.payload as { content?: string }).content).toBe(oldBody); // 复原的是旧版，不是生产版
+    expect(rec.hash).toBe(oldRec.hash); // 指纹不变 → store-drift 卡片照常存在
+    expect(rec.savedAt).toBe(oldRec.savedAt);
+    // 已复原 → 后续同步未变，不再试探
+    const r2 = await syncFirstPartyStore([prod], sub);
+    expect(r2.backfilled).toBe(0);
+    expect(r2.unchanged).toBe(1);
   });
 });
 
