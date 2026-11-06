@@ -127,10 +127,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         read: {
           how: 'file',
           collector: 'claude-global',
-          paths: ['~/.claude/settings.json', '<devforge>/bootstrap/hooks-registration.json'],
-          note: 'settings.json hooks 挂载点（claude-global）+ dev-forge 注册清单 manifest（devforge-hooks）',
+          paths: ['~/.claude/settings.json'],
+          note: 'settings.json hooks 挂载点实测（claude-global）；dev-forge 注册清单为自研面工件（custom，钩子页展示，非平台对象）',
         },
-        write: { type: 'none', advice: 'settings.json 由平台 CLI 管理；dev-forge 侧改 bootstrap/hooks-registration.json 后重新挂载' },
+        write: { type: 'file-write' },
       },
       'mcp-endpoint': {
         read: {

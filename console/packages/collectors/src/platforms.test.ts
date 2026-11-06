@@ -124,6 +124,9 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     expect(multica?.kinds?.instruction?.read?.note).toContain('workdir');
     const cc = platforms.find((p) => p.id === 'claude-code');
     expect(cc?.kinds?.instruction?.read?.paths).toContain('<project>/CLAUDE.md');
+    // hook-registration 只认平台实测挂载点（settings.json）；dev-forge 注册清单是自研面工件（custom），不进平台契约
+    expect(cc?.kinds?.['hook-registration']?.read?.paths).toEqual(['~/.claude/settings.json']);
+    expect(cc?.kinds?.['hook-registration']?.write).toEqual({ type: 'file-write' });
     const TRUTH = ['instruction', 'skill', 'agent', 'hook-rule', 'hook-script', 'adapter', 'autopilot'];
     for (const p of platforms) {
       for (const k of TRUTH) expect(p.kinds?.[k]?.read, `${p.id}.${k} 应有 read 声明`).toBeDefined();
