@@ -235,7 +235,7 @@ describe('store-drift（库 vs 生产）', () => {
       name: asset.name,
       savedAt: '2026-11-06T00:00:00Z',
       updatedAt: '2026-11-06T00:00:00Z',
-      hashVersion: 2,
+      hashVersion: 3,
       hash: 'irrelevant-will-be-set',
       asset: { ...asset, payload: { ...asset.payload, content } },
     };
@@ -337,5 +337,18 @@ describe('store-drift（库 vs 生产）', () => {
     expect(r1.summary.store).toBe(0);
     const r2 = buildReconcileReport({ assets: [svc, undec] }, []);
     expect(r2.summary.store).toBe(0);
+  });
+});
+
+describe('审核回归：未注册平台与截断保护', () => {
+  it('undeclared-platform 遇未注册平台 id → adopt 不可执行（防 registry 枚举污染）', () => {
+    const a = mk('skill:deployed', 'skill', { platforms: ['codex'] });
+    const r = buildReconcileReport(
+      { assets: [a] },
+      [entry({ id: 'e1', match: { idPrefix: 'skill:deployed' }, platforms: ['claude-code'] })]
+    );
+    const item = r.items.find((i) => i.key === 'undeclared:e1:codex');
+    expect(item?.actions.find((x) => x.id === 'adopt')?.executable).toBe(false);
+    expect(item?.actions.find((x) => x.id === 'adopt')?.note).toContain('未注册');
   });
 });

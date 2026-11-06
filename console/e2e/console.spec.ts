@@ -145,7 +145,7 @@ test('migration: coverage, gaps, export script', async ({ page }) => {
 
 test('graph: nodes render and inspector works', async ({ page }) => {
   await page.goto('/graph');
-  await expect(page.locator('svg')).toBeVisible();
+  await expect(page.getByRole('img')).toBeVisible(); // 关系图 svg（顶栏 logo 也是 svg，不能用裸 locator('svg')）
   await page.locator('svg g', { hasText: 'Fronti' }).first().click();
   await expect(page.getByText('关联边')).toBeVisible();
 });

@@ -101,9 +101,15 @@ export async function editRegistryPlatforms(
     op === 'add-platform'
       ? current.includes(platform) ? current : [...current, platform]
       : current.filter((p) => p !== platform);
-  const seqNode = doc.createNode(next) as YAMLSeq;
-  seqNode.flow = true; // 保持行内 [a, b] 风格，与 owned.yaml 现有写法一致
-  node.set('platforms', seqNode);
+  if (next.length === 0) {
+    // 撤销最后一个平台 → 删除键本身，回到文档语义「不写 = 不参与平台对账」；
+    // 写空数组会让 entry 以「participating with 0 platforms」参与对账，制造 undeclared 警告
+    node.delete('platforms');
+  } else {
+    const seqNode = doc.createNode(next) as YAMLSeq;
+    seqNode.flow = true; // 保持行内 [a, b] 风格，与 owned.yaml 现有写法一致
+    node.set('platforms', seqNode);
+  }
   await writeFile(file, doc.toString(), 'utf8');
   return next;
 }

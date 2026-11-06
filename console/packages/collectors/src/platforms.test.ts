@@ -68,3 +68,18 @@ describe('平台适配层（platforms.d）', () => {
     await rm(dir, { recursive: true, force: true });
   });
 });
+
+describe('platforms.d 结构校验（坏文件出诊断并跳过）', () => {
+  it('pathPrefix 标量 / write.type 未知 / none 缺 advice → 跳过该文件', async () => {
+    const badDir = join(dir, 'bad');
+    await mkdir(badDir, { recursive: true });
+    await writeFile(join(badDir, 'a.yaml'), 'id: bad-1\nmatch: { pathPrefix: "/" }\nkinds: { skill: { write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'b.yaml'), 'id: bad-2\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { write: { type: magic } } }\n');
+    await writeFile(join(badDir, 'c.yaml'), 'id: bad-3\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { write: { type: none } } }\n');
+    await writeFile(join(badDir, 'd.yaml'), 'id: good-1\nmatch: { pathPrefix: ["ok://"] }\n');
+    const { platforms, diagnostics } = await loadPlatforms(badDir);
+    expect(platforms.map((p) => p.id)).toEqual(['good-1']);
+    expect(diagnostics).toHaveLength(3);
+    expect(diagnostics.every((d) => d.level === 'error' && d.message.includes('结构违规'))).toBe(true);
+  });
+});

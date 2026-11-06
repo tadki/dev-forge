@@ -29,6 +29,8 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
   const content = fullPayload.content;
   const files = fullPayload.files ?? [];
   useEffect(() => setFile(null), [selId]);
+  // 切 tab 后旧选中 id 属于另一侧清单，重置为该 tab 首行，防止详情面板渲染他侧内容
+  useEffect(() => setSel(null), [tab]);
 
   const locOf = (s: AssetLite): string => {
     if (s.attach.level === 'project') return `项目 ${s.attach.ref?.split('/').pop() ?? s.attach.ref ?? '?'}`;

@@ -6,11 +6,14 @@ const unitPath = join(import.meta.dirname, '../../../deploy/forge-console.servic
 const readmePath = join(import.meta.dirname, '../../../README.md');
 
 describe('SEE-1522 部署沙箱与服务动作文档', () => {
-  it('forge-console 自身继续保持只读沙箱，写仅限对账目标（registry.d + 已登记资产根）', async () => {
+  it('forge-console 自身继续保持只读沙箱，写仅限对账目标（自建项目根 + 平台资产根）', async () => {
     const unit = await readFile(unitPath, 'utf8');
     expect(unit).toContain('ProtectSystem=strict');
     expect(unit).toContain('ProtectHome=read-only');
-    expect(unit).toContain('ReadWritePaths=%h/tools/dev-forge/console/registry.d');
+    // store-drift push（以库为准）要能写已声明资产的生产路径；实际写入仍受 reconcile file-write 白名单（仅资产路径）约束
+    expect(unit).toContain('ReadWritePaths=%h/tools/dev-forge');
+    expect(unit).toContain('ReadWritePaths=%h/tools/grepai');
+    expect(unit).toContain('ReadWritePaths=%h/tools/godot-qa-toolkit');
     expect(unit).toContain('ReadWritePaths=%h/.claude');
     expect(unit).toContain('ReadWritePaths=%h/multica_workspaces');
     expect(unit).toContain('ReadWritePaths=/mnt/d/GodotProjects');

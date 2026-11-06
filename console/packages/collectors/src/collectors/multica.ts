@@ -274,8 +274,21 @@ export const multicaCollector: Collector = {
 
     const skills = await multicaJson<MulticaSkill[]>(ctx, ['skill', 'list'], t);
     if (Array.isArray(skills)) {
-      for (const s of skills.slice(0, 50)) {
-        const detail = await multicaJson<MulticaSkill>(ctx, ['skill', 'get', s.id, '--with-content'], t);
+      // skill get 并发限流（此前逐条串行 = 每轮采集 N+1 次 CLI 调用）
+      const listed = skills.slice(0, 50);
+      const CONCURRENCY = 5;
+      const details: Array<MulticaSkill | null> = [];
+      for (let i = 0; i < listed.length; i += CONCURRENCY) {
+        const batch = await Promise.all(
+          listed.slice(i, i + CONCURRENCY).map((s) =>
+            multicaJson<MulticaSkill>(ctx, ['skill', 'get', s.id, '--with-content'], t).catch(() => null)
+          )
+        );
+        details.push(...batch);
+      }
+      for (let idx = 0; idx < listed.length; idx++) {
+        const s = listed[idx];
+        const detail = details[idx];
         const body = detail?.content ?? '';
         const files = (detail?.files ?? []).flatMap((f) =>
           typeof f.content === 'string'
@@ -366,7 +379,8 @@ export const multicaCollector: Collector = {
       const md = await readText(join(workdir, 'CLAUDE.md'));
       if (md === null) continue;
       const body = extractAgentInstructions(md);
-      materialized.push({ agent: agentName, path: join(workdir, 'CLAUDE.md'), hash: sha256(body), body: body.slice(0, 20_000) });
+      // 与 agent.instructions 同口径 60k + 截断标记：对账的 update-agent 动作以样本为权威内容，低限截断会造成平台侧数据丢失
+      materialized.push({ agent: agentName, path: join(workdir, 'CLAUDE.md'), hash: sha256(body), body: body.length > 60_000 ? body.slice(0, 60_000) + '\n…(截断)' : body });
     }
     if (materialized.length > 0) {
       assets.push(
