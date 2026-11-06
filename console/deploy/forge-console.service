@@ -7,7 +7,8 @@ Type=simple
 WorkingDirectory=%h/tools/dev-forge/console
 EnvironmentFile=%h/.config/forge-console/env
 ExecStart=/usr/bin/node %h/tools/dev-forge/console/packages/server/dist/index.js
-Restart=always  # on-failure 不救 TERM 干净退出（被误杀即失联）
+# on-failure 不救 TERM 干净退出（被误杀即失联）——故用 always；行尾注释会让 systemd 解析失败，注释必须独立成行
+Restart=always
 RestartSec=3
 
 # 安全收敛：只读采集 + 平台对账写操作所需的最小权限
