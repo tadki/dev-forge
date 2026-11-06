@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CactusMark } from '../components/CactusMark';
 
 export function TopBar({
   workspaces,
@@ -27,7 +28,9 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="topbar-brand">
-        <h1>◆ FORGE CONSOLE</h1>
+        <h1>
+          <CactusMark size={16} /> FORGE CONSOLE
+        </h1>
         <span>HARNESS 监控台</span>
       </div>
       <div className="topbar-right">
