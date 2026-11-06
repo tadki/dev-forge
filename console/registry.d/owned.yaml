@@ -15,6 +15,11 @@ entries:
     platforms: [claude-code, multica]
     meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both, notes: "9 挂载点 → 统一引擎，multica 会话同样生效" }
 
+  - id: devforge-hook-registrations
+    match: { idPrefix: "hook-registration:" }
+    platforms: [claude-code, multica]
+    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both }
+
   - id: kol-instructions
     match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/CLAUDE.md" }
     platforms: [claude-code]
@@ -64,11 +69,6 @@ entries:
     match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/.mcp.json" }
     platforms: [claude-code]
     meta: { owner: jerry, category: game, lifecycle: stable, criticality: medium, runtime: claude-code }
-
-  - id: devforge-hook-registrations
-    match: { idPrefix: "hook-registration:" }
-    platforms: [claude-code, multica]
-    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both }
 
   - id: godot-mcp-instructions
     match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/addons/godot_mcp/CLAUDE.md" }

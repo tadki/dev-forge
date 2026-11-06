@@ -31,7 +31,7 @@ export interface StoreRecord {
   updatedAt: string;
   /** v1→v2 指纹口径迁移时间 */
   migratedAt?: string;
-  hashVersion: 1 | 2;
+  hashVersion: 1 | 2 | 3;
   /** 内容指纹（v2 = contentFingerprint，只含内容字段） */
   hash: string;
   asset: Asset;
@@ -87,7 +87,7 @@ export async function writeStoreRecord(dir: string, asset: Asset, prev?: StoreRe
     declaredBy: (asset.payload as { registry?: { declaredBy?: string } }).registry?.declaredBy,
     savedAt: prev?.savedAt ?? now,
     updatedAt: now,
-    hashVersion: 2,
+    hashVersion: 3,
     hash: contentFingerprint(asset),
     asset,
     ...(prev?.migratedAt ? { migratedAt: prev.migratedAt } : {}),
@@ -116,7 +116,7 @@ export async function syncFirstPartyStore(
       written++;
       continue;
     }
-    if (existing.hashVersion !== 2) {
+    if (existing.hashVersion !== 3) {
       // v1 基线迁移：按当前生产内容重算 v2 指纹，视为库已认可，不产生漂移
       await writeStoreRecord(dir, a, { ...existing, migratedAt: new Date().toISOString() });
       migrated++;

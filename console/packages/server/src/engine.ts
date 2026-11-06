@@ -48,6 +48,7 @@ export class Engine {
   private timer?: ReturnType<typeof setInterval>;
   private watchers: Array<{ close: () => void }> = [];
   private running = false;
+  private pendingCollect = false;
   private sse: SSEBus;
   private config: ConsoleConfig;
   private watchEnabled: boolean;
@@ -143,7 +144,12 @@ export class Engine {
   }
 
   async collectNow(): Promise<void> {
-    if (this.running) return;
+    // 合并重入：采集进行中收到的重采请求（如对账动作后刷新）不打折丢弃，本轮结束后补跑一轮，
+    // 否则动作后的即时刷新会拿到旧 state（看似已解决的对账项重复出现，重复点击会再次执行）
+    if (this.running) {
+      this.pendingCollect = true;
+      return;
+    }
     this.running = true;
     try {
       const ctx = makeContext(this.config);
@@ -189,6 +195,10 @@ export class Engine {
       });
     } finally {
       this.running = false;
+      if (this.pendingCollect) {
+        this.pendingCollect = false;
+        void this.collectNow();
+      }
     }
   }
 

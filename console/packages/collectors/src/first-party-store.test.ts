@@ -44,7 +44,7 @@ describe('first-party store（真源：create-only）', () => {
     expect((await stat(file)).mtimeMs).toBe(mtime1); // 未重写
     const rec = JSON.parse(await readFile(file, 'utf8'));
     expect(rec.asset.payload.content).toBe('v1'); // 库内保持真源
-    expect(rec.hashVersion).toBe(2);
+    expect(rec.hashVersion).toBe(3);
   });
 
   it('非内容型 kind 与未声明资产不入库', async () => {
@@ -70,7 +70,7 @@ describe('first-party store（真源：create-only）', () => {
     const r = await syncFirstPartyStore([a], sub);
     expect(r.migrated).toBe(1);
     const rec = JSON.parse(await readFile(join(sub, storeFileName(a.id)), 'utf8'));
-    expect(rec.hashVersion).toBe(2);
+    expect(rec.hashVersion).toBe(3);
     expect(rec.hash).toBe(contentFingerprint(a));
     expect(rec.migratedAt).toBeTruthy();
     expect(rec.savedAt).toBe('2026-11-05T00:00:00Z'); // 首次入库时间保留
@@ -157,4 +157,18 @@ describe('contentFingerprint（按 kind 内容字段，volatile 剔除）', () =
 
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
+});
+
+describe('contentFingerprint 审核回归', () => {
+  const base = {
+    id: 'x', kind: 'autopilot', name: 'x', summary: '', attach: { level: 'user' as const },
+    enforcement: 'derived' as const, platforms: ['multica'], provenance: 'first-party' as const,
+    tags: [], enabled: true, source: { collector: 't', path: 'multica://autopilots/z' },
+  };
+  it('multica autopilot：assignee（UUID/名字解析不稳定）不参与指纹；trigger 缺 id 不崩溃', () => {
+    const f = (assignee: string, triggers: unknown[]) => contentFingerprint({ ...base, payload: { platformId: 'z', assignee, triggers } } as Asset);
+    expect(f('Fronti', [{ id: 't1', kind: 'cron', cron_expression: '0 9 * * *', next_run_at: 'x' }]))
+      .toBe(f('uuid-123', [{ id: 't1', kind: 'cron', cron_expression: '0 9 * * *', next_run_at: 'y' }]));
+    expect(() => contentFingerprint({ ...base, payload: { platformId: 'z', triggers: [{ kind: 'cron' }] } } as Asset)).not.toThrow();
+  });
 });

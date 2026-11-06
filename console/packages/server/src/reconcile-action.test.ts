@@ -308,3 +308,15 @@ describe('store-write 采纳 + ContentRef.from=store', () => {
     await (await import('node:fs/promises')).rm(storeDir, { recursive: true, force: true });
   });
 });
+
+describe('审核回归：撤销最后一个平台应删除键', () => {
+  it('remove-platform 至空列表 → platforms 键被移除（回到不参与对账语义）', async () => {
+    const file = join(tmpdir(), `forge-retract-${Date.now()}.yaml`);
+    await writeFile(file, 'entries:\n  - id: e1\n    match: { pathPrefix: "/x" }\n    platforms: [multica]\n', 'utf8');
+    await editRegistryPlatforms(file, 'e1', 'remove-platform', 'multica');
+    const text = await readFile(file, 'utf8');
+    expect(text).not.toContain('platforms');
+    expect(text).toContain('match:');
+    await (await import('node:fs/promises')).rm(file, { force: true });
+  });
+});

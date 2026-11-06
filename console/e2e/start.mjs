@@ -22,7 +22,7 @@ writeFileSync(
       declaredBy: 'multica-platform-agents',
       savedAt: '2026-11-06T00:00:00Z',
       updatedAt: '2026-11-06T00:00:00Z',
-      hashVersion: 2,
+      hashVersion: 3,
       hash: 'seeded-old-fingerprint',
       asset: {
         id: 'agent:fronti',

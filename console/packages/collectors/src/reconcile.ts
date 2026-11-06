@@ -1,4 +1,4 @@
-import type { Asset } from '@forge/schema';
+import { PLATFORM_IDS, type Asset } from '@forge/schema';
 import type { RegistryEntry } from './overlay.js';
 import { matchesRegistryEntry } from './overlay.js';
 import { buildMigrationView, lineDiff } from './migration.js';
@@ -115,7 +115,7 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
     const reg = (a.payload as { registry?: { declared?: boolean } }).registry;
     if (reg?.declared !== true) continue;
     const record = store.get(a.id);
-    if (!record || record.hashVersion !== 2) continue; // 未入库/待迁移 → 不比
+    if (!record || record.hashVersion !== 3) continue; // 未入库/待迁移 → 不比
     const fp = contentFingerprint(a);
     if (fp === record.hash) continue;
 
@@ -239,6 +239,8 @@ export function buildReconcileReport(
 
     for (const p of [...actual].sort()) {
       if (entry.platforms.includes(p)) continue;
+      // 未注册平台（外部/推送资产的自由字符串）不能写进 registry.d——z.enum 校验会让整个 entry 下次加载被跳过
+      const adoptable = (PLATFORM_IDS as readonly string[]).includes(p);
       items.push({
         key: `undeclared:${entry.id}:${p}`,
         type: 'undeclared-platform',
@@ -253,8 +255,11 @@ export function buildReconcileReport(
             id: 'adopt',
             direction: 'platform-to-local',
             label: `采纳现状：声明 ${entry.id} 已应用 ${p}`,
-            executable: true,
-            steps: [{ type: 'registry-edit', file: entry.file, entryId: entry.id, op: 'add-platform', platform: p }],
+            executable: adoptable,
+            note: adoptable ? undefined : `平台 ${p} 未注册（PLATFORM_IDS / platforms.d），先在平台适配层注册后再声明，避免污染 registry 枚举`,
+            steps: adoptable
+              ? [{ type: 'registry-edit', file: entry.file, entryId: entry.id, op: 'add-platform', platform: p }]
+              : [],
           },
           {
             id: 'retire',
@@ -291,7 +296,8 @@ export function buildReconcileReport(
         const hasContent = typeof (from.payload as { content?: unknown }).content === 'string';
         actions.push({
           id: `copy-${i}`,
-          direction: to.platforms.includes('multica') && !from.platforms.includes('multica') ? 'platform-to-local' : 'local-to-platform',
+          // 方向按内容流向：本地源 → multica 目标 = local-to-platform（此前按目标平台反推，混合平台时箭头相反）
+          direction: to.platforms.includes('multica') && !from.platforms.includes('multica') ? 'local-to-platform' : 'platform-to-local',
           label: `以 ${from.source.path} 为准覆盖 ${to.source.path}`,
           executable: hasContent && to.source.path.startsWith('/'),
           note: hasContent ? undefined : '源副本内容未随资产采集（payload.content 缺失），需手动同步',
@@ -422,6 +428,12 @@ export function buildReconcileReport(
     const deployment = state.assets.find((a) => a.id === `deployment:multica:${d.agent.toLowerCase()}`);
     const platformId = (deployment?.payload as { platformId?: string } | undefined)?.platformId;
     const hasInstructions = typeof (agentAsset?.payload as { instructions?: unknown } | undefined)?.instructions === 'string';
+    const instructionsText = hasInstructions ? (agentAsset!.payload as { instructions: string }).instructions : '';
+    const instructionsTruncated = instructionsText.endsWith('…(截断)');
+    const sampleBody = (((sampleAsset?.payload as { samples?: Array<{ agent: string; body: string }> } | undefined)?.samples) ?? []).find(
+      (s) => s.agent.toLowerCase() === d.agent.toLowerCase()
+    )?.body;
+    const sampleTruncated = sampleBody?.endsWith('…(截断)') ?? false;
     const instructionsHash = (agentAsset?.payload as { instructionsHash?: string } | undefined)?.instructionsHash ?? d.currentHash;
     items.push({
       key: `drift:multica:${d.agent.toLowerCase()}`,
@@ -441,8 +453,12 @@ export function buildReconcileReport(
           // 平台权威内容 → 覆盖本地（workdir）文件
           direction: 'platform-to-local',
           label: `以 agent instructions 为准，回写 workdir 物化文件`,
-          executable: hasInstructions && !!d.materializedPath?.startsWith('/'),
-          note: hasInstructions ? undefined : 'agent instructions 未随资产采集，需手动回写',
+          executable: hasInstructions && !instructionsTruncated && !!d.materializedPath?.startsWith('/'),
+          note: hasInstructions
+            ? instructionsTruncated
+              ? 'instructions 超过 60k 已被截断采集，禁止自动回写（防截断内容覆盖生产）；请手动处理'
+              : undefined
+            : 'agent instructions 未随资产采集，需手动回写',
           steps:
             hasInstructions && d.materializedPath?.startsWith('/')
               ? [
@@ -460,8 +476,12 @@ export function buildReconcileReport(
           // 物化（本地）内容 → 更新平台
           direction: 'local-to-platform',
           label: `以物化 CLAUDE.md 为准，更新 agent instructions`,
-          executable: !!platformId,
-          note: platformId ? undefined : '未找到该 agent 的 multica platformId（deployment 资产缺失），需手动执行',
+          executable: !!platformId && !sampleTruncated,
+          note: platformId
+            ? sampleTruncated
+              ? '物化样本超过 60k 已被截断，禁止自动推送（防截断内容覆盖平台）；请手动执行'
+              : undefined
+            : '未找到该 agent 的 multica platformId（deployment 资产缺失），需手动执行',
           steps: platformId
             ? [
                 {

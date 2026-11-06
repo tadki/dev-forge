@@ -109,7 +109,7 @@ async function runCommand(step: Extract<WriteStep, { type: 'command' }>, state: 
     if (content === null) throw new Error('命令内容占位 {content} 无法解析');
     return content;
   });
-  const displayArgs = resolved.map((arg, i) => (step.cmd[i] === '{content}' ? `<${arg.length} 字符>` : arg));
+  const displayArgs = resolved.slice(1).map((arg, i) => (step.cmd[i + 1] === '{content}' ? `<${arg.length} 字符>` : arg));
   const display = [step.cmd[0], ...displayArgs].join(' ');
   if (deps.dryRun) return `[dry-run] ${display}`;
   const result = await deps.exec(resolved[0], resolved.slice(1), COMMAND_TIMEOUT_MS);

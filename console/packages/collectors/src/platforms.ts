@@ -87,18 +87,49 @@ export async function loadPlatforms(dir: string): Promise<LoadedPlatforms> {
   }
   const platforms: PlatformDef[] = [];
   for (const f of files) {
+    const path = join(dir, f);
+    let def: unknown;
     try {
-      const def = parse(await readFile(join(dir, f), 'utf8')) as PlatformDef;
-      if (!def?.id || !def.match) {
-        diagnostics.push({ level: 'error', message: `[platforms] ${f} 缺 id/match，跳过`, path: join(dir, f) });
-        continue;
-      }
-      platforms.push(def);
+      def = parse(await readFile(path, 'utf8'));
     } catch (e) {
-      diagnostics.push({ level: 'error', message: `[platforms] ${f} 解析失败：${String(e).slice(0, 150)}`, path: join(dir, f) });
+      diagnostics.push({ level: 'error', message: `[platforms] ${f} 解析失败：${String(e).slice(0, 150)}`, path });
+      continue;
     }
+    const issue = platformDefIssue(def);
+    if (issue) {
+      diagnostics.push({ level: 'error', message: `[platforms] ${f} 结构违规：${issue}`, path });
+      continue;
+    }
+    platforms.push(def as PlatformDef);
   }
   return { platforms: platforms.length > 0 ? platforms : DEFAULT_PLATFORMS, diagnostics };
+}
+
+/** 结构校验：YAML 不跑 zod，手工断言关键形状，坏文件出诊断并跳过（不进入执行路径） */
+function platformDefIssue(def: unknown): string | null {
+  if (!def || typeof def !== 'object') return 'not an object';
+  const d = def as { id?: unknown; match?: unknown; kinds?: unknown };
+  if (typeof d.id !== 'string' || !d.id) return 'id 缺失或非字符串';
+  if (!d.match || typeof d.match !== 'object') return 'match 缺失';
+  const prefix = (d.match as { pathPrefix?: unknown }).pathPrefix;
+  if (prefix !== undefined && (!Array.isArray(prefix) || prefix.some((p) => typeof p !== 'string'))) {
+    return 'match.pathPrefix 必须是字符串数组';
+  }
+  if (d.kinds === undefined) return null;
+  if (!d.kinds || typeof d.kinds !== 'object') return 'kinds 必须是映射';
+  for (const [kind, v] of Object.entries(d.kinds as Record<string, unknown>)) {
+    const write = (v as { write?: unknown } | null)?.write as { type?: unknown; cmd?: unknown; platformIdFrom?: unknown; advice?: unknown } | undefined;
+    if (!write || typeof write.type !== 'string') return `kinds.${kind}.write.type 缺失`;
+    if (!['file-write', 'command', 'none'].includes(write.type)) return `kinds.${kind}.write.type 未知：${String(write.type)}`;
+    if (write.type === 'command') {
+      if (!Array.isArray(write.cmd) || write.cmd.some((c) => typeof c !== 'string')) return `kinds.${kind}.write.cmd 必须是字符串数组`;
+      if (write.platformIdFrom !== undefined && !['self', 'deployment'].includes(write.platformIdFrom as string)) {
+        return `kinds.${kind}.write.platformIdFrom 只能是 self|deployment`;
+      }
+    }
+    if (write.type === 'none' && typeof write.advice !== 'string') return `kinds.${kind}.write.advice 缺失（none 必须给建议）`;
+  }
+  return null;
 }
 
 /** 资产 → 所属平台（首个 match 命中的 platform） */

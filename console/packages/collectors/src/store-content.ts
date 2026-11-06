@@ -39,9 +39,9 @@ function pick(payload: Record<string, unknown>, keys: string[]): Record<string, 
   return out;
 }
 
-function sortedBy<T>(arr: T[] | undefined, key: (item: T) => string): T[] | undefined {
+function sortedBy<T>(arr: T[] | undefined, key: (item: T) => string | undefined): T[] | undefined {
   if (!Array.isArray(arr)) return undefined;
-  return [...arr].sort((a, b) => key(a).localeCompare(key(b)));
+  return [...arr].sort((a, b) => String(key(a) ?? '').localeCompare(String(key(b) ?? '')));
 }
 
 /** 按 kind 提取内容视图（kind 之外的 kind 由上层排除，不会进来） */
@@ -73,12 +73,13 @@ function contentView(asset: Asset): Record<string, unknown> {
         // 本地脚本型 / 配置 / agent 评审型
         return { sha256: asset.source.sha256, ...pick(p, ['purpose', 'reviewKind', 'templates']) };
       }
-      // multica 平台型：只取调度定义，剔除 status/lastRun*/nextRunAt（含 triggers 内的 next_run_at）
+      // multica 平台型：只取调度定义，剔除 status/lastRun*/nextRunAt（含 triggers 内的 next_run_at）。
+      // assignee 剔除：agent list 故障时解析为原始 UUID、恢复后为名字，指纹会在两次采集间来回翻转制造假漂移。
       const triggers = (p.triggers as Array<Record<string, unknown>> | undefined)?.map((t) =>
         pick(t, ['id', 'kind', 'cron_expression', 'timezone', 'enabled'])
       );
       const triggersSorted = sortedBy(triggers, (t) => t.id as string);
-      return { ...pick(p, ['platformId', 'description', 'assignee']), ...(triggersSorted ? { triggers: triggersSorted } : {}) };
+      return { ...pick(p, ['platformId', 'description']), ...(triggersSorted ? { triggers: triggersSorted } : {}) };
     }
     default:
       return p;
