@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { apiGet, apiPost } from '../api';
 import type { AssetLite, ReconcileAction, ReconcileItem, ReconcileReport } from '../types';
-import { Badge, Chip, DataTable, DiffView, Panel, SectionHeader } from '../components/ui';
+import { Badge, Chip, DataTable, SplitDiff, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
 
 const KIND_ORDER = ['agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'project', 'report', 'env', 'custom'];
@@ -159,17 +159,21 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
                   {c.platforms.length > 0 ? ` · ${c.platforms.join('+')}` : ''}
                 </div>
               ))}
-              {item.diff && item.diff.length > 0 && item.diff[0] !== '(一致)' && (
+              {item.diff && item.diff.length > 0 && item.diff[0] !== '(一致)' && item.diff[0] !== '(无差异)' && (
                 <div
                   style={{
                     margin: '6px 0 0',
                     padding: '6px 8px',
-                    maxHeight: 180,
+                    maxHeight: 220,
                     overflow: 'auto',
                     border: '1px dashed var(--khaki)',
                   }}
                 >
-                  <DiffView lines={item.diff} />
+                  <SplitDiff
+                    lines={item.diff}
+                    leftLabel={item.key.startsWith('store:') ? '库内真源' : item.key.startsWith('drift:multica:') ? 'multica 平台' : item.key.startsWith('drift:skill:') ? 'multica 副本' : '基准侧'}
+                    rightLabel={item.key.startsWith('store:') ? '生产实测' : item.key.startsWith('drift:multica:') ? '物化 workdir' : item.key.startsWith('drift:skill:') ? '本地副本' : '对比侧'}
+                  />
                 </div>
               )}
               <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>

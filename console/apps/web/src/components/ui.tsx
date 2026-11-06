@@ -146,6 +146,62 @@ export function DiffView({ lines }: { lines: string[] }) {
   );
 }
 
+interface SplitRow {
+  left?: string;
+  right?: string;
+  context?: string;
+}
+
+/** `-`/`+` 对 → 左右对照行：lineDiff 逐行输出 -x / +y，相邻即一对 */
+function toSplitRows(lines: string[]): SplitRow[] {
+  const rows: SplitRow[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.startsWith('-')) {
+      const next = lines[i + 1];
+      if (next?.startsWith('+')) {
+        rows.push({ left: l.slice(1), right: next.slice(1) });
+        i++;
+      } else {
+        rows.push({ left: l.slice(1) });
+      }
+    } else if (l.startsWith('+')) {
+      rows.push({ right: l.slice(1) });
+    } else {
+      rows.push({ context: l });
+    }
+  }
+  return rows;
+}
+
+/**
+ * 左右对照 diff：左栏基准文本（红=仅基准侧有，将被替换），右栏对比文本（绿=仅对比侧有，新增/变更）。
+ * Registry 对账用：左=库内真源，右=生产实测（平台/文件）。
+ */
+export function SplitDiff({ lines, leftLabel = '基准侧', rightLabel = '对比侧' }: { lines: string[]; leftLabel?: string; rightLabel?: string }) {
+  const rows = toSplitRows(lines);
+  return (
+    <div className="split-diff">
+      <div className="split-diff-head">
+        <span className="split-diff-head-cell">− {leftLabel}</span>
+        <span className="split-diff-head-cell">+ {rightLabel}</span>
+      </div>
+      {rows.map((r, i) =>
+        r.context !== undefined ? (
+          <div key={i} className="split-diff-row">
+            <span className="diff-line split-diff-span">{r.context}</span>
+          </div>
+        ) : (
+          <div key={i} className="split-diff-row">
+            <span className={r.left !== undefined ? 'diff-minus split-diff-cell' : 'split-diff-cell split-diff-empty'}>{r.left ?? ''}</span>
+            <span className={r.right !== undefined ? 'diff-plus split-diff-cell' : 'split-diff-cell split-diff-empty'}>{r.right ?? ''}</span>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 export function Chip({ children }: { children: ReactNode }) {
   return <span className="chip">{children}</span>;
 }
