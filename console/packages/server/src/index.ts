@@ -73,6 +73,8 @@ const handler = createHandler({
       storeDir: engine.getStoreDir() || undefined,
       storeRecords: engine.getStoreRecords(),
     });
+    // 立即重建对账报告（不等 onAfterAction 触发的整轮重采），动作后卡片即时反映结果
+    if (result.status === 'ok') await engine.refreshReconcileAfterAction();
     return { status: result.status, ok: result.ok, output: result.output };
   },
 });

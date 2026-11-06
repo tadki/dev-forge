@@ -91,3 +91,9 @@ export function contentFingerprint(asset: Asset): string {
   const view = contentView(asset);
   return createHash('sha256').update(`${asset.kind}|${canon(view)}`).digest('hex');
 }
+
+/** 内容视图的可读行（键排序、每字段一行，与 canon 同一排序语义）：无文本字段 kind 的 store-drift 用它做逐字段对照 */
+export function contentViewLines(asset: Asset): string[] {
+  const view = contentView(asset) as Record<string, unknown>;
+  return Object.keys(view).sort().map((k) => `${k}: ${JSON.stringify(view[k])}`);
+}

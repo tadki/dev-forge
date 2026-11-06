@@ -113,6 +113,20 @@ export class Engine {
     return report.items.find((i) => i.key === key);
   }
 
+  /**
+   * 对账动作成功后立即重载库副本并重建报告（不等整轮重采）：
+   * adopt 已落盘，指纹即刻一致，客户端动作后重取 /api/reconcile 时卡片即时消失，
+   * 而不是挂着等下一次全量采集（数秒到数十秒）结束。
+   */
+  async refreshReconcileAfterAction(): Promise<void> {
+    if (this.storeDirPath) {
+      const store = await loadFirstPartyStore(this.storeDirPath);
+      this.storeRecords = store.records;
+    }
+    const reconcile = buildReconcileReport(this.state, this.registryEntries, new Date(), { store: this.storeRecords, platforms: this.platforms });
+    this.state = { ...this.state, reconcile };
+  }
+
   /** 热更新：console.config.yaml 变更后重载注册表、重建 chokidar watch 并立即重采（无需重启进程） */
   async updateConfig(config: ConsoleConfig): Promise<void> {
     this.config = config;

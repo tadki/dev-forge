@@ -178,18 +178,21 @@ export function RegistryPage(_props: { ctx: PageCtx }) {
                 </div>
               )}
               <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }}>
-                {item.actions.map((a) => (
-                  <button
-                    key={a.id}
-                    className={`btn small ${a.executable ? (a.direction === 'platform-to-local' ? 'btn-amber' : 'btn-mint') : 'btn-ghost'}`}
-                    disabled={busyKey === `${item.key}:${a.id}`}
-                    title={!a.executable ? a.note : DIRECTION_LABEL[a.direction]}
-                    onClick={() => void runReconcileAction(item, a)}
-                  >
-                    {a.direction === 'platform-to-local' ? '⇠' : '⇢'} {a.label}
-                    {!a.executable ? ' ·手动' : ''}
-                  </button>
-                ))}
+                {item.actions.map((a) => {
+                  const busy = busyKey === `${item.key}:${a.id}`;
+                  return (
+                    <button
+                      key={a.id}
+                      className={`btn small ${a.executable ? (a.direction === 'platform-to-local' ? 'btn-amber' : 'btn-mint') : 'btn-ghost'}`}
+                      disabled={busy}
+                      title={!a.executable ? a.note : DIRECTION_LABEL[a.direction]}
+                      onClick={() => void runReconcileAction(item, a)}
+                    >
+                      {a.direction === 'platform-to-local' ? '⇠' : '⇢'} {busy ? '执行中…' : a.label}
+                      {!busy && !a.executable ? ' ·手动' : ''}
+                    </button>
+                  );
+                })}
               </div>
             </Panel>
           ))}

@@ -1,9 +1,9 @@
 import { PLATFORM_IDS, type Asset } from '@forge/schema';
 import type { RegistryEntry } from './overlay.js';
 import { matchesRegistryEntry } from './overlay.js';
-import { lineDiff } from './line-diff.js';
+import { lineDiff, NO_DIFF_SENTINEL } from './line-diff.js';
 import { buildMaterializedInstructionDiffs } from './materialized-instructions.js';
-import { contentFingerprint, isTruthKind } from './store-content.js';
+import { contentFingerprint, contentViewLines, isTruthKind } from './store-content.js';
 import type { StoreRecord } from './first-party-store.js';
 import { DEFAULT_PLATFORMS, resolvePlatform, resolveWriteChannel, type PlatformDef } from './platforms.js';
 import { splitDiff, type SplitRow } from './split-diff.js';
@@ -126,9 +126,15 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
     const field = contentField(a);
     const storeText = field ? (record.asset.payload as Record<string, unknown>)[field] : undefined;
     const prodText = field ? (a.payload as Record<string, unknown>)[field] : undefined;
-    const diff = field && typeof storeText === 'string' && typeof prodText === 'string'
-      ? lineDiff(storeText, prodText) // - 库内真源 / + 生产实测
-      : undefined;
+    // 有文本字段 → 全文 diff；无文本字段（autopilot/hook-script/adapter 等，库内只存指纹快照）
+    // 或文本一致而指纹仍漂移（差异来自元数据，如 skill 附带文件、agent model）→ 内容视图逐字段对照
+    const bothText = typeof storeText === 'string' && typeof prodText === 'string';
+    const viewSide = { left: contentViewLines(record.asset).join('\n'), right: contentViewLines(a).join('\n') };
+    const textSide = bothText ? { left: storeText, right: prodText } : viewSide;
+    const textDiff = lineDiff(textSide.left, textSide.right);
+    const useView = textDiff[0] === NO_DIFF_SENTINEL;
+    const side = useView ? viewSide : textSide;
+    const diff = useView ? lineDiff(viewSide.left, viewSide.right) : textDiff; // - 库内真源 / + 生产实测
 
     const resolved = resolveWriteChannel(a, state.assets, platforms);
     let push: ReconcileAction;
@@ -168,8 +174,8 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
       platform: a.platforms.join('+') || 'local',
       name: a.name,
       detail: `库内真源与生产实测分叉（${record.hash.slice(0, 8)} vs ${fp.slice(0, 8)}）`,
-      diff: diff?.slice(0, 40),
-      ...(typeof storeText === 'string' && typeof prodText === 'string' ? { splitRows: splitDiff(storeText, prodText) } : {}),
+      diff: diff.slice(0, 40),
+      splitRows: splitDiff(side.left, side.right),
       copies: [
         { assetId: record.asset.id, name: `${record.asset.name}（库内）`, path: record.asset.source.path, sha: record.hash.slice(0, 16), platforms: ['store'] },
         copyOf(a),

@@ -338,6 +338,32 @@ describe('store-drift（库 vs 生产）', () => {
     const r2 = buildReconcileReport({ assets: [svc, undec] }, []);
     expect(r2.summary.store).toBe(0);
   });
+
+  it('脚本型 autopilot（无文本字段）分叉 → 内容视图逐字段 diff 仍可展示', () => {
+    const prod = declared(
+      mk('autopilot:script-sweep', 'autopilot', {
+        source: { collector: 'devforge-autopilots', path: '/x/autopilots/sweep.py', sha256: 'prod-sha-aaa' },
+        payload: { script: true, lines: 12, purpose: '新用途' },
+      })
+    );
+    const stored = { ...prod, source: { ...prod.source, sha256: 'store-sha-bbb' }, payload: { script: true, lines: 9, purpose: '旧用途' } };
+    const store = new Map([[prod.id, { ...v2Record(prod, ''), asset: stored, hash: 'not-matching' }]] as const);
+    const report = buildReconcileReport({ assets: [prod] }, [], new Date(), { store });
+    const item = report.items.find((i) => i.key === `store:${prod.id}`);
+    expect(item?.diff?.some((l) => l.includes('旧用途') || l.includes('新用途'))).toBe(true);
+    expect(item?.diff?.some((l) => l.includes('sha256'))).toBe(true);
+    expect(item?.splitRows?.some((r) => r.kind !== 'same')).toBe(true);
+  });
+
+  it('正文一致而指纹漂移（agent 元数据变更）→ 回退内容视图对照', () => {
+    const prod = declared(mk('agent:meta', 'agent', { payload: { instructions: '同文', model: 'new-model' } }));
+    const stored = { ...prod, payload: { instructions: '同文', model: 'old-model' } };
+    const store = new Map([[prod.id, { ...v2Record(prod, ''), asset: stored, hash: 'not-matching' }]] as const);
+    const report = buildReconcileReport({ assets: [prod] }, [], new Date(), { store });
+    const item = report.items.find((i) => i.key === `store:${prod.id}`);
+    expect(item?.diff?.some((l) => l.includes('old-model') || l.includes('new-model'))).toBe(true);
+    expect(item?.splitRows?.some((r) => r.kind !== 'same')).toBe(true);
+  });
 });
 
 describe('审核回归：未注册平台与截断保护', () => {
