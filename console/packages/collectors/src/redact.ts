@@ -22,10 +22,6 @@ export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
 }
 
-export function redactString(s: string): string {
-  return redactValue(s);
-}
-
 export function redactObject<T>(value: T): T {
   if (typeof value === 'string') return redactValue(value) as unknown as T;
   if (Array.isArray(value)) return value.map((v) => redactObject(v)) as unknown as T;

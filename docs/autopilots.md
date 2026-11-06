@@ -7,25 +7,26 @@
 ## 1. Agent Watchdog 卡死检测
 
 - **Autopilot ID**: `25ba8a6f-aec5-4cfa-8fd7-c9eb6c54316b`
-- **脚本路径**: `autopilots/agent_watchdog.py`
+- **执行入口**: `autopilots/agent_watchdog.sh`（平台 autopilot 实际触发的 wrapper，内部委托 `agent_watchdog.py`）
 - **执行方式**:
 
 ```bash
-python autopilots/agent_watchdog.py \
-  --no-dry-run \
-  --max-restarts-per-hour 3 \
-  --verbose \
-  --execution-issue-id <本执行IssueID>
+DRY_RUN=false \
+VERBOSE=true \
+EXECUTION_ISSUE_ID=<本执行IssueID> \
+bash autopilots/agent_watchdog.sh
 ```
 
-### 参数说明
+wrapper 负责共享环境变量转换、PID/state 文件约定与 Kill Switch 透传；不要绕过 wrapper 直接执行 Python。限流使用 Python 默认值（每个 issue 每小时最多 3 次）。
+
+### 参数说明（wrapper 环境变量）
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--no-dry-run` | 无 | 实际执行模式（默认开启 dry-run） |
-| `--max-restarts-per-hour` | `3` | 每个 issue 每小时最多重启次数 |
-| `--verbose` | 无 | 输出详细日志 |
-| `--execution-issue-id` | 空 | 本执行 Issue ID，脚本会把报告发布到该 issue |
+| `DRY_RUN` | `true` | 设为 `false` 后实际执行 |
+| `VERBOSE` | `false` | 设为 `true` 输出详细日志 |
+| `EXECUTION_ISSUE_ID` | 空 | 本执行 Issue ID，脚本会把报告发布到该 issue |
+| `KILL_SWITCH` | 未设置时读取 paused 文件 | 显式设置后透传纯输出模式开关 |
 
 ### 行为说明
 
@@ -58,24 +59,24 @@ python autopilots/agent_watchdog.py \
 ## 2. Issue 状态检查与催促
 
 - **Autopilot ID**: `2dd8fa65-514d-498b-8675-63bf8f188b96`
-- **脚本路径**: `autopilots/issue_status_check.py`
+- **执行入口**: `autopilots/issue_status_check.sh`（平台 autopilot 实际触发的 wrapper，内部委托 `issue_status_check.py`）
 - **执行方式**:
 
 ```bash
-python autopilots/issue_status_check.py \
-  --no-dry-run \
-  --verbose \
-  --alert-issue-id <本执行IssueID>
+DRY_RUN=false \
+VERBOSE=true \
+bash autopilots/issue_status_check.sh
 ```
 
-### 参数说明
+wrapper 负责共享环境变量转换、PID/lock 约定与 Kill Switch 透传；不要绕过 wrapper 直接执行 Python。
+
+### 参数说明（wrapper 环境变量）
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--no-dry-run` | 无 | 实际执行（发送催促评论、@mention） |
-| `--verbose` | 无 | 输出详细日志 |
-| `--alert-issue-id` | 空 | 本执行 Issue ID（Kill Switch 告警目标） |
-| `--kill-switch` | `false` | 纯输出模式（故障降级） |
+| `DRY_RUN` | `true` | 设为 `false` 后实际执行（发送催促评论、@mention） |
+| `VERBOSE` | `false` | 设为 `true` 输出详细日志 |
+| `KILL_SWITCH` | 未设置时读取 paused 文件 | 显式设置后透传纯输出模式开关 |
 
 ### 行为说明
 

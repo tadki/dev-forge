@@ -4,6 +4,7 @@ import type { Asset } from '@forge/schema';
 import { createHandler } from './app.js';
 import { SSEBus } from './sse.js';
 import type { RegistryState } from '@forge/collectors';
+import { DEFAULT_PLATFORMS } from '@forge/collectors';
 
 function mk(id: string, kind: Asset['kind'], over: Partial<Asset> = {}): Asset {
   return {
@@ -98,6 +99,7 @@ beforeAll(async () => {
       { id: 'devforge', name: 'dev-forge 工具链', projects: [] },
     ],
     pushAssets: (a) => pushed.push(...a),
+    platforms: () => DEFAULT_PLATFORMS,
     serviceAction: async (unit, action) => {
       actionLog.push({ unit, action });
       if (unit === 'repo-sync-devforge' && action !== 'stop') {
@@ -217,10 +219,31 @@ describe('api endpoints', () => {
     expect(r.body.sections).toHaveLength(5);
   });
 
-  it('migration returns matrix + commands', async () => {
-    const r = await get('/api/migration', TOKEN);
-    expect(r.body.commands[0]).toContain('#!/bin/bash');
-    expect(r.body.rows.length).toBeGreaterThan(0);
+  it('platforms returns contract × live assets with unadapted bucket', async () => {
+    const r = await get('/api/platforms', TOKEN);
+    const ids = r.body.platforms.map((p: { id: string }) => p.id);
+    expect(ids).toContain('claude-code');
+    expect(ids).toContain('multica');
+    const multica = r.body.platforms.find((p: { id: string }) => p.id === 'multica');
+    const agentRow = multica.kinds.find((k: { kind: string }) => k.kind === 'agent');
+    expect(agentRow.read.cmd).toEqual(['multica', 'agent', 'list']);
+    expect(agentRow.write.type).toBe('command');
+    const cc = r.body.platforms.find((p: { id: string }) => p.id === 'claude-code');
+    expect(cc.totalAssets).toBe(9); // 12 资产 - 3 个 systemd:// 未适配
+    expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').read.paths).toContain('<project>/CLAUDE.md');
+    expect(r.body.unadapted.assetCount).toBe(3);
+    expect(r.body.unadapted.kinds[0].kind).toBe('service');
+    expect(Array.isArray(r.body.diagnostics)).toBe(true);
+    expect(typeof r.body.generatedAt).toBe('string');
+    for (const p of r.body.platforms as { kinds: { assets: Record<string, unknown>[] }[] }[]) {
+      for (const k of p.kinds) {
+        for (const a of k.assets) {
+          expect(a).not.toHaveProperty('payload');
+          expect(a).not.toHaveProperty('instructions');
+          expect(a).not.toHaveProperty('content');
+        }
+      }
+    }
   });
 
   it('custom push validates schema', async () => {

@@ -364,11 +364,6 @@ def run(cmd, fallback="", timeout=30):
     return out if ok else fallback
 
 
-def run_ok(cmd, timeout=30):
-    """Thin wrapper over multica_helpers.multica_cli returning (ok, stdout)."""
-    return multica_cli(cmd, timeout=timeout)
-
-
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 

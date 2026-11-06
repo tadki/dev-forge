@@ -174,7 +174,7 @@ console/
 |---|---|---|
 | `agent` | instructions(md)、model、thinkingLevel、mcpServers[]、customEnv、runtime、concurrency、status | multica API、`.claude/agents/*.md` |
 | `instruction` | content(md)、lang、headings[]、lines、contentHash、copies[]（同 hash 副本=漂移组） | CLAUDE.md × N、rules/*.md、multica instructions |
-| `skill` | description、triggers[]、body(md)、references[]、platformSkill(bool) | skills 目录、multica skill |
+| `skill` | description、triggers[]、body(md)、references[] | skills 目录、multica skill |
 | `hook-registration` | hookPoints[]、entry、matcher | settings.json、hooks-registration.json |
 | `hook-rule` | on、agents 门控、oneShot、when(op 树原文+人话摘要)、actions[]、enabled | rules JSON |
 | `hook-script` | purpose、timeout、onFail、mounts[]（被哪些规则挂载）、lastFired | scripts/ + firelog |

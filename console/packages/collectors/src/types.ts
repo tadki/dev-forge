@@ -1,4 +1,4 @@
-import type { Asset, Collection, Diagnostic, Relation } from '@forge/schema';
+import type { Asset, Collection, Diagnostic } from '@forge/schema';
 import type { ConsoleConfig } from './config.js';
 
 export type CollectorMode = 'watch' | 'interval' | 'on-request';
@@ -82,8 +82,4 @@ export function asset(partial: {
     source: partial.source,
     payload: partial.payload ?? {},
   };
-}
-
-export function emptyBuckets(): { assets: Asset[]; relations: Relation[] } {
-  return { assets: [], relations: [] };
 }

@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Asset } from '@forge/schema';
-import { loadPlatforms, resolvePlatform, resolveWriteChannel } from './platforms.js';
+import { loadPlatforms, resolvePlatform, resolveWriteChannel, buildPlatformsView, DEFAULT_PLATFORMS, type PlatformDef } from './platforms.js';
 
 const dir = join(tmpdir(), `forge-platforms-${Date.now()}`);
 /** 仓库真实声明（console/platforms.d）——顺带验证 YAML 文件本身可加载 */
@@ -81,5 +81,84 @@ describe('platforms.d 结构校验（坏文件出诊断并跳过）', () => {
     expect(platforms.map((p) => p.id)).toEqual(['good-1']);
     expect(diagnostics).toHaveLength(3);
     expect(diagnostics.every((d) => d.level === 'error' && d.message.includes('结构违规'))).toBe(true);
+  });
+
+  it('read 校验矩阵：how 未知 / cli 缺 cmd / file 缺 paths / none 缺 note → 跳过；合法 read 通过', async () => {
+    const badDir = join(dir, 'bad-read');
+    await mkdir(badDir, { recursive: true });
+    await writeFile(join(badDir, 'a.yaml'), 'id: bad-how\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { read: { how: magic }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'b.yaml'), 'id: bad-cli\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { read: { how: cli }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'c.yaml'), 'id: bad-file\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { read: { how: file }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'd.yaml'), 'id: bad-none\nmatch: { pathPrefix: ["/"] }\nkinds: { skill: { read: { how: none }, write: { type: file-write } } }\n');
+    await writeFile(
+      join(badDir, 'e.yaml'),
+      'id: good-read\nmatch: { pathPrefix: ["ok://"] }\nkinds:\n  skill:\n    read:\n      how: cli\n      collector: test\n      cmd: [t, list]\n      detailCmd: [t, get, "{id}"]\n      note: 测试\n    write: { type: file-write }\n  instruction:\n    read: { how: derived, note: 派生, paths: ["<project>/CLAUDE.md"] }\n    write: { type: file-write }\n'
+    );
+    const { platforms, diagnostics } = await loadPlatforms(badDir);
+    expect(platforms.map((p) => p.id)).toEqual(['good-read']);
+    expect(diagnostics).toHaveLength(4);
+    expect(diagnostics.every((d) => d.message.includes('结构违规'))).toBe(true);
+  });
+});
+
+describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
+  it('DEFAULT_PLATFORMS 与 console/platforms.d 逐字段等价（单边漂移即红）', async () => {
+    const { platforms } = await loadPlatforms(repoDir);
+    const byId = (xs: PlatformDef[]) => Object.fromEntries(xs.map((p) => [p.id, p]));
+    expect(byId(platforms)).toEqual(byId(DEFAULT_PLATFORMS));
+  });
+
+  it('真实 YAML 的 read 声明：multica 命令 / claude-code 路径 / truth kind 全覆盖', async () => {
+    const { platforms } = await loadPlatforms(repoDir);
+    const multica = platforms.find((p) => p.id === 'multica');
+    expect(multica?.kinds?.skill?.read).toMatchObject({
+      how: 'cli',
+      cmd: ['multica', 'skill', 'list'],
+      detailCmd: ['multica', 'skill', 'get', '{id}', '--with-content'],
+    });
+    expect(multica?.kinds?.agent?.read?.collector).toBe('multica');
+    expect(multica?.kinds?.instruction?.read?.how).toBe('derived');
+    expect(multica?.kinds?.instruction?.read?.note).toContain('workdir');
+    const cc = platforms.find((p) => p.id === 'claude-code');
+    expect(cc?.kinds?.instruction?.read?.paths).toContain('<project>/CLAUDE.md');
+    const TRUTH = ['instruction', 'skill', 'agent', 'hook-rule', 'hook-script', 'adapter', 'autopilot'];
+    for (const p of platforms) {
+      for (const k of TRUTH) expect(p.kinds?.[k]?.read, `${p.id}.${k} 应有 read 声明`).toBeDefined();
+    }
+  });
+});
+
+describe('buildPlatformsView', () => {
+  it('平台归桶 + 轻量投影 + 未适配桶', () => {
+    const assets = [
+      mkAsset('skill:a', 'multica://skills/a', 'skill', { platformId: 'sk-1' }),
+      mkAsset('agent:fronti', 'multica://agents/fronti-1', 'agent', { instructions: 'x' }),
+      mkAsset('service:grepai', 'systemd://user/grepai-watch.service', 'service'),
+      mkAsset('instruction:k', '/e2e/kol/CLAUDE.md', 'instruction'),
+    ];
+    const v = buildPlatformsView(assets, DEFAULT_PLATFORMS);
+    const multica = v.platforms.find((p) => p.id === 'multica');
+    expect(multica?.totalAssets).toBe(2);
+    const skillRow = multica?.kinds.find((k) => k.kind === 'skill');
+    expect(skillRow).toMatchObject({ assetCount: 1, declared: true, collectors: ['test'] });
+    expect(skillRow?.assets[0].platformId).toBe('sk-1');
+    expect(skillRow?.assets[0]).not.toHaveProperty('payload');
+    expect(skillRow?.read?.how).toBe('cli');
+    const agentRow = multica?.kinds.find((k) => k.kind === 'agent');
+    expect(agentRow?.assets[0]).not.toHaveProperty('instructions');
+    const cc = v.platforms.find((p) => p.id === 'claude-code');
+    expect(cc?.kinds.find((k) => k.kind === 'instruction')?.assetCount).toBe(1);
+    expect(v.unadapted.assetCount).toBe(1);
+    expect(v.unadapted.kinds[0]).toMatchObject({ kind: 'service', count: 1 });
+    expect(v.unadapted.kinds[0].paths).toEqual(['systemd://user/grepai-watch.service']);
+  });
+
+  it('YAML 未声明的实有 kind → declared=false；kind 序循 ASSET_KINDS', () => {
+    const defs: PlatformDef[] = [{ id: 't', match: { pathPrefix: ['t://'] }, kinds: { skill: { write: { type: 'file-write' } } } }];
+    const assets = [mkAsset('custom:x', 't://x', 'custom'), mkAsset('skill:s', 't://s', 'skill')];
+    const v = buildPlatformsView(assets, defs);
+    expect(v.platforms[0].kinds.map((k) => k.kind)).toEqual(['skill', 'custom']);
+    expect(v.platforms[0].kinds.find((k) => k.kind === 'custom')?.declared).toBe(false);
+    expect(v.platforms[0].kinds.find((k) => k.kind === 'skill')?.declared).toBe(true);
   });
 });

@@ -104,7 +104,7 @@ export const registryEntrySchema = z.object({
 export type RegistryDeclaration = z.infer<typeof registryEntrySchema>;
 
 /**
- * Per-kind payload 契约：字段取自各内置采集器实际产出 + 消费端（UI/effective/migration/reconcile）
+ * Per-kind payload 契约：字段取自各内置采集器实际产出 + 消费端（UI/effective/platforms/reconcile）
  * 实际读取的交集。语义是「已知名键的类型约束」，不是「必填字段清单」：
  * - 全部字段 optional（缺失不报错）——REST 推送 / collectors.d 外部脚本可以只给子集
  * - looseObject 允许未知键透传（overlay 盖戳的 registry、未来新增字段）
@@ -165,8 +165,6 @@ const skillPayload = z.looseObject({
   labels: z.array(z.string()).optional(),
   workspaceId: z.string().optional(),
   files: z.array(z.object({ path: z.string(), content: z.string().optional() })).optional(),
-  // UI 平台物化徽章读取此键（当前无采集器产出——历史死读，字段保留）
-  platformSkill: z.boolean().optional(),
 });
 
 const hookRegistrationPayload = z.looseObject({

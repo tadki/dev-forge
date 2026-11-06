@@ -145,12 +145,6 @@ def fetch_releases(per_page=20):
     return http_get_json(url)
 
 
-def fetch_release(tag):
-    """Fetch a specific release by tag."""
-    url = f"{GITHUB_API_BASE}/releases/tags/{tag}"
-    return http_get_json(url)
-
-
 # --- Changelog parsing ---
 
 

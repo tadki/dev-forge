@@ -1,8 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 
-export const PUBLIC_PATHS = new Set(['/healthz']);
-
 /** 公开 = healthz + 非 /api 静态资源（App 外壳可加载，数据一律要 token） */
 export function isPublicPath(path: string): boolean {
   const clean = path.split('?')[0];

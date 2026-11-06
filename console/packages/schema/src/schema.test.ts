@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ASSET_KINDS, RELATION_TYPES, collectionSchema, assetSchema, validateCollection, jsonContract, assetPayloadIssue, payloadSchemas, registryEntrySchema } from './index.js';
+import { ASSET_KINDS, RELATION_TYPES, collectionSchema, assetSchema, validateCollection, assetPayloadIssue, payloadSchemas, registryEntrySchema } from './index.js';
 
 const validAsset = {
   id: 'hook-rule:push-guard-master-gate',
@@ -185,13 +185,5 @@ describe('registry.d 声明契约（元信息层）', () => {
     expect(registryEntrySchema.safeParse({ id: 'x', match: { ids: 'skill:a' } }).success).toBe(false);
     expect(registryEntrySchema.safeParse({ id: 'x', match: { exclude: { idPrefix: ['skill:'] } } }).success).toBe(true);
     expect(registryEntrySchema.safeParse({ id: 'x', match: { exclude: { idPrefix: 1 } } }).success).toBe(false);
-  });
-});
-
-describe('json contract', () => {
-  it('exports a JSON schema carrying the kind enum', () => {
-    const contract = jsonContract();
-    const found = JSON.stringify(contract).includes(JSON.stringify([...ASSET_KINDS]));
-    expect(found).toBe(true);
   });
 });

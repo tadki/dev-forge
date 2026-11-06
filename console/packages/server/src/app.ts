@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Asset } from '@forge/schema';
-import type { ReconcileReport, RegistryState, WorkspaceDef } from '@forge/collectors';
-import { buildMigrationView, resolveEffective } from '@forge/collectors';
+import type { PlatformDef, ReconcileReport, RegistryState, WorkspaceDef } from '@forge/collectors';
+import { buildPlatformsView, resolveEffective } from '@forge/collectors';
 import { validateCollection } from '@forge/schema';
 import { checkAuth } from './auth.js';
 import { serveStatic } from './static.js';
@@ -19,6 +19,8 @@ export interface AppDeps {
   serviceAction: (unit: string, action: 'start' | 'stop' | 'restart') => Promise<{ ok: boolean; output: string }>;
   /** 平台对账报告（collectNow 已计算；缺失时调用端按当前 state 重算） */
   getReconcileReport: () => ReconcileReport;
+  /** 平台适配声明（engine 每轮采集从 platforms.d 加载；缺失回退 DEFAULT_PLATFORMS） */
+  platforms: () => PlatformDef[];
   /** 对账动作执行（服务端重算 item 并按 actionId 取步骤；gone=对账项已变化；failed=业务拒绝/中断，仍 200） */
   reconcileAction: (key: string, actionId: string) => Promise<{ status: 'ok' | 'invalid' | 'gone' | 'failed'; ok: boolean; output: string }>;
   onAfterAction?: () => void;
@@ -118,6 +120,15 @@ export function createHandler(deps: AppDeps) {
         return json(res, 200, deps.getReconcileReport());
       }
 
+      if (path === '/api/platforms' && req.method === 'GET') {
+        const view = buildPlatformsView(state.assets, deps.platforms());
+        return json(res, 200, {
+          ...view,
+          generatedAt: new Date().toISOString(),
+          diagnostics: state.diagnostics.filter((d) => d.message.startsWith('[platforms]')),
+        });
+      }
+
       if (path === '/api/reconcile/actions' && req.method === 'POST') {
         let body: { key?: string; actionId?: string; confirm?: boolean };
         try {
@@ -188,10 +199,6 @@ export function createHandler(deps: AppDeps) {
         const agent = url.searchParams.get('agent') ?? undefined;
         if (!project) return json(res, 400, { error: 'project required' });
         return json(res, 200, resolveEffective(state.assets, state.relations, project, agent || undefined));
-      }
-
-      if (path === '/api/migration') {
-        return json(res, 200, buildMigrationView(state.assets));
       }
 
       if (path === '/api/services/actions' && req.method === 'POST') {

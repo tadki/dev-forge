@@ -51,10 +51,10 @@ test('nav: all 11 pages render with header', async ({ page }) => {
     ['/agents', '智能体'],
     ['/services', '服务'],
     ['/autopilots', '巡逻'],
-    ['/migration', '迁移'],
     ['/graph', '关系图'],
     ['/custom', '通用资产'],
     ['/effective', '有效 HARNESS'],
+    ['/platforms', '平台'],
   ];
   for (const [route, head] of routes) {
     await page.goto(route);
@@ -134,13 +134,23 @@ test('projects: single project card, git identity, harness badge, workspace grou
   await expect(page.getByText("Jerry's Forge").first()).toBeVisible();
 });
 
-test('migration: coverage, gaps, export script', async ({ page }) => {
-  await page.goto('/migration');
-  await expect(page.locator('.num').first()).toBeVisible();
-  await expect(page.getByText('可映').first()).toBeVisible();
-  await expect(page.getByText('缺口与策略')).toBeVisible();
-  await expect(page.getByText('#!/bin/bash')).toBeVisible();
-  await expect(page.getByText('Fronti').first()).toBeVisible(); // instructions dry-run diff 区
+test('platforms: contract renders per platform with read/write channels', async ({ page }) => {
+  await page.goto('/platforms');
+  await expect(page.locator('.page-head h2')).toContainText('平台');
+  await expect(page.getByText('multica 平台').first()).toBeVisible();
+  await expect(page.getByText('Claude Code（本地文件系统）').first()).toBeVisible();
+  // multica agent：读 = multica agent list；写 = multica agent update {platformId} --instructions {content}
+  const agentRow = page.locator('tr', { hasText: 'multica agent list' }).first();
+  await expect(agentRow).toBeVisible();
+  await expect(agentRow.getByText('multica agent update {platformId} --instructions {content}')).toBeVisible();
+  await expect(page.getByText('multica skill get {id} --with-content').first()).toBeVisible();
+  await expect(page.locator('tr', { hasText: '<project>/CLAUDE.md' }).first()).toBeVisible();
+  // 点击 kind 行 → 资产面板（fixture：multica agent Fronti / Revy）
+  await agentRow.click();
+  await expect(page.getByText('Fronti').first()).toBeVisible();
+  // 未适配桶：systemd:// 3 个 service
+  await expect(page.getByText('未适配').first()).toBeVisible();
+  await expect(page.getByText('systemd://user/grepai-watch.service').first()).toBeVisible();
 });
 
 test('graph: nodes render and inspector works', async ({ page }) => {

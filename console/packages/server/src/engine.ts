@@ -5,7 +5,6 @@ import {
   reconcileDiagnostics,
   builtinCollectors,
   loadRegistryEntries,
-  loadConfig,
   makeContext,
   mergeCollections,
   runCollectors,
@@ -227,5 +226,3 @@ export class Engine {
     }
   }
 }
-
-export { loadConfig, fixtureCollector };

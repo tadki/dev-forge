@@ -14,13 +14,13 @@
 ```
 CC hook 事件（10 时点 × matcher *）
   ↓
-settings.json（全局 ~）：10 时点统一注册
-  "hook-wrapper.sh <HookType> unified-hook"
-hook-wrapper.sh（记录日志 + exec dispatcher.sh unified-hook）
+settings.json（全局 ~）：10 时点统一注册，绝对路径直指本仓检出
+  "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh <HookType> unified-hook"
+~/tools/dev-forge/claude-hooks/hook-wrapper.sh（记录日志 + exec dispatcher.sh unified-hook）
   ↓
-dispatcher.sh（P4 收敛后仅剩 unified-hook case，全局部署位优先）
+~/tools/dev-forge/claude-hooks/dispatcher.sh（P4 收敛后仅剩 unified-hook case，脚本自定位）
   ↓
-~/.claude/hooks/unified/unified-hook.sh（fail-open 入口：stdin 缓冲 + HOOK_SCOPE_ID 映射）
+~/tools/dev-forge/claude-hooks/unified/unified-hook.sh（fail-open 入口：stdin 缓冲 + HOOK_SCOPE_ID 映射）
   ↓
 unified/engine.js（配置驱动求值：on → agents → when → action）
   ├─ action: deny / context / modify  → 引擎直接产出 hookSpecificOutput JSON
@@ -34,18 +34,18 @@ unified/engine.js（配置驱动求值：on → agents → when → action）
 
 | 层级 | 文件 | 职责 |
 |------|------|------|
-| **入口** | `~/.claude/settings.json` → `hook-wrapper.sh` | CC 触发 hook → 记录日志 → 委托 dispatcher |
-| **路由** | `dispatcher.sh` | 仅识别 `unified-hook` 一个 alias（全局部署位优先）；未知 alias 静默透传（fail-open） |
-| **求值** | `~/.claude/hooks/unified/engine.js` | 读取规则配置（rules-v2.json + rules.d/*.json），按 `on`/`agents`/`when`/`one_shot` 求值，执行 `deny`/`context`/`modify`/`run_script` 动作 |
-| **配置真源** | 仓库 `.claude/hooks/unified/rules-v2.json` + `rules.d/` + `bootstrap/hooks-registration.json` | 规则与注册清单的声明式真源，由幂等安装器 `install-hooks.sh` 渲染部署到全局位 |
-| **业务** | 项目 `.claude/hooks/*.sh`（经 run_script 挂载） | 复合逻辑：push guard / mention 检查 / 格式化 / taskflow 记账 / auto-pr / repo-checkout |
+| **入口** | `~/.claude/settings.json` → `claude-hooks/hook-wrapper.sh` | CC 触发 hook → 记录日志 → 委托 dispatcher |
+| **路由** | `claude-hooks/dispatcher.sh` | 仅识别 `unified-hook` 一个 alias（脚本自定位）；未知 alias 静默透传（fail-open） |
+| **求值** | `claude-hooks/unified/engine.js` | 读取规则配置（rules-v2.json + rules.d/*.json），按 `on`/`agents`/`when`/`one_shot` 求值，执行 `deny`/`context`/`modify`/`run_script` 动作 |
+| **配置真源** | `claude-hooks/unified/rules-v2.json` + `rules.d/` + `bootstrap/hooks-registration.json` | 规则与注册清单的声明式真源，由 `bootstrap/bootstrap.sh` + `bootstrap/registry-patch.js` 渲染进全局 settings（运行期零部署拷贝） |
+| **业务** | `claude-hooks/scripts/*.sh`（经 run_script 挂载） | 复合逻辑：push guard / mention 检查 / 格式化 / taskflow 记账 / auto-pr / repo-checkout |
 
 ### 1.2 为什么仍需要 dispatcher
 
 CC 的 settings 加载规则：**只**从用户全局 `~/.claude/settings.json` 读取 hooks 配置（项目级 `.claude/settings.json` 不承载 hooks）。dispatcher 保留两层价值：
 
 1. **引号隔离**：settings command 只含简单脚本路径 + 参数（见 §2.2 设计决策），引号问题由 wrapper 吸收。
-2. **全局部署位优先路由**：unified-hook 的运行物与配置统一部署在 `~/.claude/hooks/unified/`（全局优先），避免各在跑会话按各自 checkout 的异构配置求值（SEE-1330 事故 4 教训：v2 配置必须单一真源）。
+2. **单一真源路由**：settings 注册行绝对路径直指 `~/tools/dev-forge/claude-hooks/` 检出，dispatcher 再按自身定位进入同仓 `unified/`，避免各在跑会话按异构配置求值（SEE-1330 事故 4 教训：v2 配置必须单一真源）。
 
 dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail-open）。
 
@@ -53,8 +53,8 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 
 | 场景 | 配置来源 | 触发路径 |
 |------|---------|---------|
-| 用户本地打开 KOL 项目 | 全局 `~/.claude/settings.json` | hook-wrapper.sh → dispatcher.sh（unified-hook）→ 全局 `~/.claude/hooks/unified/` 引擎 |
-| Multica Agent 在 workdir 运行 | 全局 `~/.claude/settings.json` | 同上；全局位缺失时以 checkout 内 `.claude/hooks/unified/` 兜底 |
+| 用户本地打开 KOL 项目 | 全局 `~/.claude/settings.json` | hook-wrapper.sh → dispatcher.sh（unified-hook）→ dev-forge 检出内 `claude-hooks/unified/` 引擎 |
+| Multica Agent 在 workdir 运行 | 全局 `~/.claude/settings.json` | 同上（注册链始终指向 dev-forge 检出） |
 | 其他项目 / workdir 无代码 | 全局 `~/.claude/settings.json` | dispatcher 静默跳过（透传） |
 
 > **注意**：项目级 `.claude/settings.json` 不定义 hooks；settings 注册唯一真源为仓库 `bootstrap/hooks-registration.json`（声明式清单），由安装器渲染到全局 `~/.claude/settings.json`。10 时点 = PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / SubagentStop / UserPromptSubmit / Notification / PreCompact / PermissionRequest，matcher 全 `*`，触发面收敛在引擎内 when 树。
@@ -71,45 +71,45 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 {
   "hooks": {
     "PreToolUse": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh PreToolUse unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh PreToolUse unified-hook" } ] }
     ],
     "PostToolUse": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh PostToolUse unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh PostToolUse unified-hook" } ] }
     ],
     "SessionStart": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh SessionStart unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh SessionStart unified-hook" } ] }
     ],
     "SessionEnd": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh SessionEnd unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh SessionEnd unified-hook" } ] }
     ],
     "Stop": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh Stop unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh Stop unified-hook" } ] }
     ],
     "SubagentStop": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh SubagentStop unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh SubagentStop unified-hook" } ] }
     ],
     "UserPromptSubmit": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh UserPromptSubmit unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh UserPromptSubmit unified-hook" } ] }
     ],
     "Notification": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh Notification unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh Notification unified-hook" } ] }
     ],
     "PreCompact": [
-      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/.claude/hooks/hook-wrapper.sh PreCompact unified-hook" } ] }
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh PreCompact unified-hook" } ] }
     ]
   }
 }
 ```
 
-> **v2 终态形态**：10 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `bootstrap/hooks-registration.json`，由幂等安装器渲染（原子写 + 备份 + 回滚，`install-hooks.sh install/verify/disable-v1/rollback`）。PermissionRequest 时点于 2026-11-03 增补（plan-mode 自动放行迁移，见 §5.1）。
+> **v2 终态形态**：10 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `bootstrap/hooks-registration.json`，由 `bootstrap/bootstrap.sh` 调 `registry-patch.js` 渲染（备份 + 幂等校验；回滚走 `bootstrap/rollback.sh`）。PermissionRequest 时点于 2026-11-03 增补（plan-mode 自动放行迁移，见 §5.1）。
 >
-> **路径说明**：生产环境使用绝对路径（如 `/home/jerry/.claude/hooks/...`），避免 WSL 中 `~` 展开不一致的问题。上例使用 `~` 仅为可读性。
+> **路径说明**：生产环境使用上述 dev-forge 检出的绝对路径，避免 WSL 中 `~` 展开不一致；注册链不经过 `~/.claude/hooks/` 部署位。
 
 ### 2.2 关键设计决策
 
 1. **command 格式：纯脚本路径**
    ```
-   正确: ~/.claude/hooks/hook-wrapper.sh PreToolUse unified-hook
+   正确: ~/tools/dev-forge/claude-hooks/hook-wrapper.sh PreToolUse unified-hook
    ```
    command 只写脚本路径 + 参数，不要添加 bash 前缀或引号嵌套。
 
@@ -128,9 +128,9 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 
 | 文件 | 内容 | 维护约束 |
 |---|---|---|
-| `.claude/hooks/unified/rules-v2.json` | 13 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
-| `.claude/hooks/unified/rules.d/runscript-mounts.json` | 8 条 run_script 挂载规则（push-guard / mention-check / gdformat-gdlint / taskflow×3 / auto-pr / repo-checkout）：`deny_exit_codes` / `on_fail` / `timeout_ms` | 挂载 lane 与 rules-v2 规则段互不交叉编辑 |
-| `.claude/hooks/unified/rules.d/plan-mode-auto-allow.json` | 1 条 PermissionRequest 挂载规则（plan 模式自动放行，2026-11-03 自 Mac 全局 settings jq 一行式迁入）：payload op 字符串等值 + run_script 协议直通 | 同上；引擎侧依赖 validate-rules.js HOOK_POINTS 第 10 时点 + when-ops.js payload 字符串等值 |
+| `claude-hooks/unified/rules-v2.json` | 13 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
+| `claude-hooks/unified/rules.d/runscript-mounts.json` | 8 条 run_script 挂载规则（push-guard / mention-check / gdformat-gdlint / taskflow×3 / auto-pr / repo-checkout）：`deny_exit_codes` / `on_fail` / `timeout_ms` | 挂载 lane 与 rules-v2 规则段互不交叉编辑 |
+| `claude-hooks/unified/rules.d/plan-mode-auto-allow.json` | 1 条 PermissionRequest 挂载规则（plan 模式自动放行，2026-11-03 自 Mac 全局 settings jq 一行式迁入）：payload op 字符串等值 + run_script 协议直通 | 同上；引擎侧依赖 validate-rules.js HOOK_POINTS 第 10 时点 + when-ops.js payload 字符串等值 |
 | `bootstrap/hooks-registration.json` | settings 注册声明式真源 + runtime_artifacts 部署清单 | 见 §2.1 |
 
 ---
@@ -139,7 +139,7 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 
 ### 3.1 代码
 
-路径：`~/.claude/hooks/hook-wrapper.sh`
+路径：`~/tools/dev-forge/claude-hooks/hook-wrapper.sh`
 
 ```bash
 #!/bin/bash
@@ -165,7 +165,7 @@ fi
 
 echo "[$TIMESTAMP] [$HOOK_TYPE] alias=$ALIAS" >> "$LOG_FILE" 2>/dev/null || true
 
-exec "/home/jerry/.claude/hooks/dispatcher.sh" "$ALIAS"
+exec "$(cd "$(dirname "$0")" && pwd)/dispatcher.sh" "$ALIAS"
 ```
 
 ### 3.2 为什么需要 wrapper
@@ -190,7 +190,7 @@ firelog 轮转（SEE-1440 §SPEC-025）：三入口写入前经 `maybe_rotate_ho
 
 ### 4.1 代码
 
-路径：`~/.claude/hooks/dispatcher.sh`（唯一真源为 repo 内 `.dev/hooks/dispatcher.sh`，全局副本须与其字节一致）
+路径：`~/tools/dev-forge/claude-hooks/dispatcher.sh`（settings 注册直指该文件，运行期零部署拷贝）
 
 ```bash
 #!/bin/bash
@@ -291,8 +291,7 @@ INPUT="${INPUT%$'\n'}"
 
 ### 4.4 维护检查
 
-- 修改本地 WSL 项目路径时，须同步更新 `dispatcher.sh` 中的 `WSL_CANDIDATES` 数组。
-- **双副本同步**（SEE-1185 F1）：repo 内 `.dev/hooks/dispatcher.sh` 是唯一真源；任何改动先改 repo 副本，再整体同步到全局 `~/.claude/hooks/dispatcher.sh`（两份须字节一致，可用 `diff` 验证）。
+- **单一真源**：settings 注册行绝对路径直指 `claude-hooks/` 检出；本仓文件即生效文件，无全局副本同步要求。
 - **结果日志**（SEE-1185 F5）：dispatcher 每次执行业务脚本后向 firelog 追加 `[result] alias=<alias> exit=<code> script=<name>` 行，使「没有失败」与「看不到失败」可区分；日检错误率统计应以该 result 行为准。
 
 ### 4.5 关键约束
@@ -304,7 +303,7 @@ INPUT="${INPUT%$'\n'}"
 
 ## 5. Hook 脚本清单（v2 终态）
 
-v2 单轨下「注册项」与「脚本」解耦：settings 仅 9 条 unified-hook 注册；业务脚本经 run_script 挂载规则触发（规则定义在 `unified/rules.d/runscript-mounts.json`），配置化规则在 `unified/rules-v2.json`。
+v2 单轨下「注册项」与「脚本」解耦：settings 共 10 条 unified-hook 注册（每时点一条）；业务脚本经 run_script 挂载规则触发（规则定义在 `unified/rules.d/runscript-mounts.json`），配置化规则在 `unified/rules-v2.json`。
 
 > **维护条款：本表与 `unified/rules-v2.json` + `unified/rules.d/` + `hooks-registration.json` 同步更新。** 任何规则增删、挂载或通道调整，都必须同时更新规则配置与本表，二者不一致视为文档缺陷。拦截型（阻断）hook 必须在表中登记 owner，无 owner 的拦截不允许存在。
 
@@ -335,7 +334,7 @@ v2 单轨下「注册项」与「脚本」解耦：settings 仅 9 条 unified-ho
 - skill-check 拦截/提醒语义现由 rules-v2.json 配置化承载（§6 为 v2 when 树说明）；原 `pre-comment-skill-check.sh` 脚本与 `skill-check-rules.json` 已退役（S22 终审裁定物理删除，见迁移清单 §7.2）。
 - `atlas-taskflow-*` 三个钩子仅对 `MULTICA_AGENT_NAME=Atlas` 生效（规则 agents 顶层限定），配合 /taskflow 编排闭环使用。
 - `gdformat-gdlint` 的 SEE-1142 mcp-mouse-lint 追加规则实现在 `.dev/scripts/mcp-mouse-lint.sh`，通过 `PROJECT_ROOT` 定位。
-- 非 hook 挂载脚本：`mcp-tool-presence.sh`（被 repo-checkout.sh 从属调用，godot-mcp 工具审计）、`godot-mcp-launch-path.lib.sh`（source 库）——均保留原位；`reconcile-working-branch.sh`（Leader 手动调用，处理 shared working branch auto-rebase 冲突）已随 SEE-1388 §SPEC-013 归位 `.dev/scripts/`（非 hook 工具，退出 hooks 部署清单）。
+- 非 hook 挂载脚本：`mcp-tool-presence.sh`（被 repo-checkout.sh 从属调用，godot-mcp 工具审计）、`godot-mcp-launch-path.lib.sh`（source 库）——均保留原位；`reconcile-working-branch.sh`（Leader 手动调用，处理 shared working branch auto-rebase 冲突）位于本仓 `scripts/reconcile-working-branch.sh`（非 hook 工具，不进 hooks 部署清单）。
 
 ### 5.2 已退役钩子（勿再引用）
 
@@ -351,7 +350,7 @@ v2 单轨下「注册项」与「脚本」解耦：settings 仅 9 条 unified-ho
 | `tscn-tres-guard.sh`（v1 脚本） | 规则配置化入 rules-v2.json（文案 verbatim 保真）后退役；P4 部署面下线，仓库文件待物理删除 |
 | desugar.js / engine v1 兼容层（desugar 双读 + v1_compat 键） | P4 收敛删除（S18） |
 
-> v1→v2 迁移逐规则等价依据见 `.dev/docs/claude/hooks-v2-migration-map.md`（§6.1 逐规则对照 + 六轮 QA 核验记录）。
+> v1→v2 迁移逐规则等价依据见 `docs/hooks-v2-migration-map.md`（§6.1 逐规则对照 + 六轮 QA 核验记录）。
 
 ---
 

@@ -46,7 +46,6 @@ class TestRegistrationPathResolution:
                 {
                     "repo_path": str(tmp_path / "root" / "nested"),
                     "remote": "origin",
-                    "gitlink_forward_enabled": False,
                 }
             )
         )

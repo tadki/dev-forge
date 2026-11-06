@@ -1,15 +1,108 @@
 # 平台适配 · Claude Code（本地文件系统）
-# 读通道 = claude-global / claude-projects / devforge-* 采集器（文件系统扫描）
-# 写通道 = file-write（路径白名单 + *.forge-bak 备份在执行器代码里，不在 YAML）
+# read = 采集器扫描方式：file（文件/目录模式，支持 ~ 与 <project>/<devforge> 占位）/ derived（登记派生）/ none（无）
+# write = file-write（路径白名单 + *.forge-bak 备份在执行器代码里，不在 YAML）
+# ── 新增平台指南：复制本文件 → 改 id/label/match.pathPrefix → 逐 kind 声明 read/write；
+#    同步 schema.ts PLATFORM_IDS + platforms.ts DEFAULT_PLATFORMS（锁步单测兜底）+ 采集器发出匹配 pathPrefix 的 source.path
+#    pathPrefix 按 first-match-wins 生效，勿轻易用 "/" 这类兜底前缀（本文件是历史兜底特例）
 id: claude-code
 label: Claude Code（本地文件系统）
 match:
   pathPrefix: ["/"]
 kinds:
-  instruction: { write: { type: file-write } }
-  skill: { write: { type: file-write } }
-  agent: { write: { type: file-write } }        # CC subagent（.claude/agents/*.md）
-  hook-rule: { write: { type: file-write } }
-  hook-script: { write: { type: file-write } }
-  adapter: { write: { type: file-write } }
-  autopilot: { write: { type: file-write } }    # 本地脚本型
+  instruction:
+    read:
+      how: file
+      collector: claude-projects
+      paths: ["<project>/CLAUDE.md", "~/.claude/rules/*/*.md"]
+      note: '项目 CLAUDE.md（claude-projects）+ 全局规则包 rules/*（claude-global，第三方依赖架）'
+    write: { type: file-write }
+  skill:
+    read:
+      how: file
+      collector: claude-global
+      paths: ["~/.claude/skills/*/SKILL.md", "~/.claude/.agents/skills/*/SKILL.md", "~/.claude/commands/*.md", "<project>/.claude/skills/*/SKILL.md"]
+      note: '用户级技能/命令 + ECC .agents/skills（claude-global）；项目级 .claude/skills（claude-projects）'
+    write: { type: file-write }
+  agent:
+    read:
+      how: file
+      collector: claude-projects
+      paths: ["<project>/.claude/agents/*.md"]
+      note: 'CC subagent 定义文件（frontmatter name 去重，同名首见优先）'
+    write: { type: file-write }        # CC subagent（.claude/agents/*.md）
+  hook-rule:
+    read:
+      how: file
+      collector: devforge-hooks
+      paths: ["<devforge>/claude-hooks/*.json"]
+      note: '规则清单 JSON（devforge-hooks）；settings.json 挂载由 claude-global 读（hook-registration）'
+    write: { type: file-write }
+  hook-script:
+    read:
+      how: file
+      collector: devforge-hooks
+      paths: ["<devforge>/claude-hooks/scripts/*.sh", "<devforge>/claude-hooks/scripts/lib/*.sh", "<project>/.claude/hooks/*.sh"]
+      note: 'dev-forge 挂载脚本与 lib（devforge-hooks）+ 项目钩子（claude-projects）'
+    write: { type: file-write }
+  adapter:
+    read:
+      how: file
+      collector: devforge-adapters
+      paths: ["<devforge>/adapters/*"]
+      note: '本地适配脚本（.sh/.py/.js，提取 env 契约）'
+    write: { type: file-write }
+  autopilot:
+    read:
+      how: file
+      collector: devforge-autopilots
+      paths: ["<devforge>/autopilots/*.py", "<devforge>/autopilots/configs/*.json", "<devforge>/review-prompts/*"]
+      note: '脚本型巡逻 + architecture_sweep 配置 + agent 评审巡逻'
+    write: { type: file-write }    # 本地脚本型
+  hook-registration:
+    read:
+      how: file
+      collector: claude-global
+      paths: ["~/.claude/settings.json", "<devforge>/bootstrap/hooks-registration.json"]
+      note: 'settings.json hooks 挂载点（claude-global）+ dev-forge 注册清单 manifest（devforge-hooks）'
+    write: { type: none, advice: 'settings.json 由平台 CLI 管理；dev-forge 侧改 bootstrap/hooks-registration.json 后重新挂载' }
+  mcp-endpoint:
+    read:
+      how: file
+      collector: claude-global
+      paths: ["~/.claude/.mcp.json", "<project>/.mcp.json"]
+      note: '用户级与项目级 MCP 清单（url 脱敏）'
+    write: { type: none, advice: '.mcp.json 手工编辑（含密钥字段，采集已脱敏，不做自动物化）' }
+  env:
+    read:
+      how: file
+      collector: claude-global
+      paths: ["~/.claude/settings.json"]
+      note: 'settings.json env（采集脱敏）'
+    write: { type: none, advice: 'env 含敏感值且采集已脱敏，不支持物化' }
+  project:
+    read:
+      how: derived
+      collector: claude-projects
+      paths: ["console.config.yaml#workspaces", "<project>/"]
+      note: '登记驱动：workspaces.projects 注册路径 → 扫描 .claude/CLAUDE.md/.mcp.json 等（harnesses 声明门控）'
+    write: { type: none, advice: '项目登记在 console.config.yaml，不支持物化' }
+  report:
+    read:
+      how: file
+      collector: health
+      paths: ["~/.multica/toolchain-reports/latest.json", "~/.multica/arch-patrol/last_report.json"]
+      note: '外部工具产出的健康报告（只读监控）'
+    write: { type: none, advice: '外部工具产出，只读' }
+  service:
+    read:
+      how: file
+      collector: devforge-launch
+      paths: ["<devforge>/repo-sync/repos.d/*.json"]
+      note: 'repo-sync 配置 + systemctl 实值探测；systemd:// 来源无平台归属（见平台页未适配桶）'
+    write: { type: none, advice: '启停走服务动作（systemctl --user / repo-sync launcher），配置在 repos.d 手工编辑' }
+  custom:
+    read:
+      how: derived
+      collector: claude-global
+      note: 'settings.json permissions/enabledPlugins、hindsight 配置、firelog 等杂项（各采集器附带产出）'
+    write: { type: none, advice: '聚合/观测型资产，无写通道' }

@@ -50,17 +50,3 @@ maybe_rotate_hook_fire_log() {
   : > "$_f" 2>/dev/null
   return 0
 }
-
-# lib 定位引用（各入口按自身目录拓扑 source，2 行内，不算第二份实现）
-source_hook_fire_path_lib() {
-  local _self_dir _lib
-  _self_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
-  for _lib in \
-    "$_self_dir/../scripts/lib/hook-fire-path.lib.sh"; do
-    if [ -f "$_lib" ]; then
-      . "$_lib"
-      return 0
-    fi
-  done
-  return 1
-}

@@ -115,12 +115,49 @@ export interface EffectiveHarness {
   sections: EffectiveSection[];
 }
 
-export interface MigrationView {
-  rows: Array<{ kind: string; total: number; covered: number; status: 'ok' | 'gap' | 'na'; note: string }>;
-  coveragePct: number;
-  gaps: Array<{ kind: string; assetId: string; name: string; strategy: string }>;
-  diffs: Array<{ agent: string; currentHash: string; materializedHash: string; identical: boolean; materializedPath?: string; diff: string[] }>;
-  commands: string[];
+export interface PlatformReadChannel {
+  how: 'cli' | 'file' | 'derived' | 'none';
+  collector?: string;
+  cmd?: string[];
+  detailCmd?: string[];
+  paths?: string[];
+  note?: string;
+}
+export interface PlatformWriteChannel {
+  type: 'file-write' | 'command' | 'none';
+  cmd?: string[];
+  platformIdFrom?: 'self' | 'deployment';
+  advice?: string;
+}
+export interface PlatformAssetLite {
+  id: string;
+  name: string;
+  summary: string;
+  path: string;
+  platformId?: string;
+  enabled: boolean;
+}
+export interface PlatformKindContract {
+  kind: string;
+  declared: boolean;
+  read?: PlatformReadChannel;
+  write?: PlatformWriteChannel;
+  assetCount: number;
+  collectors: string[];
+  assets: PlatformAssetLite[];
+}
+export interface PlatformView {
+  id: string;
+  label?: string;
+  matchPathPrefix: string[];
+  totalAssets: number;
+  kinds: PlatformKindContract[];
+}
+export interface PlatformsView {
+  platforms: PlatformView[];
+  unadapted: { assetCount: number; kinds: Array<{ kind: string; count: number; paths: string[] }> };
+  generatedAt: string;
+  diagnostics: Array<{ level: string; message: string; path?: string }>;
 }
 
 export interface GraphData {

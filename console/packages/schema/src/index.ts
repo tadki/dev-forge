@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { collectionSchema, type Collection } from './schema.js';
 
 export * from './schema.js';
@@ -17,11 +16,4 @@ export function validateCollection(input: unknown): Collection {
     throw new Error(`collection from "${collector}" failed validation: ${issues}`);
   }
   return result.data;
-}
-
-export function jsonContract(): Record<string, unknown> {
-  if (typeof z.toJSONSchema !== 'function') {
-    return { note: 'zod toJSONSchema unavailable; contract generated at build time' };
-  }
-  return z.toJSONSchema(collectionSchema, { target: 'draft-2020-12' }) as Record<string, unknown>;
 }

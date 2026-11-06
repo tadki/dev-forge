@@ -33,7 +33,6 @@ export * from './redact.js';
 export * from './util.js';
 export * from './registry.js';
 export * from './effective.js';
-export * from './migration.js';
 export { fixtureCollector } from './collectors/fixture.js';
 export { servicesCollector } from './collectors/services.js';
 export { devforgeLaunchCollector } from './collectors/devforge-launch.js';
@@ -47,8 +46,20 @@ export type { StoreSyncResult, StoreRecord, LoadedStore } from './first-party-st
 export { contentFingerprint, isTruthKind, TRUTH_KINDS } from './store-content.js';
 export { splitDiff } from './split-diff.js';
 export type { SplitRow } from './split-diff.js';
-export { loadPlatforms, resolvePlatform, resolveWriteChannel, DEFAULT_PLATFORMS } from './platforms.js';
-export type { PlatformDef, PlatformWrite, ResolvedWrite, LoadedPlatforms } from './platforms.js';
+export { loadPlatforms, resolvePlatform, resolveWriteChannel, buildPlatformsView, DEFAULT_PLATFORMS } from './platforms.js';
+export type {
+  PlatformDef,
+  PlatformWrite,
+  PlatformRead,
+  PlatformKindDef,
+  ResolvedWrite,
+  LoadedPlatforms,
+  PlatformAssetLite,
+  PlatformKindView,
+  PlatformView,
+  PlatformsUnadapted,
+  PlatformsView,
+} from './platforms.js';
 export { MULTICA_PREFIX_MARK, extractAgentInstructions, spliceAgentInstructions } from './collectors/multica.js';
 export { buildReconcileReport, reconcileDiagnostics } from './reconcile.js';
 export type {
