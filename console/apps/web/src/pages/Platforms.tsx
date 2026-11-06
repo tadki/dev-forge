@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../api';
-import type { PlatformKindContract, PlatformReadChannel, PlatformsView, PlatformWriteChannel } from '../types';
+import type { PlatformReadChannel, PlatformsView, PlatformWriteChannel } from '../types';
 import { Badge, Chip, DataTable, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
 
@@ -70,14 +70,10 @@ function WriteCell({ write }: { write?: PlatformWriteChannel }) {
   );
 }
 
-interface SelectedKind extends PlatformKindContract {
-  id: string;
-  platformId: string;
-}
-
 export function PlatformsPage(_props: { ctx: PageCtx }) {
   const q = useQuery({ queryKey: ['platforms'], queryFn: () => apiGet<PlatformsView>('/api/platforms') });
-  const [selected, setSelected] = useState<SelectedKind | null>(null);
+  // 只存选中行 key，SSE 刷新后从最新数据查行——不持有过期资产快照
+  const [selKey, setSelKey] = useState<string | null>(null);
   if (!q.data) return <div className="dim">加载中…</div>;
   const v = q.data;
   const adapted = v.platforms.reduce((n, p) => n + p.totalAssets, 0);
@@ -108,7 +104,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
       )}
 
       {v.platforms.map((p, i) => {
-        const sel = selected?.platformId === p.id ? selected : null;
+        const sel = selKey?.startsWith(`${p.id}:`) ? (p.kinds.find((k) => `${p.id}:${k.kind}` === selKey) ?? null) : null;
         return (
           <div key={p.id}>
             <SectionHeader
@@ -118,11 +114,9 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
             />
             <Panel title="读写契约" en="READ / WRITE CONTRACT">
               <DataTable
-                rows={p.kinds.map((k) => ({ ...k, id: `${p.id}:${k.kind}`, platformId: p.id }))}
+                rows={p.kinds.map((k) => ({ ...k, id: `${p.id}:${k.kind}` }))}
                 selectedId={sel ? `${p.id}:${sel.kind}` : undefined}
-                onRowClick={(row) =>
-                  setSelected((cur) => (cur && cur.id === row.id ? null : { ...row }))
-                }
+                onRowClick={(row) => setSelKey((cur) => (cur === row.id ? null : (row.id ?? null)))}
                 cols={[
                   {
                     key: 'kind',

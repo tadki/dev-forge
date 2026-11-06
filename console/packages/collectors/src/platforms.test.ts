@@ -106,6 +106,9 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     const { platforms } = await loadPlatforms(repoDir);
     const byId = (xs: PlatformDef[]) => Object.fromEntries(xs.map((p) => [p.id, p]));
     expect(byId(platforms)).toEqual(byId(DEFAULT_PLATFORMS));
+    // 顺序也是行为：resolvePlatform first-match-wins，平台序与文件名序一致且 id 唯一
+    expect(platforms.map((p) => p.id)).toEqual(DEFAULT_PLATFORMS.map((p) => p.id));
+    expect(new Set(platforms.map((p) => p.id)).size).toBe(platforms.length);
   });
 
   it('真实 YAML 的 read 声明：multica 命令 / claude-code 路径 / truth kind 全覆盖', async () => {
