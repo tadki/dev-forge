@@ -38,7 +38,7 @@ input, select, textarea { font: inherit; color: var(--ink); }
   flex-shrink: 0;
 }
 .topbar-brand { display: flex; align-items: baseline; gap: var(--sp-3); }
-.topbar-brand h1 { font-family: var(--font-mono); font-size: var(--fs-l3); letter-spacing: 2px; font-weight: 700; }
+.topbar-brand h1 { font-family: var(--font-mono); font-size: var(--fs-l3); letter-spacing: 2px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .topbar-brand span { font-size: var(--fs-l1); color: var(--khaki); }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-l1); }
 .topbar-clock { font-family: var(--font-mono); color: var(--khaki); }

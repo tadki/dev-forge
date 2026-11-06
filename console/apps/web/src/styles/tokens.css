@@ -26,6 +26,11 @@
   --text-on-dark: #f8f6fc;
   --text-disabled: #837c90;
 
+  /* 品牌仙人掌（像素光影三档 + 顶部花） */
+  --cactus-light: #8cc98d;
+  --cactus: #57a45b;
+  --cactus-dark: #356e3a;
+
   /* 字号阶梯（紧凑高密度版：整体比 KOL 阶梯再压一档） */
   --fs-label: 9px;   /* 小标签 mono 全大写 */
   --fs-l1: 11px;     /* 表格/mono 正文 */

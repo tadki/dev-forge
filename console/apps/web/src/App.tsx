@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { TopBar } from './shell/TopBar';
 import { Nav } from './shell/Nav';
+import { CactusMark } from './components/CactusMark';
 import { apiGet, getToken, setToken, useSSE } from './api';
 import type { Overview } from './types';
 import { OverviewPage } from './pages/Overview';
@@ -113,7 +114,9 @@ function TokenGate({ onDone }: { onDone: () => void }) {
   return (
     <div className="gate">
       <div className="panel gate-panel">
-        <h2>◆ FORGE CONSOLE</h2>
+        <h2 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <CactusMark size={22} /> FORGE CONSOLE
+        </h2>
         <p className="sub" style={{ marginBottom: 12 }}>HARNESS 监控台 · 需要访问令牌</p>
         <input
           className="gate-input"
