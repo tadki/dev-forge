@@ -6,6 +6,7 @@ import { devforgeFirelogCollector } from './collectors/devforge-firelog.js';
 import { devforgeAutopilotsCollector } from './collectors/devforge-autopilots.js';
 import { devforgeLaunchCollector } from './collectors/devforge-launch.js';
 import { devforgeAdaptersCollector } from './collectors/devforge-adapters.js';
+import { devforgePatchesCollector } from './collectors/devforge-patches.js';
 import { multicaCollector } from './collectors/multica.js';
 import { servicesCollector } from './collectors/services.js';
 import { healthCollector } from './collectors/health.js';
@@ -20,6 +21,7 @@ export const builtinCollectors: Collector[] = [
   devforgeAutopilotsCollector,
   devforgeLaunchCollector,
   devforgeAdaptersCollector,
+  devforgePatchesCollector,
   multicaCollector,
   servicesCollector,
   healthCollector,

@@ -118,6 +118,15 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         },
         write: { type: 'file-write' },
       },
+      patch: {
+        read: {
+          how: 'file',
+          collector: 'devforge-patches',
+          paths: ['~/.hindsight/patches/*.sh', '~/.hindsight/patches/*.state.json'],
+          note: '本地补丁程序 + 应用基线 state（devforge-patches 实测漂移：升级覆盖/脚本已改/未记录基线）',
+        },
+        write: { type: 'file-write' },
+      },
       autopilot: {
         read: {
           how: 'file',

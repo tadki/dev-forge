@@ -13,6 +13,9 @@ export const ASSET_KINDS = [
   'service',
   'autopilot',
   'adapter',
+  // 本地补丁：我们对第三方文件的修改（hindsight-local-mods 等）。第三方文件本体仍归
+  // 第三方，改动以 patch 资产名义注册为自建；payload 记录应用事实基线 + drift 实测状态
+  'patch',
   'mcp-endpoint',
   'project',
   'report',
@@ -252,6 +255,18 @@ const adapterPayload = z.looseObject({
   lines: z.number().optional(),
 });
 
+const patchPayload = z.looseObject({
+  // applied = 基线全匹配；drifted = 目标文件/上游版本变了；stale = 补丁脚本自身改过未重跑；unverified = 尚无 state 记录
+  state: z.enum(['applied', 'drifted', 'stale', 'unverified']).optional(),
+  appliedAt: z.string().optional(),
+  applierSha256: z.string().optional(),
+  anchor: z.object({ package: z.string().optional(), version: z.string().optional() }).optional(),
+  anchorDrift: z.boolean().optional(),
+  targets: z.array(z.object({ path: z.string(), sha256: z.string().nullable(), note: z.string().optional() })).optional(),
+  driftedTargets: z.array(z.object({ path: z.string(), note: z.string().optional(), reason: z.string() })).optional(),
+  targetCount: z.number().optional(),
+});
+
 const mcpEndpointPayload = z.looseObject({
   transport: z.string().optional(),
   command: z.string().optional(),
@@ -305,6 +320,7 @@ export const payloadSchemas: Record<AssetKind, z.ZodType> = {
   service: servicePayload,
   autopilot: autopilotPayload,
   adapter: adapterPayload,
+  patch: patchPayload,
   'mcp-endpoint': mcpEndpointPayload,
   project: projectPayload,
   report: reportPayload,

@@ -51,6 +51,13 @@ kinds:
       paths: ["<devforge>/adapters/*"]
       note: '本地适配脚本（.sh/.py/.js，提取 env 契约）'
     write: { type: file-write }
+  patch:
+    read:
+      how: file
+      collector: devforge-patches
+      paths: ["~/.hindsight/patches/*.sh", "~/.hindsight/patches/*.state.json"]
+      note: '本地补丁程序 + 应用基线 state（devforge-patches 实测漂移：升级覆盖/脚本已改/未记录基线）'
+    write: { type: file-write }    # 补丁脚本是本地文件可直接编辑；重放走对账动作（reapply）
   autopilot:
     read:
       how: file

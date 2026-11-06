@@ -72,7 +72,7 @@ export interface ReconcileAction {
 
 export interface ReconcileItem {
   key: string;
-  type: 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'store-drift' | 'uncovered-assets';
+  type: 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'store-drift' | 'patch-drift' | 'uncovered-assets';
   severity: string;
   platform: string;
   entryId?: string;
@@ -90,7 +90,7 @@ export interface ReconcileItem {
 export interface ReconcileReport {
   generatedAt: string;
   items: ReconcileItem[];
-  summary: { missing: number; undeclared: number; drift: number; store: number; uncovered: number; total: number };
+  summary: { missing: number; undeclared: number; drift: number; store: number; patch: number; uncovered: number; total: number };
 }
 
 export interface FireEvent {

@@ -12,6 +12,7 @@ const RECONCILE_LABEL: Record<ReconcileItem['type'], string> = {
   'undeclared-platform': '未声明平台',
   'content-drift': '内容漂移',
   'store-drift': '库与生产分叉',
+  'patch-drift': '补丁漂移',
   'uncovered-assets': '未纳入对账',
 };
 

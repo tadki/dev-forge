@@ -5,7 +5,7 @@ import type { GraphData } from '../types';
 import { Badge, KV, Panel } from '../components/ui';
 import type { PageCtx } from './ctx';
 
-const KIND_ORDER = ['project', 'agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'mcp-endpoint', 'report', 'env', 'custom'];
+const KIND_ORDER = ['project', 'agent', 'deployment', 'instruction', 'skill', 'hook-registration', 'hook-rule', 'hook-script', 'service', 'autopilot', 'adapter', 'patch', 'mcp-endpoint', 'report', 'env', 'custom'];
 const KIND_COLOR: Record<string, string> = {
   project: 'var(--accent)',
   agent: 'var(--mint)',
@@ -16,6 +16,7 @@ const KIND_COLOR: Record<string, string> = {
   'hook-script': 'var(--khaki)',
   service: 'var(--gray)',
   autopilot: 'var(--amber)',
+  patch: 'var(--khaki)',
 };
 
 interface Pos { x: number; y: number }

@@ -13,6 +13,7 @@ export type ReconcileItemType =
   | 'undeclared-platform'
   | 'content-drift'
   | 'store-drift'
+  | 'patch-drift'
   | 'uncovered-assets';
 export type ReconcileDirection = 'platform-to-local' | 'local-to-platform';
 
@@ -74,7 +75,7 @@ export interface ReconcileItem {
 export interface ReconcileReport {
   generatedAt: string;
   items: ReconcileItem[];
-  summary: { missing: number; undeclared: number; drift: number; store: number; uncovered: number; total: number };
+  summary: { missing: number; undeclared: number; drift: number; store: number; patch: number; uncovered: number; total: number };
 }
 
 function copyOf(a: Asset): ReconcileCopy {
@@ -205,8 +206,61 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
 }
 
 /**
+ * 本地补丁漂移：patch 资产实测状态非 applied（升级覆盖 / 脚本已改 / 未记录基线）→ 提示重跑补丁。
+ * 补丁的「真源」是 applier 脚本本身 + 它写下的 state 基线，不存在库内副本，因此只给 reapply 方向。
+ */
+function buildPatchDriftItems(state: { assets: Asset[] }): ReconcileItem[] {
+  const reasonLabel: Record<string, string> = {
+    drifted: '目标文件或上游版本与基线不符（补丁可能被升级覆盖）',
+    stale: '补丁脚本已修改但未重跑，基线停留在旧脚本',
+    unverified: '尚无应用基线，按契约跑一次补丁脚本即可纳入对账',
+  };
+  return state.assets
+    .filter((a) => a.kind === 'patch' && (a.payload as { state?: string }).state !== 'applied')
+    .map((a) => {
+      const payload = a.payload as {
+        state?: string;
+        anchor?: { package?: string; version?: string };
+        driftedTargets?: Array<{ path: string; reason: string }>;
+        targetCount?: number;
+      };
+      const st = payload.state ?? 'unverified';
+      const drifted = payload.driftedTargets ?? [];
+      const sample = drifted
+        .slice(0, 3)
+        .map((d) => `${d.path.split('/').pop() ?? d.path}（${d.reason}）`)
+        .join('、');
+      const anchor = payload.anchor?.version ? ` · 锚定 ${payload.anchor.package ?? '?'}@${payload.anchor.version}` : '';
+      return {
+        key: `patch:${a.name}`,
+        type: 'patch-drift' as const,
+        severity: 'warn' as const,
+        platform: a.platforms.join('+') || 'claude-code',
+        name: `${a.name} · 本地补丁`,
+        detail: `${reasonLabel[st] ?? st}${sample ? `：${sample}${drifted.length > 3 ? ` 等 ${drifted.length} 项` : ''}` : ''}${anchor}`,
+        copies: [
+          { assetId: a.id, name: `${a.name}（补丁程序）`, path: a.source.path, sha: a.source.sha256, platforms: a.platforms },
+          ...drifted.slice(0, 5).map((d) => ({ assetId: a.id, name: d.path.split('/').pop() ?? d.path, path: d.path, platforms: a.platforms })),
+        ],
+        actions: [
+          {
+            id: 'reapply',
+            direction: 'local-to-platform' as const,
+            label: '重新应用补丁（重跑 applier，刷新基线）',
+            executable: a.source.path.startsWith('/'),
+            note: a.source.path.startsWith('/') ? undefined : '补丁脚本路径不可执行，请手动重跑',
+            steps: a.source.path.startsWith('/')
+              ? [{ type: 'command' as const, cmd: ['bash', a.source.path], note: '重跑本地补丁程序：重新应用修改并重写 state 基线' }]
+              : [],
+          },
+        ],
+      };
+    });
+}
+
+/**
  * 平台对账：registry.d 声明的 platforms vs 采集到的实际 platforms，加上内容漂移
- * （库 vs 生产 store-drift；multica agent instructions ↔ 物化 workdir CLAUDE.md；同 entry 同名副本 sha 分叉）。
+ * （库 vs 生产 store-drift；本地补丁 vs 现状 patch-drift；multica agent instructions ↔ 物化 workdir CLAUDE.md；同 entry 同名副本 sha 分叉）。
  * 纯函数：动作步骤全部由这里生成，执行端只认 key+direction，不接收客户端提交的路径/命令。
  */
 export function buildReconcileReport(
@@ -519,6 +573,9 @@ export function buildReconcileReport(
   // 库（真源）vs 生产：指纹分叉 → store-drift（adopt / push 双向裁决）
   items.push(...buildStoreDriftItems(state, opts));
 
+  // 本地补丁 vs 现状：基线失配 → patch-drift（reapply 单向）
+  items.push(...buildPatchDriftItems(state));
+
   items.sort((a, b) => a.key.localeCompare(b.key));
   return {
     generatedAt: now.toISOString(),
@@ -528,6 +585,7 @@ export function buildReconcileReport(
       undeclared: items.filter((i) => i.type === 'undeclared-platform').length,
       drift: items.filter((i) => i.type === 'content-drift').length,
       store: items.filter((i) => i.type === 'store-drift').length,
+      patch: items.filter((i) => i.type === 'patch-drift').length,
       uncovered: items.filter((i) => i.type === 'uncovered-assets').length,
       total: items.length,
     },
@@ -541,6 +599,7 @@ export function reconcileDiagnostics(report: ReconcileReport, limit = 30): Array
     'undeclared-platform': '未声明平台',
     'content-drift': '内容漂移',
     'store-drift': '库与生产分叉',
+    'patch-drift': '补丁漂移',
     'uncovered-assets': '未纳入对账',
   };
   return report.items.slice(0, limit).map((i) => ({
