@@ -8,6 +8,28 @@ interface SettingsHooks {
   [event: string]: Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string }> }>;
 }
 
+/** 在插件缓存目录 `cache/<marketplace>/<plugin>/<version>/agents` 中选最新版本的 agents 目录 */
+async function resolvePluginAgentsDir(pluginBase: string): Promise<string | null> {
+  let best: { dir: string; ver: string } | null = null;
+  for (const v of await listDir(pluginBase)) {
+    const d = join(pluginBase, v, 'agents');
+    if (!(await exists(d))) continue;
+    if (!best || newerVersion(v, best.ver)) best = { dir: d, ver: v };
+  }
+  return best?.dir ?? null;
+}
+
+function newerVersion(a: string, b: string): boolean {
+  const pa = a.split('.').map((x) => Number.parseInt(x, 10));
+  const pb = b.split('.').map((x) => Number.parseInt(x, 10));
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const va = Number.isFinite(pa[i]) ? pa[i] : -1;
+    const vb = Number.isFinite(pb[i]) ? pb[i] : -1;
+    if (va !== vb) return va > vb;
+  }
+  return false;
+}
+
 export const claudeGlobalCollector: Collector = {
   name: 'claude-global',
   mode: 'watch',
@@ -162,6 +184,50 @@ export const claudeGlobalCollector: Collector = {
             payload: { command: true, lines: md.split('\n').length, content: md.length <= 200_000 ? md : md.slice(0, 200_000) },
             source: { collector: 'claude-global', path: join(commandsDir, f), sha256: sha256(md) },
             tags: ['command'],
+          })
+        );
+      }
+    }
+
+    // agents：用户级 ~/.claude/agents + 已启用插件的 agents/（Claude Code 以 `插件:agent` 呈现）
+    const enabledPlugins = (settings.enabledPlugins ?? {}) as Record<string, boolean>;
+    const agentSources: Array<{ dir: string; plugin: string | null }> = [];
+    const userAgentsDir = join(claude, 'agents');
+    if (await exists(userAgentsDir)) agentSources.push({ dir: userAgentsDir, plugin: null });
+    for (const [key, on] of Object.entries(enabledPlugins)) {
+      if (!on) continue;
+      const at = key.indexOf('@');
+      const plugin = at > 0 ? key.slice(0, at) : key;
+      const marketplace = at > 0 ? key.slice(at + 1) : '';
+      const dir = marketplace
+        ? await resolvePluginAgentsDir(join(claude, 'plugins', 'cache', marketplace, plugin))
+        : null;
+      if (dir) agentSources.push({ dir, plugin });
+    }
+    for (const { dir, plugin } of agentSources) {
+      for (const f of (await listDir(dir)).filter((x) => x.endsWith('.md'))) {
+        const p = join(dir, f);
+        const md = (await readText(p)) ?? '';
+        if (!md) continue;
+        const fmName = md.match(/^name:\s*(.+)$/m)?.[1] ?? f.replace(/\.md$/, '');
+        const desc = md.match(/^description:\s*(.+)$/m)?.[1] ?? '';
+        assets.push(
+          asset({
+            id: plugin ? `agent:plugin-${plugin}-${fmName.toLowerCase()}` : `agent:user-${fmName.toLowerCase()}`,
+            kind: 'agent',
+            name: plugin ? `${plugin}:${fmName}` : fmName,
+            summary: desc.slice(0, 100),
+            attach: { level: 'user' },
+            enforcement: 'advisory',
+            provenance: 'third-party',
+            payload: {
+              subagent: true,
+              plugin: plugin ?? undefined,
+              frontmatter: md.split('---')[1]?.trim() ?? '',
+              bodyLines: md.split('\n').length,
+            },
+            source: { collector: 'claude-global', path: p, sha256: sha256(md) },
+            tags: plugin ? ['agent', 'plugin', plugin] : ['agent', 'user'],
           })
         );
       }

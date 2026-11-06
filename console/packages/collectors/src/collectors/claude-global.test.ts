@@ -15,6 +15,39 @@ beforeAll(async () => {
   await writeFile(join(root, '.claude', 'rules', 'zh', 'coding-style.md'), '# 编码风格\n\n正文 B。\n');
   await writeFile(join(root, '.claude', 'rules', 'common', 'notes.txt'), 'ignored');
   await writeFile(join(root, '.claude', 'rules', 'README.md'), '# Root\n');
+
+  // 用户级 agents
+  await mkdir(join(root, '.claude', 'agents'), { recursive: true });
+  await writeFile(
+    join(root, '.claude', 'agents', 'deploy-helper.md'),
+    '---\nname: deploy-helper\ndescription: 部署助手\n---\n\n正文。\n'
+  );
+
+  // 插件 agents：多版本目录（0.9.0 / unknown / 1.2.0）+ 一个禁用插件
+  await mkdir(join(root, '.claude', 'plugins', 'cache', 'my-market', 'my-plugin', '0.9.0', 'agents'), { recursive: true });
+  await mkdir(join(root, '.claude', 'plugins', 'cache', 'my-market', 'my-plugin', 'unknown', 'agents'), { recursive: true });
+  await mkdir(join(root, '.claude', 'plugins', 'cache', 'my-market', 'my-plugin', '1.2.0', 'agents'), { recursive: true });
+  await mkdir(join(root, '.claude', 'plugins', 'cache', 'my-market', 'off-plugin', '1.0.0', 'agents'), { recursive: true });
+  await writeFile(
+    join(root, '.claude', 'plugins', 'cache', 'my-market', 'my-plugin', '0.9.0', 'agents', 'architect.md'),
+    '---\nname: architect\ndescription: 旧版\n---\n'
+  );
+  await writeFile(
+    join(root, '.claude', 'plugins', 'cache', 'my-market', 'my-plugin', 'unknown', 'agents', 'architect.md'),
+    '---\nname: architect\ndescription: unknown 版\n---\n'
+  );
+  await writeFile(
+    join(root, '.claude', 'plugins', 'cache', 'my-market', 'my-plugin', '1.2.0', 'agents', 'architect.md'),
+    '---\nname: architect\ndescription: 新版架构师\n---\n'
+  );
+  await writeFile(
+    join(root, '.claude', 'plugins', 'cache', 'my-market', 'off-plugin', '1.0.0', 'agents', 'ghost.md'),
+    '---\nname: ghost\ndescription: 禁用插件\n---\n'
+  );
+  await writeFile(
+    join(root, '.claude', 'settings.json'),
+    JSON.stringify({ enabledPlugins: { 'my-plugin@my-market': true, 'off-plugin@my-market': false } })
+  );
 });
 
 afterAll(async () => {
@@ -57,5 +90,35 @@ describe('claude-global collector（rules → instruction）', () => {
     const ids = r.assets.filter((a) => a.kind === 'instruction').map((a) => a.id);
     expect(ids).not.toContain('instruction:rules-common-notes');
     expect(ids.some((id) => id.includes('README'))).toBe(false);
+  });
+});
+
+describe('claude-global collector（agents）', () => {
+  it('用户级 ~/.claude/agents 采集为第三方 agent', async () => {
+    const r = await claudeGlobalCollector.collect(ctx());
+    const a = r.assets.find((x) => x.id === 'agent:user-deploy-helper');
+
+    expect(a).toBeDefined();
+    expect(a!.kind).toBe('agent');
+    expect(a!.name).toBe('deploy-helper');
+    expect(a!.summary).toBe('部署助手');
+    expect(a!.provenance).toBe('third-party');
+    expect(a!.attach.level).toBe('user');
+    expect(a!.payload).toMatchObject({ subagent: true });
+    expect(a!.tags).toEqual(['agent', 'user']);
+    expect(typeof a!.source.sha256).toBe('string');
+  });
+
+  it('已启用插件取最新版本 agents（unknown/旧版被忽略），禁用插件跳过', async () => {
+    const r = await claudeGlobalCollector.collect(ctx());
+
+    const a = r.assets.find((x) => x.id === 'agent:plugin-my-plugin-architect');
+    expect(a).toBeDefined();
+    expect(a!.name).toBe('my-plugin:architect');
+    expect(a!.summary).toBe('新版架构师');
+    expect(a!.payload).toMatchObject({ plugin: 'my-plugin', subagent: true });
+    expect(a!.tags).toEqual(['agent', 'plugin', 'my-plugin']);
+
+    expect(r.assets.find((x) => x.id === 'agent:plugin-off-plugin-ghost')).toBeUndefined();
   });
 });
