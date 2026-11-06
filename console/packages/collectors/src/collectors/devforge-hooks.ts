@@ -87,8 +87,8 @@ export const devforgeHooksCollector: Collector = {
       const stateCount = (await listDir(join(unified, 'state'))).length;
       assets.push(
         asset({
-          id: 'hook-registration:devforge-manifest',
-          kind: 'hook-registration',
+          id: 'custom:devforge-hook-manifest',
+          kind: 'custom',
           name: 'dev-forge 注册清单（hooks-registration.json）',
           summary: `${(manifest.hook_points as string[] | undefined)?.length ?? 9} 挂载点 · alias ${String(manifest.alias ?? '')} · one-shot 哨兵 ${stateCount}`,
           attach: { level: 'user' },
