@@ -1297,7 +1297,7 @@ class DailyCheck:
             self.ok(dim, "e3", "无 workspace 锁残留")
 
     def _check_e4_autopilot_scripts(self, dim):
-        # E4: autopilot 目录内脚本完整性 (run/run_ok 辅助) — SEE-1430 后脚本真源在 dev-forge autopilots/
+        # E4: autopilot 目录内脚本完整性 (run 辅助) — SEE-1430 后脚本真源在 dev-forge autopilots/
         autopilot_dir = os.path.join(DEV_FORGE_ROOT, "autopilots")
         scripts = []
         if os.path.isdir(autopilot_dir):
@@ -1330,14 +1330,9 @@ class DailyCheck:
                 if re.search(r"/mnt/[a-z]/\S+", line):
                     hardcoded.append(line.strip())
             if hardcoded:
-                # 已知接受的 Plan 2 tradeoff — 仅当路径指向不存在的目录时才告警
-                target = "/mnt/d/GodotProjects/king-of-likes"
-                if not os.path.isdir(target):
-                    issues.append("F1 toolchain-start.sh 硬编码路径指向不存在目录: %s" % target)
-                    self.warn(dim, "start_sh_hardcoded_missing",
-                              "硬编码路径缺失: %s" % target)
-                else:
-                    self.ok(dim, "f1", "启动脚本硬编码路径存在 (%d 处硬编码, Plan 2 已知 tradeoff)" % len(hardcoded))
+                issues.append("F1 toolchain-start.sh 含 /mnt 硬编码路径: %s" % hardcoded[0])
+                self.warn(dim, "start_sh_hardcoded",
+                          "启动脚本含 /mnt 硬编码路径 (%d 处)" % len(hardcoded))
             else:
                 self.ok(dim, "f1", "启动脚本无硬编码路径")
         else:

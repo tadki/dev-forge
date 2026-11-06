@@ -76,7 +76,6 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
     <>
       {s.attach.level === 'project' && <Badge tone="plain">{s.attach.level}</Badge>}
       {s.platforms.includes('multica') && <Badge tone="warn">multica</Badge>}
-      {(s.payload as { platformSkill?: boolean }).platformSkill && <Badge tone="plain">平台物化</Badge>}
       {s.tags.includes('command') && <Badge tone="plain">command</Badge>}
     </>
   );

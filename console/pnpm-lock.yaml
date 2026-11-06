@@ -29,9 +29,6 @@ importers:
         specifier: ^7.1.1
         version: 7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
     devDependencies:
-      '@types/dompurify':
-        specifier: ^3.0.5
-        version: 3.2.0
       '@types/react':
         specifier: ^19.0.2
         version: 19.3.0
@@ -544,10 +541,6 @@ packages:
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
-
-  '@types/dompurify@3.2.0':
-    resolution: {integrity: sha512-Fgg31wv9QbLDA0SpTOXO3MaxySc4DKGLi8sna4/Utjo4r3ZRPdCt4UQee8BWr+Q5z21yifghREPJGYaEOEIACg==}
-    deprecated: This is a stub types definition. dompurify provides its own type definitions, so you do not need this installed.
 
   '@types/estree@1.0.10':
     resolution: {integrity: sha512-lTyOMnOcmRBzdCv6/4zUZCrEhV0xrqQiUZBZtVcbmLHBXKLnN8q89v/wKRF/Q0HbwVsqbIG3o5HDoFl9sduM+g==}
@@ -1294,10 +1287,6 @@ snapshots:
       assertion-error: 2.0.1
 
   '@types/deep-eql@4.0.2': {}
-
-  '@types/dompurify@3.2.0':
-    dependencies:
-      dompurify: 3.4.17
 
   '@types/estree@1.0.10': {}
 

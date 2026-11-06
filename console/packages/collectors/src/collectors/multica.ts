@@ -394,7 +394,7 @@ export const multicaCollector: Collector = {
           platforms: ['multica'],
           source: { collector: 'multica', path: 'multica://workdirs' },
           payload: { samples: materialized },
-          tags: ['migration', 'multica'],
+          tags: ['reconcile', 'multica'],
         })
       );
     }

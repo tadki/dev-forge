@@ -10,10 +10,10 @@ const ITEMS: Array<{ to: string; icon: string; zh: string; en: string }> = [
   { to: '/agents', icon: '▧', zh: '智能体', en: 'AGENTS' },
   { to: '/services', icon: '▨', zh: '服务', en: 'SERVICES' },
   { to: '/autopilots', icon: '▩', zh: '巡逻', en: 'AUTOPILOTS' },
-  { to: '/migration', icon: '◆', zh: '迁移', en: 'MIGRATION' },
   { to: '/graph', icon: '◇', zh: '关系图', en: 'GRAPH' },
   { to: '/custom', icon: '○', zh: '通用资产', en: 'CUSTOM' },
   { to: '/registry', icon: '◧', zh: '注册表', en: 'REGISTRY' },
+  { to: '/platforms', icon: '◨', zh: '平台', en: 'PLATFORMS' },
 ];
 
 export function Nav({ collectors, total }: { collectors: CollectorStatus[]; total: number }) {

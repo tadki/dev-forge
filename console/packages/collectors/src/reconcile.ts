@@ -1,7 +1,8 @@
 import { PLATFORM_IDS, type Asset } from '@forge/schema';
 import type { RegistryEntry } from './overlay.js';
 import { matchesRegistryEntry } from './overlay.js';
-import { buildMigrationView, lineDiff } from './migration.js';
+import { lineDiff } from './line-diff.js';
+import { buildMaterializedInstructionDiffs } from './materialized-instructions.js';
 import { contentFingerprint, isTruthKind } from './store-content.js';
 import type { StoreRecord } from './first-party-store.js';
 import { DEFAULT_PLATFORMS, resolvePlatform, resolveWriteChannel, type PlatformDef } from './platforms.js';
@@ -60,7 +61,7 @@ export interface ReconcileItem {
   entryId?: string;
   name: string;
   detail: string;
-  /** content-drift 时的逐行差异（- 平台侧 / + 物化侧，与迁移页同源，截断 40 行） */
+  /** content-drift 时的逐行差异（- 平台侧 / + 物化侧，供对账条目回退展示，截断 40 行） */
   diff?: string[];
   /** 全文对照（LCS 行对齐）：same 白底 / add 右栏绿 / del 右栏红；文本差异时提供 */
   splitRows?: SplitRow[];
@@ -423,8 +424,8 @@ export function buildReconcileReport(
   }
 
   // multica：agent instructions（平台权威）↔ 最新物化 workdir CLAUDE.md
-  const view = buildMigrationView(state.assets);
-  for (const d of view.diffs) {
+  const instructionDiffs = buildMaterializedInstructionDiffs(state.assets);
+  for (const d of instructionDiffs) {
     if (d.identical) continue;
     const agentAsset = state.assets.find(
       (a) => a.kind === 'agent' && a.name.toLowerCase() === d.agent.toLowerCase() && !(a.payload as { subagent?: boolean }).subagent

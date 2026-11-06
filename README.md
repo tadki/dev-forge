@@ -79,7 +79,7 @@ cp launch/systemd/toolchain-start-all.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now toolchain-start-all
 ```
 
-Cutover / rollback runbook: [`docs/dev-forge-cutover.md`](docs/dev-forge-cutover.md).
+历史 cutover 记录（一次性迁移已完成，**不要在当前安装重复执行**）：[`docs/dev-forge-cutover.md`](docs/dev-forge-cutover.md)。
 
 ## How the hooks engine works
 

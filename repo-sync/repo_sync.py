@@ -1725,182 +1725,6 @@ def _resolve_merge_first(
     return result
 
 
-# ---------------------------------------------------------------------------
-# SEE-1285: gitlink auto-forward (three-gate, fail-close)
-# ---------------------------------------------------------------------------
-
-# Gate 1 maps a GitHub Actions check-run conclusion set to a three-state
-# verdict. Anything not provably green/fail lands on "unknown" and is treated
-# as not satisfied (fail-close) with backoff retry on the next cycle.
-_CI_SUCCESS = "success"
-
-
-def classify_ci_conclusion(job_conclusions: list[dict[str, Any]] | None) -> str:
-    """Classify child CI verdict as 'success' | 'fail' | 'unknown'.
-
-    `job_conclusions` is the list of check-run dicts for the child's
-    build-and-test workflow on the pushed branch. success requires ALL
-    conclusions to be success; any explicit non-success conclusion is 'fail';
-    running/missing/error → 'unknown' (retry with backoff next cycle).
-    """
-    if not job_conclusions:
-        return "unknown"
-    verdicts = [
-        (j.get("conclusion") or "").lower() for j in job_conclusions
-    ]
-    if any(v in ("failure", "timed_out", "cancelled", "startup_failure") for v in verdicts):
-        return "fail"
-    if all(v == _CI_SUCCESS for v in verdicts):
-        return "success"
-    return "unknown"
-
-
-def _select_gating_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Pick the gating workflow check-runs for Gate 1.
-
-    A fork push produces publish/release check-runs (`skipped`) beside the
-    `build-and-test` one (ci.yml). Pool-wide classification would turn any
-    `skipped` neighbour into 'unknown' even when CI is green (D2, HIGH).
-    Filter to the gating check-run when present; fall back to the full pool
-    when absent — fail-close either way.
-    """
-    if not runs:
-        return runs
-    gated = [
-        r for r in runs
-        if isinstance(r, dict) and r.get("name") == "build-and-test"
-    ]
-    return gated if gated else runs
-
-
-def default_ci_query(child_remote_url: str, branch: str, sha: str) -> str:
-    """Query the child repo's CI conclusion via GitHub API (Gate 1 producer).
-
-    Uses `gh api` (authenticated CLI, the same tool the platform runs). The
-    repo is derived from the child remote URL. Any failure (no gh, network,
-    repo not on GitHub) yields 'unknown' — never raises.
-    """
-    if "github.com" not in child_remote_url:
-        return "unknown"
-    slug = child_remote_url.rstrip("/")
-    for prefix in ("https://github.com/", "git@github.com:"):
-        if slug.startswith(prefix):
-            slug = slug[len(prefix):]
-            break
-    if slug.endswith(".git"):
-        slug = slug[:-4]
-    try:
-        r = subprocess.run(
-            ["gh", "api",
-             f"repos/{slug}/commits/{sha}/check-runs?per_page=100",
-             "--jq", "[.check_runs[] | {name, conclusion, status}]"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=30,
-        )
-        if r.returncode != 0:
-            return "unknown"
-        runs = json.loads(r.stdout or "[]")
-    except (subprocess.SubprocessError, json.JSONDecodeError, ValueError, OSError):
-        return "unknown"
-    # build-and-test is the child repo's gating workflow (ci.yml); when it is
-    # absent fall back to the full set — fail-close either way.
-    return classify_ci_conclusion(_select_gating_runs(runs))
-
-
-def verify_lag_interval_integrity(
-    child_worktree: str, old_sha: str, new_sha: str, timeout: int | None = None
-) -> tuple[bool, str]:
-    """Gate 3 — the lag interval must have decidable history: new_sha must
-    contain old_sha as an ancestor (single merge-base --is-ancestor check).
-    A squash/rebase/force-push rewrites the interval, breaking ancestry:
-    old_sha unreachable from new_sha makes the whole interval suspect —
-    fail-close, never forward.
-
-    Returns (ok, first_bad_sha). ok=False → fail-close, never forward.
-    """
-    if old_sha == new_sha:
-        return True, ""
-    m = git_run(
-        child_worktree, ["merge-base", "--is-ancestor", old_sha, new_sha],
-        check=False, timeout=timeout,
-    )
-    if m.returncode == 0:
-        return True, ""
-    return False, old_sha
-
-
-def evaluate_forward_gates(
-    parent_repo: str,
-    sub_path: str,
-    child_remote_url: str,
-    child_branch: str,
-    new_sha: str,
-    ci_conclusion: str,
-    timeout: int | None = None,
-) -> tuple[bool, str | None, str]:
-    """Run the three SEE-1285 gates in order; first failure wins.
-
-    Gate 1 (CI): ci_conclusion must be exactly 'success' — unknown/fail/empty
-      all block (fail-close, backoff retry on next cycle for unknown).
-    Gate 2 (pointer health): delegates to the GAP-1 check
-      `ensure_gitlinks_reachable` — reused, never reimplemented or bypassed.
-    Gate 3 (interval integrity): parent gitlink → new_sha must be a
-      contiguous history segment in the child.
-
-    Returns (allowed, failing_gate_or_None, message).
-    """
-    # Gate 1 — child CI green (three-state: success / fail / unknown)
-    if ci_conclusion != _CI_SUCCESS:
-        return False, "gate1", (
-            f"gate1 not satisfied: child CI conclusion={ci_conclusion or 'unknown'!r} "
-            f"(success required; unknown → backoff retry)"
-        )
-    # Gate 2 — pointer health via GAP-1 (reuse, never bypass)
-    guard_ok, guard_msg = ensure_gitlinks_reachable(
-        parent_repo, timeout=timeout
-    )
-    if not guard_ok:
-        return False, "gate2", f"gate2 not satisfied (GAP-1): {guard_msg}"
-
-    # Gate 3 — interval integrity
-    child_wt = str(Path(parent_repo) / sub_path)
-    if (Path(child_wt) / ".git").exists():
-        old_sha = _iter_gitlinks(parent_repo, timeout)
-        old = next((sha for p, sha in old_sha if p == sub_path), None)
-        if old:
-            # G-1（生产观察）：materialize 滞后时子对象库缺新 head 对象，
-            # merge-base 对不可判定提交返回非 0，被误判为区间抹除 fail-close。
-            # 判定前先 fetch 目标 sha 到本地对象库；fetch 失败维持 fail-close
-            # （对象不可得 = 不可判定 → 安全侧）。不动工作树 checkout 状态
-            # （仅 fetch，不动 materialize；checkout 对齐由 forward 段处理）。
-            f = git_run(child_wt, ["fetch", "--quiet", child_remote_url, new_sha],
-                        check=False, timeout=timeout)
-            if f.returncode != 0:
-                return False, "gate3", (
-                    f"gate3 not satisfied: cannot fetch {new_sha[:12]} from "
-                    f"{child_remote_url} (object unavailable); fail-close"
-                )
-            ok, bad = verify_lag_interval_integrity(child_wt, old, new_sha, timeout=timeout)
-            if not ok:
-                return False, "gate3", (
-                    f"gate3 not satisfied: interval history broken — commit {bad[:12]} "
-                    f"unreachable from {new_sha[:12]} (squash/rebase/force-push suspected); "
-                    f"manual review required"
-                )
-    return True, None, "all gates passed"
-
-
-def _query_child_remote_head(repo_path: str, url: str, branch: str, timeout: int | None) -> str | None:
-    r = git_run(repo_path, ["ls-remote", url, branch], check=False, timeout=30)
-    if r.returncode != 0 or not r.stdout.strip():
-        return None
-    return r.stdout.split("\t", 1)[0].strip()
-
-
-# do_forward_gitlinks（SEE-1285 三道 gate 向上 forward）已随向上同步语义退役
-# （SEE-1430b）；完整实现保留在 KOL master 与 gqt 历史树内可查。
-
-
 def send_alert(config: dict[str, Any], message: str) -> tuple[bool, str]:
     issue_id = config.get("alert_issue_id")
     if not issue_id:
@@ -1949,7 +1773,7 @@ def _parse_gitmodules_submodules(repo_path: str) -> list[dict[str, str]]:
 
 def _warn_submodule_lags(
     repo_path: str, config: dict[str, Any], logger: logging.Logger, timeout: int | None
-) -> None:
+) -> dict[str, str] | None:
     """(a) SYNCED 滞后告警（SEE-1268 §7.4(a)）：materialize 成功后逐子库比对
     remote branch head 与父库 index gitlink——落后仅 logger.warning 暴露，
     不拦截、不置 success=False；网络失败/分支不存在静默跳过；同一 remote
@@ -2056,13 +1880,6 @@ def _synced_path_result(
             lag_heads = _warn_submodule_lags(repo_path, config, logger, timeout)
             if lag_heads is not None:
                 result["lag_warned_heads"] = lag_heads
-            # SEE-1430b 语义改向：向上 forward（SEE-1285 三道 gate）整体退役，
-            # gitlink_forward_enabled 配置键作废——注册文件若仍携带，告警一次。
-            if config.get("gitlink_forward_enabled") is not None:
-                logger.warning(
-                    "gitlink_forward_enabled is retired by sync-to-local "
-                    "semantics (SEE-1430b); ignoring it (warn-once per cycle)"
-                )
         else:
             result["success"] = False
             result["message"] = f"already synced but submodule materialization failed: {sub_msg}"

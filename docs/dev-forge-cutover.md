@@ -1,5 +1,7 @@
 # dev-forge cutover runbook（SEE-1429 Phase 3 由 Atlas 主持执行）
 
+> **历史一次性迁移记录，cutover 已完成，不要在当前安装上重复执行。** 下文 `rm -rf`、清运行位等步骤仅用于复盘当时的迁移过程；当前安装/回滚只看根目录 README 的 Quick start 与 `bootstrap/rollback.sh`。
+
 > 顺序铁律（沿用 SEE-1330 裁定）：真源就位 → 注册切换 → 验证 → 清运行位 → 删 KOL 旧物。每步失败即回退。
 
 ## P0 预检

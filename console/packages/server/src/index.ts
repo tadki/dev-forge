@@ -1,9 +1,8 @@
 import { createServer } from 'node:http';
-import { buildReconcileReport, execCapture } from '@forge/collectors';
+import { buildReconcileReport, execCapture, loadConfig } from '@forge/collectors';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { watch } from 'chokidar';
-import { loadConfig } from './engine.js';
 import { Engine } from './engine.js';
 import { createHandler } from './app.js';
 import { createRepoSyncAction, DEFAULT_START_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS } from './repo-sync-action.js';
@@ -57,6 +56,7 @@ const handler = createHandler({
         return { ok: r.ok && (!r.stdout || !/failed/i.test(r.stdout)), output: `${r.stdout}${r.stderr}`.slice(0, 400) };
       },
   onAfterAction: () => void engine.collectNow(),
+  platforms: () => engine.getPlatforms(),
   getReconcileReport: () =>
     engine.state.reconcile ??
     buildReconcileReport(engine.state, engine.getRegistryEntries(), new Date(), {

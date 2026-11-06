@@ -2,7 +2,7 @@
 
 dev-forge harness 的只读监控台：采集器（12 个内置）→ 标准资产模型（`forge-asset/1`）→ builtin-http API（token + SSE）→ React Web UI（KOL Neo-Brutalism 设计系统 · 方案 E 紫调夜幕）。
 
-设计规格：[`../docs/harness-console-plan.md`](../docs/harness-console-plan.md)（四层架构 / 作用域 lattice / 迁移投影）。
+设计规格：[`../docs/harness-console-plan.md`](../docs/harness-console-plan.md)（四层架构 / 作用域 lattice / 平台适配）。
 
 ## 快速开始
 
@@ -68,10 +68,10 @@ token 按 origin 存 localStorage：`localhost:5173` 与 `192.168.1.105:5173` �
 | 路径 | 职责 |
 |---|---|
 | `packages/schema` | forge-asset/1 契约：zod schema + JSON Schema（`asset.schema.json`）+ 类型 |
-| `packages/collectors` | 12 个内置采集器 + registry（合并/漂移分组/快照）+ effective harness 解析 + 迁移投影 |
+| `packages/collectors` | 12 个内置采集器 + registry（合并/漂移分组/快照）+ effective harness 解析 + 平台适配 |
 | `packages/server` | 零框架 HTTP：token 鉴权（除 `/healthz` 与静态资源）、SSE、静态托管、chokidar watch（/mnt 9p 走 polling） |
-| `apps/web` | Vite + React UI：11+1 页，设计 tokens 见 `src/styles/tokens.css` |
-| `e2e` | Playwright：fixture 采集器 + 16 条用例（真后端真浏览器） |
+| `apps/web` | Vite + React UI：11 页，设计 tokens 见 `src/styles/tokens.css` |
+| `e2e` | Playwright：fixture 采集器 + 24 条用例（真后端真浏览器） |
 | `console.config.yaml` | workspace 注册表（可提交；当前单 workspace `jerry`，kol/godot-mcp/gqt/grepai/dev-forge 均为项目）+ multica/hindsight 配置 |
 | `collectors.d/` | 外部采集器投放目录（可执行，stdout 吐契约 JSON；见下） |
 
@@ -109,7 +109,7 @@ repo-sync 启动不由 `forge-console` 沙箱内的进程直接写宿主。conso
 **差异类型**：
 - `missing-on-platform`：声明已应用平台 P 但采集未发现 P 上实例（声明未匹配到资产时也触发）。
 - `undeclared-platform`：资产实际出现在 P 但声明未包含 P。
-- `content-drift`：multica agent instructions ↔ 最新物化 workdir CLAUDE.md 分叉（与迁移页同源）；同 entry 内同名副本 sha 分叉；已声明本地技能 ↔ multica 同名技能（名称归一化配对，如 taskassign ↔ task-assign）内容分叉。
+- `content-drift`：multica agent instructions ↔ 最新物化 workdir CLAUDE.md 分叉（与平台对账同源）；同 entry 内同名副本 sha 分叉；已声明本地技能 ↔ multica 同名技能（名称归一化配对，如 taskassign ↔ task-assign）内容分叉。
 - `uncovered-assets`：有平台归属但未被任何 `platforms` 声明覆盖的自建资产，按 kind×平台分组提示补声明（`custom`/`report` 是采集器派生的观测视图，不参与）。
 
 **动作**（按差异类型给出，方向由用户裁决）：
@@ -122,6 +122,14 @@ repo-sync 启动不由 `forge-console` 沙箱内的进程直接写宿主。conso
 - `FORGE_CONSOLE_DRY_ACTIONS=1` 时只回显计划不落盘（E2E 用）；沙箱 `ReadWritePaths` 只放行 registry.d、~/.claude、~/multica_workspaces 与项目根（见 deploy/forge-console.service）。
 
 **API**：`GET /api/reconcile`（报告与每条的 actions/steps 预览）；`POST /api/reconcile/actions` `{key, actionId, confirm:true}` → `{ok, output}`（缺 confirm 400、动作不可执行 400、项已变化 409、执行失败 200 + `ok:false`）。每次 collect 后报告入 `state.reconcile`，warn 诊断（前缀 `[reconcile]`）进 Overview 诊断尾部，`/api/overview` 附 `reconcile` 计数。
+
+## 平台适配（platforms.d）与平台页
+
+每个平台一份 `console/platforms.d/<id>.yaml`，是该平台对各类资产**读（采集发现）与写（以库为准物化）契约**的唯一声明：`match.pathPrefix` 识别资产归属（first-match-wins，勿用 `/` 这类兜底前缀），`kinds.<kind>.read`（cli 命令 / file 扫描路径 / derived 派生 / none）+ `kinds.<kind>.write`（file-write / command 模板 / none+advice）。加载时逐文件结构校验（坏文件出 `[platforms]` 诊断并跳过；`DEFAULT_PLATFORMS` 兜底，与 YAML 锁步单测保证一致）；安全校验（路径白名单/备份/dry-run）仍在执行器代码。
+
+平台页（`/platforms`）按平台归集实有资产（按 kind 分类，点行看清单），并展示每 kind 的读写契约；`GET /api/platforms` 返回同一视图（payload 不进 JSON），无声明命中的资产（如 `systemd://`）落「未适配」桶。
+
+**新增平台四步**（如 OpenCode）：① `packages/schema/src/schema.ts` 的 `PLATFORM_IDS` 加 id（registry.d 声明枚举放行）；② 复制一份 `platforms.d/<id>.yaml` 声明 match + 逐 kind read/write，并同步 `platforms.ts` 的 `DEFAULT_PLATFORMS`（锁步单测兜底）；③ 写采集器，发出以 `match.pathPrefix` 开头的 `source.path`；④ 完成——平台页与 `/api/platforms` 自动渲染，对账 adopt/push 自动按声明执行。
 
 ## 扩展接入（新增一个监控域）
 
