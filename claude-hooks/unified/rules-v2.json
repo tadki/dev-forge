@@ -223,7 +223,7 @@
       "action": [
         {
           "op": "context",
-          "message": "[atlas-bash-skill-reminder] 你正在以 Atlas（Team Leader）身份运行。\n[atlas-bash-skill-reminder] 技能提醒：\n[atlas-bash-skill-reminder]   - 任务编排 -> 调用 /taskflow\n[atlas-bash-skill-reminder]   - 任务分配 -> 调用 /taskassign\n[atlas-bash-skill-reminder]   - 项目探索 -> 调用 /explore\n[atlas-bash-skill-reminder]   - PR 审核 -> 调用 /code-review"
+          "message": "[atlas-bash-skill-reminder] 你正在以 Atlas（Team Leader）身份运行。\n[atlas-bash-skill-reminder] 技能提醒：\n[atlas-bash-skill-reminder]   - 任务编排 -> 调用 /taskflow\n[atlas-bash-skill-reminder]   - 任务分配 -> 调用 /taskassign\n[atlas-bash-skill-reminder]   - 项目探索 -> 调用 /task-explore\n[atlas-bash-skill-reminder]   - PR 审核 -> 调用 /code-review"
         }
       ],
       "one_shot": {
