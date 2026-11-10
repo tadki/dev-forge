@@ -326,6 +326,7 @@ v2 单轨下「注册项」与「脚本」解耦：settings 共 10 条 unified-h
 | `atlas-taskflow-exit-reminder-mount` | PreToolUse | tool Bash（脚本内 comment add 判定；仅 Atlas 生效） | `atlas-taskflow-exit-reminder.sh` | 条件阻断（对新建任务 issue 评论时 deny） | Atlas（/taskflow 编排闭环） |
 | `gdformat-gdlint-mount` | PostToolUse | tool Write\|Edit × file *.gd | `gdformat-gdlint.sh` | **是**（exit 2 + stderr 直通，fail-close；含 SEE-1142 mcp-mouse-lint 追加规则） | Bachi（GDScript 代码质量） |
 | `auto-pr-stop-mount` | Stop | payload stop_hook_active equals false（+ 脚本内第二道防线） | `auto-pr-on-stop.sh` | 否（自动 commit/push/draft PR；恒 fail-open 不阻塞 Stop） | Bachi（SEE-1129 活跃维护） |
+| `stop-guard-live-subagents`（rules.d/stop-guard-subagents.json，SEE-1559 §SPEC-005） | Stop | 脚本扫描 session `subagents/*.meta.json`，存在 `finished != true` 的 sub-agent 即阻断；`stop_hook_active=true` 自守放行；载荷/目录缺失 fail-open | `stop-guard-subagents.sh` | **是**（`deny_exit_codes[2]` → 引擎 exit2 通道直通，exit 2 + stderr 阻止 Stop；脚本失败 fail-open） | Archi（SEE-1559 根因防线） |
 | `repo-checkout-mount` | SessionStart | payload hook_event_name equals SessionStart | `repo-checkout.sh` | 否（session 启动自动 checkout 工作分支，additionalContext hint） | Bachi（SEE-1117 活跃维护） |
 | `plan-mode-permission-allow`（rules.d/plan-mode-auto-allow.json） | PermissionRequest | payload permission_mode equals "plan"（字符串精确等值） | `plan-mode-allow.sh` | 否（allow 放行；非 plan 输出为空 → 透传原审批流；脚本失败 fail-open 降级手动审批） | Owner（jerry，Mac 原始裁定 2026-10-29，2026-11-03 迁入） |
 
@@ -487,6 +488,7 @@ INPUT="${INPUT%$'\n'}"
 ---
 
 *文档版本：2026-11-03（PermissionRequest 第 10 时点增补）*
+*更新记录：SEE-1559 tidy（2026-11-10）—— §5.1 表补登 stop-guard-live-subagents 行（rules.d/stop-guard-subagents.json，Stop 时点 sub-agent 存活防线，Archi 实施）；同步 bootstrap/hooks-registration.json runtime_artifacts 登记 `scripts/stop-guard-subagents.sh` 与 `unified/rules.d/stop-guard-subagents.json`（维护条款「规则增删须与本表 + hooks-registration.json 同步」）。零行为：仅文档与清单登记，未改规则配置/脚本/引擎。*
 *更新记录：SEE-1527 修复轮（2026-11-05）—— push-guard gates belt 豁免去字面量化：旧「命令串含 `/dev-forge` 子串」锚点路径敏感（dev-forge 检出目录名不含字面量时 KOL/gqt 会话合法 push 被跨仓误拦，生产可达），改为 push 有效目标仓 origin URL ∈ 注册表 devforge 项判定（repo op `target:"push"`：段内 `-C <dir>` 优先、其次前置 cd 链、否则会话 cwd；多 push 段 all 口径；任一目标不可解析即不豁免，保守方向 = 门禁照常）。配套：validate-rules.js repo target 值域校验 + variantOf 映射 cmd-cur；§5.1 两行条件列同步；测试 test_push_guard_devforge_exempt.sh B8 家族重锚（allow/deny 两侧对照、断言与套件检出位置解耦）*
 *更新记录：SEE-1516 子步骤 D（2026-11-04）—— §SPEC-016~020：§5.1 表补登 push-guard-master-gate / push-guard-force-push-gate 两条 deny 行（rules.d/push-guard-gates.json，E1 Owner「方案一 + B」单轨终态）并把 skill-check block ×4 / remind ×5 聚合行展开为逐字规则名（§SPEC-019 机器判据前提）；rules.d 全规则补登 owner/blocking（governance 面扩至 rules.d，validate-rules.js 按路径判定 rules-v2+rules.d，--governance/--no-governance 显式旗标）；4 处 hooks-registration.json 引用改指 bootstrap/ 实际位置；§4 hook-wrapper 日志行删恒空 tool= 字段（CC 不注入 TOOL_NAME，工具名观测面归引擎侧 firelog）；新增 CI 门 tests/test_hooks_5_1_registration.sh（governance 校验 + 规则名 ⊆ §5.1 断言，故意删行 CI 红）*
 
