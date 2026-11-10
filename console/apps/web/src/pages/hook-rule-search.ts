@@ -75,6 +75,17 @@ export interface RuleFacetOption {
   count: number;
 }
 
+/** facet 字段的中文列名（aria-label 用，读屏可读） */
+export const RULE_FACET_LABELS: Record<RuleFacetKey, string> = {
+  harness: '生效 HARNESS',
+  on: '事件 ON',
+  agent: 'AGENT 门控',
+  repo: 'REPO 门控',
+  when: '条件 WHEN',
+  action: '动作 ACTION',
+  oneshot: '单发 ONE-SHOT',
+};
+
 /** 从全量规则派生每个枚举字段的候选值（计数为命中行数，按次数降序） */
 export function buildRuleFacets(rows: AssetLite[]): Record<RuleFacetKey, RuleFacetOption[]> {
   const acc: Record<RuleFacetKey, Map<string, number>> = {
@@ -122,9 +133,39 @@ export function matchesRuleFilters(rule: AssetLite, filters: RuleFilters): boole
   const p = rule.payload as RulePayload;
   for (const key of RULE_FACET_KEYS) {
     const selected = filters.facets[key];
-    if (selected && !ruleFacetValues(p, key).includes(selected)) return false;
+    if (!selected) continue;
+    if (key === 'on' ? !matchesOnFacet(p, selected) : !ruleFacetValues(p, key).includes(selected)) return false;
   }
   return true;
+}
+
+/**
+ * collector 把 `on.in ?? on.except` 都装进 on 数组（on 单独存在时无法区分）。
+ * on 与 onExcept 内容一致 ⇒ 该规则是「排除式」事件定义。
+ */
+function isOnExceptMode(p: RulePayload): boolean {
+  if (!p.onExcept?.length) return false;
+  const on = p.on ?? [];
+  return on.length === p.onExcept.length && on.every((v, i) => v === p.onExcept![i]);
+}
+
+/** 事件字段匹配：排除式规则在除排除项外的所有事件上触发 */
+function matchesOnFacet(p: RulePayload, selected: string): boolean {
+  if (isOnExceptMode(p)) return !p.onExcept!.includes(selected);
+  return ruleFacetValues(p, 'on').includes(selected);
+}
+
+/** 重采集后候选值可能消失：清掉已不在候选中的选中值，避免受控 select 显示为空但过滤仍生效 */
+export function pruneStaleFacets(
+  facets: Partial<Record<RuleFacetKey, string>>,
+  options: Record<RuleFacetKey, RuleFacetOption[]>
+): Partial<Record<RuleFacetKey, string>> {
+  const next: Partial<Record<RuleFacetKey, string>> = {};
+  for (const key of RULE_FACET_KEYS) {
+    const v = facets[key];
+    if (v !== undefined && options[key].some((o) => o.value === v)) next[key] = v;
+  }
+  return next;
 }
 
 export function isRuleFilterActive(filters: RuleFilters): boolean {

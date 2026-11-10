@@ -5,6 +5,7 @@ import {
   isRuleFilterActive,
   matchesRuleFilters,
   matchesRuleNameQuery,
+  pruneStaleFacets,
   ruleFacetLabel,
   ruleFacetValues,
   type RulePayload,
@@ -138,6 +139,45 @@ describe('matchesRuleFilters', () => {
   it('多值字段命中任一选中值即通过', () => {
     expect(matchesRuleFilters(target, { nameQuery: '', facets: { on: 'PreToolUse' } })).toBe(true);
     expect(matchesRuleFilters(target, { nameQuery: '', facets: { on: 'Stop' } })).toBe(true);
+  });
+});
+
+describe('事件 ON 排除语义（on 与 onExcept 一致 ⇒ 排除式定义）', () => {
+  // collector：on = rule.on.in ?? rule.on.except，排除式规则的 on 装的是排除值
+  const exceptRule = rule({ name: 'except-stop' }, { on: ['Stop'], onExcept: ['Stop'] });
+  const bothRule = rule({ name: 'in-and-except' }, { on: ['PreToolUse'], onExcept: ['Stop'] });
+  const plainRule = rule({ name: 'plain' }, { on: ['PreToolUse'] });
+
+  it('排除式规则：筛排除事件不命中，筛其他事件命中（规则在其余所有事件上触发）', () => {
+    expect(matchesRuleFilters(exceptRule, { nameQuery: '', facets: { on: 'Stop' } })).toBe(false);
+    expect(matchesRuleFilters(exceptRule, { nameQuery: '', facets: { on: 'PreToolUse' } })).toBe(true);
+  });
+
+  it('in 与 except 并存时按 in 语义匹配（on 数组装的是 in 值）', () => {
+    expect(matchesRuleFilters(bothRule, { nameQuery: '', facets: { on: 'PreToolUse' } })).toBe(true);
+    expect(matchesRuleFilters(bothRule, { nameQuery: '', facets: { on: 'Stop' } })).toBe(false);
+  });
+
+  it('普通规则不受影响；候选值聚合仍包含排除值本身', () => {
+    expect(matchesRuleFilters(plainRule, { nameQuery: '', facets: { on: 'PreToolUse' } })).toBe(true);
+    expect(buildRuleFacets([exceptRule, plainRule]).on.map((o) => o.value).sort()).toEqual(['PreToolUse', 'Stop']);
+  });
+});
+
+describe('pruneStaleFacets', () => {
+  const options = buildRuleFacets([
+    rule({ id: 'a' }, { on: ['PreToolUse'], whenKind: 'ops' }),
+    rule({ id: 'b' }, { on: ['Stop'], whenKind: 'none' }),
+  ]);
+
+  it('清除不在候选中的选中值，保留仍存在的', () => {
+    const facets = { on: 'PreToolUse', when: 'payload', repo: 'kol' } as Partial<Record<string, string>>;
+    expect(pruneStaleFacets(facets, options)).toEqual({ on: 'PreToolUse' });
+  });
+
+  it('全部有效时原样保留；空筛选恒空', () => {
+    expect(pruneStaleFacets({ on: 'Stop', when: 'none' }, options)).toEqual({ on: 'Stop', when: 'none' });
+    expect(pruneStaleFacets({}, options)).toEqual({});
   });
 });
 

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiGet } from '../api';
 import type { AssetLite, FireEvent } from '../types';
 import { Badge, DataTable, Panel, SectionHeader } from '../components/ui';
@@ -9,6 +9,9 @@ import {
   HARNESS_LABELS,
   isRuleFilterActive,
   matchesRuleFilters,
+  pruneStaleFacets,
+  RULE_FACET_KEYS,
+  RULE_FACET_LABELS,
   type RuleFacetKey,
   type RuleFilters,
   type RulePayload,
@@ -108,6 +111,14 @@ export function HooksPage(_props: { ctx: PageCtx }) {
   const filteredRows = useMemo(() => ruleRows.filter((r) => matchesRuleFilters(r, filters)), [ruleRows, filters]);
   const selected = ruleRows.find((r) => r.id === selRule);
 
+  // watch 重采集后候选值可能消失：清掉失效选中值，受控 select 回到「全部」
+  useEffect(() => {
+    setFacets((prev) => {
+      const next = pruneStaleFacets(prev, facetOptions);
+      return RULE_FACET_KEYS.every((k) => prev[k] === next[k]) ? prev : next;
+    });
+  }, [facetOptions]);
+
   const setFacet = (key: RuleFacetKey, value: string) =>
     setFacets((prev) => {
       const next = { ...prev };
@@ -119,7 +130,7 @@ export function HooksPage(_props: { ctx: PageCtx }) {
   const facetControl = (key: RuleFacetKey) => (
     <select
       className="search"
-      aria-label={`筛选 ${key}`}
+      aria-label={`筛选 ${RULE_FACET_LABELS[key]}`}
       title={`分类筛选：该字段全部取值（含计数）`}
       value={facets[key] ?? ''}
       onChange={(e) => setFacet(key, e.target.value)}
@@ -161,24 +172,25 @@ export function HooksPage(_props: { ctx: PageCtx }) {
         rows={filteredRows}
         selectedId={selRule ?? undefined}
         onRowClick={(r) => setSelRule(r.id)}
-        filters={[
-          <input
-            key="name"
-            className="search"
-            aria-label="筛选 名称"
-            placeholder="筛选名称…"
-            title="启发式过滤：空格分词 AND，子串命中名称（大小写不敏感）"
-            value={nameQuery}
-            onChange={(e) => setNameQuery(e.target.value)}
-          />,
-          facetControl('harness'),
-          facetControl('on'),
-          facetControl('agent'),
-          facetControl('repo'),
-          facetControl('when'),
-          facetControl('action'),
-          facetControl('oneshot'),
-        ]}
+        filters={{
+          name: (
+            <input
+              className="search"
+              aria-label="筛选 名称"
+              placeholder="筛选名称…"
+              title="启发式过滤：空格分词 AND，子串命中名称（大小写不敏感）"
+              value={nameQuery}
+              onChange={(e) => setNameQuery(e.target.value)}
+            />
+          ),
+          harness: facetControl('harness'),
+          on: facetControl('on'),
+          agent: facetControl('agent'),
+          repo: facetControl('repo'),
+          when: facetControl('when'),
+          action: facetControl('action'),
+          oneshot: facetControl('oneshot'),
+        }}
         cols={[
           {
             key: 'name',
