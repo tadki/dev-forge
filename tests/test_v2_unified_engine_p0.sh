@@ -934,32 +934,48 @@ OUTU=$(printf '%s' "$RAW_IN" | CLAUDE_PROJECT_DIR="$REPO_ROOT" HOOK_FIRE_LOG="$F
 
 # 21c: installer 完整性断言对抗验证 —— 清单漏列场景即红（对 §9a 判别力的事后证明，fixture 内）
 # 构造 rules.d 副本 + 删掉 manifest 中一个挂载脚本条目 → 部署完整性探针逻辑必须判 INCOMPLETE
-if node -e "
-const fs=require('fs');
-const m=JSON.parse(fs.readFileSync('$REPO_ROOT/bootstrap/hooks-registration.json'));
-const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json'));
+# SEE-1559 hardener O3 修复：探针原先仅读 runscript-mounts.json——非该文件来源的
+# run_script 目标（stop-guard-subagents.sh 等）漏列不可见（变异复跑证实假绿）。
+# 改为 union 全部 rules.d/*.json；漏列自检目标同步换成非-mounts 来源目标。
+scan_run_script_targets() {
+node -e "
+const fs=require('fs'), path=require('path');
+const rd='$REPO_ROOT/claude-hooks/unified/rules.d';
+const PREFIX='\${HOOKS_DIR}/';
 const targets=new Set();
-for (const r of rules.rules) for (const a of (r.action||[])) if (a.op==='run_script') targets.add(a.path.replace(/^\$\{HOOKS_DIR\}\//,''));
-const missing=[...targets].filter(t=>!(m.runtime_artifacts||[]).includes(t));
-process.stdout.write(missing.length===0?'COMPLETE':'INCOMPLETE:'+missing.join(','));" | grep -q COMPLETE; then
+for (const f of fs.readdirSync(rd).sort()) {
+  if (!f.endsWith('.json')) continue;
+  const part=JSON.parse(fs.readFileSync(path.join(rd,f),'utf8'));
+  for (const r of part.rules||[]) for (const a of (r.action||[])) if (a.op==='run_script'&&a.path) {
+    let p=a.path;
+    if (p.startsWith(PREFIX)) p=p.slice(PREFIX.length);
+    targets.add(p);
+  }
+}
+const m=JSON.parse(fs.readFileSync(process.argv[1]));
+const missing=[...targets].filter(t=>!((m.runtime_artifacts||[]).includes(t)));
+process.stdout.write(missing.length===0?'COMPLETE':'INCOMPLETE:'+missing.join(','));" "$1"
+}
+# 判定用精确等值（grep -q COMPLETE 会子串命中 INCOMPLETE — 原 21c 第二层假绿源）
+PROBE_OUT=$(scan_run_script_targets "$REPO_ROOT/bootstrap/hooks-registration.json")
+if [ "$PROBE_OUT" = "COMPLETE" ]; then
     pass "21c: manifest-vs-rules.d coverage probe = COMPLETE on shipped state"
 else
-    fail "21c: shipped manifest incomplete (9a would be red)"
+    fail "21c: shipped manifest incomplete (9a would be red): $PROBE_OUT"
 fi
-# 漏列场景注入（fixture 副本）→ 探针必判 INCOMPLETE
+# 漏列场景注入（fixture 副本）→ 探针必判 INCOMPLETE（目标=非 runscript-mounts 来源的
+# stop-guard-subagents.sh，正是原探针不可见的同族盲区）
 node -e "
 const fs=require('fs');
 const m=JSON.parse(fs.readFileSync('$REPO_ROOT/bootstrap/hooks-registration.json'));
-m.runtime_artifacts=(m.runtime_artifacts||[]).filter(t=>t!=='scripts/mention-check.sh');
+m.runtime_artifacts=(m.runtime_artifacts||[]).filter(t=>t!=='scripts/stop-guard-subagents.sh');
 fs.writeFileSync('$FIXTURE/manifest-holed.json', JSON.stringify(m));"
-node -e "
-const fs=require('fs');
-const m=JSON.parse(fs.readFileSync('$FIXTURE/manifest-holed.json'));
-const rules=JSON.parse(fs.readFileSync('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json'));
-const targets=new Set();
-for (const r of rules.rules) for (const a of (r.action||[])) if (a.op==='run_script') targets.add(a.path.replace(/^\$\{HOOKS_DIR\}\//,''));
-const missing=[...targets].filter(t=>!(m.runtime_artifacts||[]).includes(t));
-process.exit(missing.length>0?0:1);" && pass "21c: holed manifest detected (leak-listed scenario turns assertion red)" || fail "21c: holed manifest NOT detected — 9a assertion blind"
+HOLED_OUT=$(scan_run_script_targets "$FIXTURE/manifest-holed.json")
+if grep -q "INCOMPLETE:scripts/stop-guard-subagents.sh" <<< "$HOLED_OUT"; then
+    pass "21c: holed manifest detected (leak-listed scenario turns assertion red)"
+else
+    fail "21c: holed manifest NOT detected — 9a assertion blind (probe=$HOLED_OUT)"
+fi
 
 # 21d: 聚合 runner 失败传播 —— 单套件红 → run_all 非零退出码。
 # SEE-1381 §SPEC-002 随迁：run_all 已改目录发现（glob test_*.sh），旧 SUITES
