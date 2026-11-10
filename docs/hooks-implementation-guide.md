@@ -131,6 +131,8 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 | `claude-hooks/unified/rules-v2.json` | 13 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
 | `claude-hooks/unified/rules.d/runscript-mounts.json` | 8 条 run_script 挂载规则（push-guard / mention-check / gdformat-gdlint / taskflow×3 / auto-pr / repo-checkout）：`deny_exit_codes` / `on_fail` / `timeout_ms` | 挂载 lane 与 rules-v2 规则段互不交叉编辑 |
 | `claude-hooks/unified/rules.d/plan-mode-auto-allow.json` | 1 条 PermissionRequest 挂载规则（plan 模式自动放行，2026-11-03 自 Mac 全局 settings jq 一行式迁入）：payload op 字符串等值 + run_script 协议直通 | 同上；引擎侧依赖 validate-rules.js HOOK_POINTS 第 10 时点 + when-ops.js payload 字符串等值 |
+| `claude-hooks/unified/rules.d/push-guard-gates.json` | 2 条声明式 deny 规则（push-guard-master-gate / push-guard-force-push-gate，SEE-1430b；owner/blocking 由 SEE-1516 §SPEC-018 补登）：`push_refspec` 结构化 op × `repo` op（repos.json 注册表判定 kol/gqt；devforge belt 豁免 SEE-1527；排除 `--delete`） | 配置化 deny（文案内置，无脚本挂载）；改动须过 validate-rules.js 状态机 |
+| `claude-hooks/unified/rules.d/stop-guard-subagents.json` | 1 条 Stop 时点挂载规则（stop-guard-live-subagents，SEE-1559 §SPEC-005）：判定/防环在脚本内自检，`run_script` `deny_exit_codes:[2]` → 引擎 exit2 通道直通（非 PreToolUse 保真为 exit 2 + stderr 阻止 Stop） | 同上；脚本 `stop-guard-subagents.sh` 扫描 session `subagents/*.meta.json`，载荷/目录缺失 fail-open |
 | `bootstrap/hooks-registration.json` | settings 注册声明式真源 + runtime_artifacts 部署清单 | 见 §2.1 |
 
 ---
@@ -488,6 +490,7 @@ INPUT="${INPUT%$'\n'}"
 ---
 
 *文档版本：2026-11-03（PermissionRequest 第 10 时点增补）*
+*更新记录：SEE-1559 tidy 补充轮（2026-11-10，Leader 裁定 O4/O5）—— §2.3「规则配置真源」表补登 `rules.d/push-guard-gates.json`（存量缺口）与 `rules.d/stop-guard-subagents.json` 两行；stop-guard-subagents.json version_note 失实依据更正（when-ops.js payload 分支实读语义：equals:false 对缺省字段 undefined/null/false 视为未置位命中，非「求值不稳」；脚本内自检为权威道的设计不变）。零行为：仅文档表行与注释文字。*
 *更新记录：SEE-1559 tidy（2026-11-10）—— §5.1 表补登 stop-guard-live-subagents 行（rules.d/stop-guard-subagents.json，Stop 时点 sub-agent 存活防线，Archi 实施）；同步 bootstrap/hooks-registration.json runtime_artifacts 登记 `scripts/stop-guard-subagents.sh` 与 `unified/rules.d/stop-guard-subagents.json`（维护条款「规则增删须与本表 + hooks-registration.json 同步」）。零行为：仅文档与清单登记，未改规则配置/脚本/引擎。*
 *更新记录：SEE-1527 修复轮（2026-11-05）—— push-guard gates belt 豁免去字面量化：旧「命令串含 `/dev-forge` 子串」锚点路径敏感（dev-forge 检出目录名不含字面量时 KOL/gqt 会话合法 push 被跨仓误拦，生产可达），改为 push 有效目标仓 origin URL ∈ 注册表 devforge 项判定（repo op `target:"push"`：段内 `-C <dir>` 优先、其次前置 cd 链、否则会话 cwd；多 push 段 all 口径；任一目标不可解析即不豁免，保守方向 = 门禁照常）。配套：validate-rules.js repo target 值域校验 + variantOf 映射 cmd-cur；§5.1 两行条件列同步；测试 test_push_guard_devforge_exempt.sh B8 家族重锚（allow/deny 两侧对照、断言与套件检出位置解耦）*
 *更新记录：SEE-1516 子步骤 D（2026-11-04）—— §SPEC-016~020：§5.1 表补登 push-guard-master-gate / push-guard-force-push-gate 两条 deny 行（rules.d/push-guard-gates.json，E1 Owner「方案一 + B」单轨终态）并把 skill-check block ×4 / remind ×5 聚合行展开为逐字规则名（§SPEC-019 机器判据前提）；rules.d 全规则补登 owner/blocking（governance 面扩至 rules.d，validate-rules.js 按路径判定 rules-v2+rules.d，--governance/--no-governance 显式旗标）；4 处 hooks-registration.json 引用改指 bootstrap/ 实际位置；§4 hook-wrapper 日志行删恒空 tool= 字段（CC 不注入 TOOL_NAME，工具名观测面归引擎侧 firelog）；新增 CI 门 tests/test_hooks_5_1_registration.sh（governance 校验 + 规则名 ⊆ §5.1 断言，故意删行 CI 红）*
