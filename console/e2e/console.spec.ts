@@ -96,7 +96,8 @@ test('hooks: pipeline, rules table, firelog', async ({ page }) => {
   await expect(page.getByText('revy-testing-skill-check')).toBeVisible();
   await expect(page.getByText('REPO 门控')).toBeVisible();
   await expect(page.locator('tr', { hasText: 'revy-testing-skill-check' }).getByText('kol', { exact: true })).toBeVisible();
-  await expect(page.getByText('DENY').first()).toBeVisible();
+  // DENY 徽标限定在规则表内：筛选下拉的 <option> 也含 DENY 文本但不可见
+  await expect(page.locator('tr', { hasText: 'revy-testing-skill-check' }).getByText('DENY')).toBeVisible();
   await expect(page.getByText('FIRE LOG', { exact: false })).toBeVisible();
 });
 
@@ -119,8 +120,37 @@ test('skills: first-party vs dependencies tabs', async ({ page }) => {
   await page.goto('/skills');
   await expect(page.getByText('/recall').first()).toBeVisible();
   await expect(page.getByText('deep-research').first()).not.toBeVisible();
+  // 搜索框：进页默认聚焦；过滤可收窄清单
+  const search = page.getByLabel('技能筛选');
+  await expect(search).toBeVisible();
+  await expect(search).toBeFocused();
+  await search.fill('nomatch-zzz');
+  await expect(page.getByText('/recall').first()).not.toBeVisible();
+  await search.fill('');
+  await expect(page.getByText('/recall').first()).toBeVisible();
   await page.getByRole('button', { name: '第三方 THIRD-PARTY' }).click();
   await expect(page.getByText('deep-research').first()).toBeVisible();
+});
+
+test('skills: source inline edit, undo, save-and-sync (dry-run: library first, then file)', async ({ page }) => {
+  await page.goto('/skills');
+  await page.locator('.tree-node', { hasText: '/recall' }).first().click();
+  await page.locator('.panel .tab', { hasText: '源码' }).first().click();
+  const editor = page.locator('textarea').first();
+  await expect(editor).toBeVisible();
+  // 未编辑时保存禁用；编辑后可用；撤销恢复原文
+  const save = page.getByRole('button', { name: /保存并同步/ });
+  await expect(save).toBeDisabled();
+  await editor.fill('# recall\n\nedited body\n');
+  await expect(save).toBeEnabled();
+  await page.getByRole('button', { name: /撤销/ }).click();
+  await expect(editor).toHaveValue(/召回长期记忆/);
+  // 保存（e2e 服务为 DRY-RUN）：先库内真源，后本地文件写入
+  await editor.fill('# recall\n\ndry-run body\n');
+  await save.click();
+  await expect(page.getByText('已同步')).toBeVisible();
+  await expect(page.locator('pre').filter({ hasText: '库内真源' })).toBeVisible();
+  await expect(page.locator('pre').filter({ hasText: '[dry-run] 将写入' })).toBeVisible();
 });
 
 test('projects: single project card, git identity, harness badge, workspace grouping', async ({ page }) => {

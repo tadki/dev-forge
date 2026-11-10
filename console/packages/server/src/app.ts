@@ -5,6 +5,7 @@ import { buildPlatformsView, resolveEffective } from '@forge/collectors';
 import { validateCollection } from '@forge/schema';
 import { checkAuth } from './auth.js';
 import { serveStatic } from './static.js';
+import { CONTENT_MAX_CHARS } from './asset-content-action.js';
 import type { SSEBus } from './sse.js';
 
 export interface AppDeps {
@@ -23,6 +24,8 @@ export interface AppDeps {
   platforms: () => PlatformDef[];
   /** 对账动作执行（服务端重算 item 并按 actionId 取步骤；gone=对账项已变化；failed=业务拒绝/中断，仍 200） */
   reconcileAction: (key: string, actionId: string) => Promise<{ status: 'ok' | 'invalid' | 'gone' | 'failed'; ok: boolean; output: string }>;
+  /** 技能编辑保存并同步（内容来自编辑器，路径/命令由服务端从 state+platforms.d 推导；failed=部分执行后中断，仍 200） */
+  saveAssetContent: (assetId: string, content: string) => Promise<{ status: 'ok' | 'invalid' | 'failed'; ok: boolean; output: string }>;
   onAfterAction?: () => void;
 }
 
@@ -172,6 +175,30 @@ export function createHandler(deps: AppDeps) {
           );
         }
         return json(res, 200, { total: list.length, assets: list.slice(0, 400).map(liteAsset) });
+      }
+
+      const contentMatch = path.match(/^\/api\/assets\/(.+)\/content$/);
+      if (contentMatch && req.method === 'POST') {
+        let body: { content?: unknown; confirm?: unknown };
+        try {
+          body = JSON.parse(await readBody(req)) as typeof body;
+        } catch {
+          return json(res, 400, { error: 'invalid json' });
+        }
+        if (body.confirm !== true) {
+          return json(res, 400, { error: '写操作需要显式确认：confirm=true（请在界面确认后再提交）' });
+        }
+        if (typeof body.content !== 'string' || body.content.length === 0) {
+          return json(res, 400, { error: 'content 必填（非空字符串）' });
+        }
+        if (body.content.length > CONTENT_MAX_CHARS) {
+          return json(res, 400, { error: `content 超过 ${CONTENT_MAX_CHARS} 字符上限（采集会在该上限截断，保存即漂移），请缩减后保存` });
+        }
+        const assetId = decodeURIComponent(contentMatch[1]);
+        const result = await deps.saveAssetContent(assetId, body.content);
+        if (result.status === 'invalid') return json(res, 400, { error: result.output, assetId });
+        if (result.status === 'ok') deps.onAfterAction?.();
+        return json(res, 200, { ok: result.ok, assetId, output: result.output });
       }
 
       const assetMatch = path.match(/^\/api\/assets\/(.+)$/);

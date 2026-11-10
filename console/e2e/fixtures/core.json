@@ -529,6 +529,7 @@
         "path": "/e2e/skills/recall/SKILL.md"
       },
       "payload": {
+        "content": "# recall\n\n用 hindsight 召回长期记忆。\n",
         "lines": 30
       }
     },

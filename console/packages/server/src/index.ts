@@ -7,6 +7,7 @@ import { Engine } from './engine.js';
 import { createHandler } from './app.js';
 import { createRepoSyncAction, DEFAULT_START_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS } from './repo-sync-action.js';
 import { executeReconcileAction } from './reconcile-action.js';
+import { executeAssetContentSave } from './asset-content-action.js';
 import { SSEBus } from './sse.js';
 
 const consoleRoot = join(import.meta.dirname, '..', '..', '..');
@@ -74,6 +75,18 @@ const handler = createHandler({
       storeRecords: engine.getStoreRecords(),
     });
     // 立即重建对账报告（不等 onAfterAction 触发的整轮重采），动作后卡片即时反映结果
+    if (result.status === 'ok') await engine.refreshReconcileAfterAction();
+    return { status: result.status, ok: result.ok, output: result.output };
+  },
+  saveAssetContent: async (assetId, content) => {
+    // 内容来自编辑器。顺序：先写入库内真源，再把所有同名部署实例（本地/各平台，platforms.d 声明通道）对照新内容更新
+    const result = await executeAssetContentSave(assetId, content, engine.state, {
+      platforms: engine.getPlatforms(),
+      storeDir: engine.getStoreDir() || undefined,
+      storeRecords: engine.getStoreRecords(),
+      exec: execCapture,
+      dryRun: dryActions,
+    });
     if (result.status === 'ok') await engine.refreshReconcileAfterAction();
     return { status: result.status, ok: result.ok, output: result.output };
   },

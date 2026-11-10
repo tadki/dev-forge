@@ -49,6 +49,10 @@ const state: RegistryState = {
     }),
     mk('report:toolchain-latest', 'report', { payload: { health: 'GREEN', generatedAt: '2026-11-03T04:00:00+08:00', redlineCount: 0 } }),
     mk('skill:ecc-deep-research', 'skill', { provenance: 'third-party' }),
+    mk('skill:user-editable', 'skill', {
+      name: 'editable',
+      payload: { content: 'original body' },
+    }),
     mk('service:systemd-grepai-watch.service', 'service', {
       name: 'grepai-watch',
       source: { collector: 'test', path: 'systemd://user/grepai-watch.service' },
@@ -131,6 +135,11 @@ beforeAll(async () => {
       if (actionId === 'nope') return { status: 'invalid' as const, ok: false, output: `动作不存在：${actionId}` };
       return { status: 'ok' as const, ok: true, output: `已更新 /tmp/owned.yaml：demo.platforms = [claude-code, multica]` };
     },
+    saveAssetContent: async (assetId, content) => {
+      actionLog.push({ unit: `save:${assetId}`, action: `${content.length}` });
+      if (assetId === 'skill:ghost') return { status: 'invalid' as const, ok: false, output: `资产不在当前采集中：${assetId}` };
+      return { status: 'ok' as const, ok: true, output: `已写入（${content.length} 字符）` };
+    },
   });
   server = createServer((req, res) => void handler(req, res));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -180,7 +189,7 @@ describe('api endpoints', () => {
 
   it('overview aggregates counts, health', async () => {
     const r = await get('/api/overview', TOKEN);
-    expect(r.body.total).toBe(12);
+    expect(r.body.total).toBe(13);
     expect(r.body.counts['hook-rule']).toBe(1);
     expect(r.body.counts['deployment']).toBe(1);
     expect(r.body.health.status).toBe('GREEN');
@@ -229,7 +238,7 @@ describe('api endpoints', () => {
     expect(agentRow.read.cmd).toEqual(['multica', 'agent', 'list']);
     expect(agentRow.write.type).toBe('command');
     const cc = r.body.platforms.find((p: { id: string }) => p.id === 'claude-code');
-    expect(cc.totalAssets).toBe(9); // 12 资产 - 3 个 systemd:// 未适配
+    expect(cc.totalAssets).toBe(10); // 13 资产 - 3 个 systemd:// 未适配
     expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').read.paths).toContain('<project>/CLAUDE.md');
     expect(r.body.unadapted.assetCount).toBe(3);
     expect(r.body.unadapted.kinds[0].kind).toBe('service');
@@ -328,6 +337,33 @@ describe('api endpoints', () => {
     expect(okBody.ok).toBe(true);
     expect(okBody.output).toContain('platforms');
     expect(actionLog.at(-1)).toEqual({ unit: 'reconcile:undeclared:demo:multica:adopt', action: 'run' });
+  });
+
+  it('skill content save: confirm/content 校验、invalid 400、成功 200', async () => {
+    const post = (body: unknown, assetId = 'skill:user-editable') =>
+      fetch(base + `/api/assets/${assetId}/content`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+    expect((await post({ content: 'x' })).status).toBe(400); // 缺 confirm
+    expect((await post({ confirm: true })).status).toBe(400); // 缺 content
+    expect((await post({ confirm: true, content: '' })).status).toBe(400); // 空 content
+    expect((await post({ confirm: true, content: 'x'.repeat(200_001) })).status).toBe(400); // 超上限
+    expect((await post({ confirm: true, content: 'x' }, 'skill:ghost')).status).toBe(400); // invalid（资产不在采集中）
+
+    const ok = await post({ confirm: true, content: 'edited body' });
+    expect(ok.status).toBe(200);
+    const okBody = await ok.json();
+    expect(okBody).toMatchObject({ ok: true, assetId: 'skill:user-editable' });
+    expect(okBody.output).toContain('edited body'.length.toString());
+    expect(actionLog.at(-1)).toEqual({ unit: 'save:skill:user-editable', action: `${'edited body'.length}` });
+
+    // GET 详情路由不受 /content 路由影响
+    const detail = await get(`/api/assets/${encodeURIComponent('skill:user-editable')}`, TOKEN);
+    expect(detail.status).toBe(200);
+    expect(detail.body.asset.payload.content).toBe('original body');
   });
 
   it('unknown path 404s as json', async () => {

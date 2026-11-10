@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from 'react';
 export function Panel({
   title,
   en,
+  actions,
   children,
   ink,
   className = '',
@@ -11,6 +12,8 @@ export function Panel({
 }: {
   title?: string;
   en?: string;
+  /** 标题行附加内容（筛选框等）：紧跟 en 文本之后并向右伸展，与下方内容同宽 */
+  actions?: ReactNode;
   children: ReactNode;
   ink?: boolean;
   className?: string;
@@ -19,9 +22,10 @@ export function Panel({
   return (
     <section className={`${ink ? 'panel-ink' : 'panel'} ${className}`} style={style}>
       {title && (
-        <div className={`panel-title ${ink ? '' : ''}`}>
-          {title}
+        <div className="panel-title" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--sp-2)' }}>
+          <span>{title}</span>
           {en && <span className="en">{en}</span>}
+          {actions && <span style={{ flex: 1, minWidth: 0, fontWeight: 400 }}>{actions}</span>}
         </div>
       )}
       {children}
