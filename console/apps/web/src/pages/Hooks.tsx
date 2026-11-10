@@ -1,28 +1,18 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { apiGet } from '../api';
 import type { AssetLite, FireEvent } from '../types';
 import { Badge, DataTable, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
-
-interface RulePayload {
-  harness?: string[];
-  whenKind?: 'none' | 'payload' | 'ops' | 'mixed';
-  on: string[];
-  onExcept?: string[];
-  whenHuman: string;
-  oneShot: string;
-  when?: unknown;
-  actions: Array<{ op: string; message?: string; path?: string }>;
-  overlay: boolean;
-  blocking?: boolean;
-  versionNote?: string;
-  fileDeclaredScope?: string;
-  agents?: { include?: string[]; except?: string[] };
-  repoGating?: { in?: string[]; registered?: boolean };
-}
-
-const HARNESS_LABELS: Record<string, string> = { 'claude-code': 'Claude Code' };
+import {
+  buildRuleFacets,
+  HARNESS_LABELS,
+  isRuleFilterActive,
+  matchesRuleFilters,
+  type RuleFacetKey,
+  type RuleFilters,
+  type RulePayload,
+} from './hook-rule-search';
 
 function RuleDetail({ rule }: { rule: AssetLite }) {
   const p = rule.payload as RulePayload;
@@ -111,7 +101,37 @@ export function HooksPage(_props: { ctx: PageCtx }) {
   });
 
   const ruleRows = rules.data?.assets ?? [];
+  const [nameQuery, setNameQuery] = useState('');
+  const [facets, setFacets] = useState<Partial<Record<RuleFacetKey, string>>>({});
+  const filters: RuleFilters = useMemo(() => ({ nameQuery, facets }), [nameQuery, facets]);
+  const facetOptions = useMemo(() => buildRuleFacets(ruleRows), [ruleRows]);
+  const filteredRows = useMemo(() => ruleRows.filter((r) => matchesRuleFilters(r, filters)), [ruleRows, filters]);
   const selected = ruleRows.find((r) => r.id === selRule);
+
+  const setFacet = (key: RuleFacetKey, value: string) =>
+    setFacets((prev) => {
+      const next = { ...prev };
+      if (value) next[key] = value;
+      else delete next[key];
+      return next;
+    });
+
+  const facetControl = (key: RuleFacetKey) => (
+    <select
+      className="search"
+      aria-label={`筛选 ${key}`}
+      title={`分类筛选：该字段全部取值（含计数）`}
+      value={facets[key] ?? ''}
+      onChange={(e) => setFacet(key, e.target.value)}
+    >
+      <option value="">全部</option>
+      {facetOptions[key].map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label} · {o.count}
+        </option>
+      ))}
+    </select>
+  );
 
   return (
     <div>
@@ -131,12 +151,34 @@ export function HooksPage(_props: { ctx: PageCtx }) {
         ))}
       </div>
 
-      <SectionHeader no="01" title="规则表" en={`RULES · ${ruleRows.length} · 点击行 → 右栏详情`} />
+      <SectionHeader
+        no="01"
+        title="规则表"
+        en={`RULES · ${isRuleFilterActive(filters) ? `${filteredRows.length} / ${ruleRows.length}` : ruleRows.length} · 点击行 → 右栏详情`}
+      />
       <div className="split-rules">
       <DataTable
-        rows={ruleRows}
+        rows={filteredRows}
         selectedId={selRule ?? undefined}
         onRowClick={(r) => setSelRule(r.id)}
+        filters={[
+          <input
+            key="name"
+            className="search"
+            aria-label="筛选 名称"
+            placeholder="筛选名称…"
+            title="启发式过滤：空格分词 AND，子串命中名称（大小写不敏感）"
+            value={nameQuery}
+            onChange={(e) => setNameQuery(e.target.value)}
+          />,
+          facetControl('harness'),
+          facetControl('on'),
+          facetControl('agent'),
+          facetControl('repo'),
+          facetControl('when'),
+          facetControl('action'),
+          facetControl('oneshot'),
+        ]}
         cols={[
           {
             key: 'name',

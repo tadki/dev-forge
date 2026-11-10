@@ -82,7 +82,7 @@ export interface Column<T> {
   width?: string;
 }
 
-export function DataTable<T extends { id?: string }>({ cols, rows, onRowClick, selectedId }: { cols: Array<Column<T>>; rows: T[]; onRowClick?: (row: T) => void; selectedId?: string }) {
+export function DataTable<T extends { id?: string }>({ cols, rows, onRowClick, selectedId, filters }: { cols: Array<Column<T>>; rows: T[]; onRowClick?: (row: T) => void; selectedId?: string; filters?: ReactNode[] }) {
   return (
     <div className="table-wrap">
       <table className="table">
@@ -94,6 +94,13 @@ export function DataTable<T extends { id?: string }>({ cols, rows, onRowClick, s
               </th>
             ))}
           </tr>
+          {filters && (
+            <tr className="filter-row">
+              {cols.map((c, i) => (
+                <th key={`f-${c.key}`}>{filters[i] ?? null}</th>
+              ))}
+            </tr>
+          )}
         </thead>
         <tbody>
           {rows.map((row, i) => (

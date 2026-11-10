@@ -213,6 +213,21 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .table tr.sel td { background: var(--cream); }
 .table-wrap { max-height: 520px; overflow: auto; border: var(--bw-thin) solid var(--ink); }
 
+/* 表头字段筛选行：吸顶于表头之下，控件撑满单元格 */
+.table thead tr.filter-row th {
+  top: 20px;
+  padding: 2px 4px;
+  background: var(--paper-warm);
+  letter-spacing: 0;
+  border-bottom: var(--bw-thin) solid var(--khaki);
+}
+.table thead tr.filter-row .search {
+  width: 100%;
+  min-width: 0;
+  font-size: var(--fs-label);
+  padding: 2px 4px;
+}
+
 /* ===== 分节编号头 ===== */
 .sect { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-4) 0 var(--sp-2); }
 .sect .no { font-family: var(--font-mono); font-size: var(--fs-l2); font-weight: 700; background: var(--ink); color: var(--paper-warm); padding: 1px 6px; }
