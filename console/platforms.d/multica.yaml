@@ -19,6 +19,10 @@ kinds:
       type: command
       cmd: [multica, skill, update, "{platformId}", --content, "{content}"]
       platformIdFrom: self            # skill 资产 payload.platformId
+    fileWrite:                        # 附带文件（非 SKILL.md 本体）：multica skill files upsert
+      type: command
+      cmd: [multica, skill, files, upsert, "{platformId}", --path, "{filePath}", --content, "{content}"]
+      platformIdFrom: self
   agent:
     read:
       how: cli

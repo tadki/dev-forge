@@ -135,10 +135,10 @@ beforeAll(async () => {
       if (actionId === 'nope') return { status: 'invalid' as const, ok: false, output: `动作不存在：${actionId}` };
       return { status: 'ok' as const, ok: true, output: `已更新 /tmp/owned.yaml：demo.platforms = [claude-code, multica]` };
     },
-    saveAssetContent: async (assetId, content) => {
-      actionLog.push({ unit: `save:${assetId}`, action: `${content.length}` });
+    saveAssetContent: async (assetId, content, file) => {
+      actionLog.push({ unit: `save:${assetId}`, action: `${content.length}${file ? `:${file}` : ''}` });
       if (assetId === 'skill:ghost') return { status: 'invalid' as const, ok: false, output: `资产不在当前采集中：${assetId}` };
-      return { status: 'ok' as const, ok: true, output: `已写入（${content.length} 字符）` };
+      return { status: 'ok' as const, ok: true, output: `已写入（${content.length} 字符${file ? ` · ${file}` : ''}）` };
     },
   });
   server = createServer((req, res) => void handler(req, res));
@@ -364,6 +364,13 @@ describe('api endpoints', () => {
     const detail = await get(`/api/assets/${encodeURIComponent('skill:user-editable')}`, TOKEN);
     expect(detail.status).toBe(200);
     expect(detail.body.asset.payload.content).toBe('original body');
+
+    // 附带文件编辑：file 参数透传
+    const aux = await post({ confirm: true, content: 'new aux', file: 'usage.md' });
+    expect(aux.status).toBe(200);
+    expect((await aux.json()).output).toContain('usage.md');
+    expect(actionLog.at(-1)).toEqual({ unit: 'save:skill:user-editable', action: `${'new aux'.length}:usage.md` });
+    expect((await post({ confirm: true, content: 'x', file: '' })).status).toBe(400); // file 空串
 
     // 非法 URI 编码 → 400（客户端错误），不是 500
     expect((await post({ confirm: true, content: 'x' }, '%')).status).toBe(400);

@@ -585,7 +585,14 @@
       "payload": {
         "platformId": "sr-1",
         "labels": [],
-        "workspaceId": "ws-jerry"
+        "workspaceId": "ws-jerry",
+        "content": "# code-review\n\n平台 PR 审查技能。\n",
+        "files": [
+          {
+            "path": "checklist.md",
+            "content": "# checklist\n\n- [ ] 变更范围\n- [ ] 测试覆盖\n"
+          }
+        ]
       }
     },
     {

@@ -78,7 +78,7 @@ const handler = createHandler({
     if (result.status === 'ok') await engine.refreshReconcileAfterAction();
     return { status: result.status, ok: result.ok, output: result.output };
   },
-  saveAssetContent: async (assetId, content) => {
+  saveAssetContent: async (assetId, content, file) => {
     // 内容来自编辑器。顺序：先写入库内真源，再把所有同名部署实例（本地/各平台，platforms.d 声明通道）对照新内容更新
     const result = await executeAssetContentSave(assetId, content, engine.state, {
       platforms: engine.getPlatforms(),
@@ -86,7 +86,7 @@ const handler = createHandler({
       storeRecords: engine.getStoreRecords(),
       exec: execCapture,
       dryRun: dryActions,
-    });
+    }, file);
     // failed 也已部分执行（入库/写文件），同样刷新对账，避免卡片陈旧
     if (result.status !== 'invalid') await engine.refreshReconcileAfterAction();
     return { status: result.status, ok: result.ok, output: result.output };

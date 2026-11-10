@@ -315,3 +315,88 @@ describe('executeAssetContentSave', () => {
     expect((await loadFirstPartyStore(storeDir)).records.get(orphan.id)?.asset.payload).toMatchObject({ content: 'body' });
   });
 });
+
+describe('附带文件编辑（file 参数）', () => {
+  const multicaWithFiles = mk('skill:multica-demo', {
+    name: 'demo',
+    platforms: ['multica'],
+    attach: { level: 'platform', ref: 'multica' },
+    source: { collector: 'multica', path: 'multica://skills/pl-demo' },
+    payload: {
+      platformId: 'pl-demo',
+      content: 'old body',
+      files: [
+        { path: 'assign-template.md', content: 'old template' },
+        { path: 'description-principle.md', content: 'old principle' },
+      ],
+    },
+  });
+
+  it('multica 附带文件 → fileWrite 声明通道（skill files upsert），{filePath} 替换正确', () => {
+    const { blocked, targets } = planAssetContentSync(multicaWithFiles, stateWith([multicaWithFiles]), DEFAULT_PLATFORMS, undefined, 'assign-template.md');
+    expect(blocked).toBeUndefined();
+    const cmd = targets.find((t) => t.kind === 'command')!;
+    expect(cmd.cmd).toBe('multica');
+    expect(cmd.args).toEqual(['skill', 'files', 'upsert', 'pl-demo', '--path', 'assign-template.md', '--content', '{content}']);
+  });
+
+  it('本地附带文件 → dirname(本体)/{file} 派生路径', () => {
+    const localWithFiles = mk('skill:user-demo', {
+      name: 'demo',
+      payload: { content: 'old body', files: [{ path: 'usage.md', content: 'old usage' }] },
+    });
+    const { targets } = planAssetContentSync(localWithFiles, stateWith([localWithFiles]), DEFAULT_PLATFORMS, undefined, 'usage.md');
+    expect(targets[0]).toMatchObject({
+      kind: 'file',
+      path: join('/tmp/skills/skill:user-demo', 'usage.md'),
+      executable: true,
+    });
+  });
+
+  it('执行：本地附带文件写入 + 库记录 files 内容更新（指纹重算）', async () => {
+    const { asset: localAsset, path: skillPath } = await realSkill('demo', 'aux');
+    const auxPath = join(dirname(skillPath), 'usage.md');
+    await writeFile(auxPath, 'old usage', 'utf8');
+    const withFiles = { ...localAsset, payload: { ...localAsset.payload, files: [{ path: 'usage.md', content: 'old usage' }] } };
+    const storeDir = join(dir, 'store-aux');
+    await writeStoreRecord(storeDir, withFiles);
+
+    const r = await executeAssetContentSave(withFiles.id, 'new usage', stateWith([withFiles]), {
+      platforms: DEFAULT_PLATFORMS,
+      storeDir,
+      storeRecords: (await loadFirstPartyStore(storeDir)).records,
+      exec: execOk,
+    }, 'usage.md');
+    expect(r.status).toBe('ok');
+    expect(await readFile(auxPath, 'utf8')).toBe('new usage');
+    expect(await readFile(skillPath, 'utf8')).toBe('old body'); // 本体未被波及
+    const rec = (await loadFirstPartyStore(storeDir)).records.get(withFiles.id);
+    const expected = { ...withFiles, payload: { ...withFiles.payload, files: [{ path: 'usage.md', content: 'new usage' }] } };
+    expect(rec?.asset.payload).toMatchObject({ files: [{ path: 'usage.md', content: 'new usage' }] });
+    expect(rec?.hash).toBe(contentFingerprint(expected));
+  });
+
+  it('执行：multica 附带文件命令参数精确', async () => {
+    execCalls.length = 0;
+    const r = await executeAssetContentSave(multicaWithFiles.id, 'new template', stateWith([multicaWithFiles]), {
+      platforms: DEFAULT_PLATFORMS,
+      storeDir: join(dir, 'store-aux-mc'),
+      exec: execOk,
+    }, 'assign-template.md');
+    expect(r.status).toBe('ok');
+    expect(execCalls).toHaveLength(1);
+    expect(execCalls[0].args).toEqual(['skill', 'files', 'upsert', 'pl-demo', '--path', 'assign-template.md', '--content', 'new template']);
+  });
+
+  it('未登记 / 穿越 / 绝对路径的 file → invalid', async () => {
+    execCalls.length = 0;
+    for (const bad of ['nope.md', '../evil.md', '/etc/passwd']) {
+      const r = await executeAssetContentSave(multicaWithFiles.id, 'x', stateWith([multicaWithFiles]), {
+        platforms: DEFAULT_PLATFORMS,
+        exec: execOk,
+      }, bad);
+      expect(r.status).toBe('invalid');
+    }
+    expect(execCalls).toHaveLength(0);
+  });
+});

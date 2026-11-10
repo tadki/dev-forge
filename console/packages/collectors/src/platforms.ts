@@ -43,6 +43,9 @@ export interface PlatformKindDef {
   read?: PlatformRead;
   /** 适用 kind 必填；applicable=false 时禁止 */
   write?: PlatformWrite;
+  /** 附带文件（非本体，如 skill 的 files[]）的以库为准写通道；{filePath} 为技能内相对路径。
+   *  file-write 平台无需声明：附带文件路径 = dirname(本体路径)/{filePath}，同一本地写入通道。 */
+  fileWrite?: PlatformWrite;
 }
 
 export interface PlatformDef {
@@ -218,6 +221,7 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           note: '清单经 skill list（--output json），正文逐条 skill get --with-content（并发限流 5，上限 50 条）',
         },
         write: { type: 'command', cmd: ['multica', 'skill', 'update', '{platformId}', '--content', '{content}'], platformIdFrom: 'self' },
+        fileWrite: { type: 'command', cmd: ['multica', 'skill', 'files', 'upsert', '{platformId}', '--path', '{filePath}', '--content', '{content}'], platformIdFrom: 'self' },
       },
       agent: {
         read: {
@@ -347,20 +351,32 @@ function platformDefIssue(def: unknown): string | null {
     if (kv.applicable !== undefined) {
       if (kv.applicable !== false) return `kinds.${kind}.applicable 只接受 false（缺省即适用）`;
       if (typeof kv.note !== 'string') return `kinds.${kind}.applicable=false 需要 note 说明缘由`;
-      const body = v as { read?: unknown; write?: unknown };
-      if (body.read !== undefined || body.write !== undefined) return `kinds.${kind}.applicable=false 时不得声明 read/write`;
+      const body = v as { read?: unknown; write?: unknown; fileWrite?: unknown };
+      if (body.read !== undefined || body.write !== undefined || body.fileWrite !== undefined) {
+        return `kinds.${kind}.applicable=false 时不得声明 read/write/fileWrite`;
+      }
       continue;
     }
     const write = (v as { write?: unknown } | null)?.write as { type?: unknown; cmd?: unknown; platformIdFrom?: unknown; advice?: unknown } | undefined;
-    if (!write || typeof write.type !== 'string') return `kinds.${kind}.write.type 缺失`;
-    if (!['file-write', 'command', 'none'].includes(write.type)) return `kinds.${kind}.write.type 未知：${String(write.type)}`;
-    if (write.type === 'command') {
-      if (!Array.isArray(write.cmd) || write.cmd.some((c) => typeof c !== 'string')) return `kinds.${kind}.write.cmd 必须是字符串数组`;
-      if (write.platformIdFrom !== undefined && !['self', 'deployment'].includes(write.platformIdFrom as string)) {
-        return `kinds.${kind}.write.platformIdFrom 只能是 self|deployment`;
+    const writeShapeIssue = (w: typeof write, field: string): string | null => {
+      if (!w || typeof w.type !== 'string') return `kinds.${kind}.${field}.type 缺失`;
+      if (!['file-write', 'command', 'none'].includes(w.type)) return `kinds.${kind}.${field}.type 未知：${String(w.type)}`;
+      if (w.type === 'command') {
+        if (!Array.isArray(w.cmd) || w.cmd.some((c) => typeof c !== 'string')) return `kinds.${kind}.${field}.cmd 必须是字符串数组`;
+        if (w.platformIdFrom !== undefined && !['self', 'deployment'].includes(w.platformIdFrom as string)) {
+          return `kinds.${kind}.${field}.platformIdFrom 只能是 self|deployment`;
+        }
       }
+      if (w.type === 'none' && typeof w.advice !== 'string') return `kinds.${kind}.${field}.advice 缺失（none 必须给建议）`;
+      return null;
+    };
+    const writeIssue = writeShapeIssue(write, 'write');
+    if (writeIssue) return writeIssue;
+    const fileWrite = (v as { fileWrite?: unknown } | null)?.fileWrite as typeof write;
+    if (fileWrite !== undefined) {
+      const fileWriteIssue = writeShapeIssue(fileWrite, 'fileWrite');
+      if (fileWriteIssue) return fileWriteIssue;
     }
-    if (write.type === 'none' && typeof write.advice !== 'string') return `kinds.${kind}.write.advice 缺失（none 必须给建议）`;
     const read = (v as { read?: unknown } | null)?.read as
       | { how?: unknown; collector?: unknown; cmd?: unknown; detailCmd?: unknown; paths?: unknown; note?: unknown }
       | undefined;

@@ -57,22 +57,33 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
   const fullPayload = (full.data?.asset.payload ?? {}) as { content?: string; files?: Array<{ path: string; content?: string }> };
   const content = fullPayload.content;
   const files = fullPayload.files ?? [];
+  // 当前编辑对象：SKILL.md 本体（file===null）或某个附带文件
+  const activeContent = file === null ? content : files.find((f) => f.path === file)?.content;
   useEffect(() => {
     setFile(null);
     setDraft(null);
     setSaveState(null);
   }, [selId]);
+  // 切文件重置草稿（切技能时 file 已重置为 null，本 effect 随之重复触发无副作用）
+  useEffect(() => {
+    setDraft(null);
+    setSaveState(null);
+  }, [file]);
   // 切 tab 后旧选中 id 属于另一侧清单，重置为该 tab 首行，防止详情面板渲染他侧内容
   useEffect(() => setSel(null), [tab]);
 
-  const dirty = draft !== null && draft !== content;
-  const editable = view === 'source' && file === null && typeof content === 'string';
+  const dirty = draft !== null && draft !== activeContent;
+  const editable = view === 'source' && typeof activeContent === 'string';
 
   const save = async (): Promise<void> => {
     if (!selId || draft === null) return;
     setSaving(true);
     try {
-      const r = await apiPost<{ ok: boolean; output: string }>(`/api/assets/${encodeURIComponent(selId)}/content`, { content: draft, confirm: true });
+      const r = await apiPost<{ ok: boolean; output: string }>(`/api/assets/${encodeURIComponent(selId)}/content`, {
+        content: draft,
+        confirm: true,
+        ...(file !== null ? { file } : {}),
+      });
       setSaveState({ ok: r.ok, text: r.output || (r.ok ? '已保存' : '保存失败') });
       if (r.ok) {
         setDraft(null);
@@ -246,7 +257,7 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
             ))}
             {editable && (
               <span style={{ display: 'flex', gap: 'var(--sp-2)' }}>
-                <button className="btn small btn-mint" disabled={!dirty || saving} onClick={() => void save()} title="先写入库内真源，再把所有同名部署实例（本地/各平台，按 platforms.d 声明通道）对照新内容更新">
+                <button className="btn small btn-mint" disabled={!dirty || saving} onClick={() => void save()} title="先写入库内真源，再把所有同名部署实例（本体走平台写通道，附带文件走 fileWrite/upsert）对照新内容更新">
                   <SaveIcon />保存并同步
                 </button>
                 <button
@@ -294,9 +305,22 @@ export function SkillsPage({ ctx }: { ctx: PageCtx }) {
                 if (file !== null) {
                   const f = files.find((x) => x.path === file);
                   if (!f) return <div className="dim">文件不存在。</div>;
-                  return view === 'render'
-                    ? <Markdown text={f.content ?? ''} />
-                    : <pre className="code" style={{ maxHeight: 'none' }}>{f.content ?? '—'}</pre>;
+                  if (view === 'render') return <Markdown text={f.content ?? ''} />;
+                  if (typeof f.content === 'string') {
+                    return (
+                      <textarea
+                        className="code"
+                        style={{ maxHeight: 'none', height: '100%', minHeight: 320, resize: 'vertical', whiteSpace: 'pre', width: '100%' }}
+                        spellCheck={false}
+                        value={draft ?? f.content}
+                        onChange={(e) => {
+                          setDraft(e.target.value);
+                          setSaveState(null);
+                        }}
+                      />
+                    );
+                  }
+                  return <pre className="code" style={{ maxHeight: 'none' }}>{f.content ?? '—'}</pre>;
                 }
                 if (content !== undefined) {
                   if (view === 'render') return <Markdown text={content} />;

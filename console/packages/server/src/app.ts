@@ -24,8 +24,8 @@ export interface AppDeps {
   platforms: () => PlatformDef[];
   /** 对账动作执行（服务端重算 item 并按 actionId 取步骤；gone=对账项已变化；failed=业务拒绝/中断，仍 200） */
   reconcileAction: (key: string, actionId: string) => Promise<{ status: 'ok' | 'invalid' | 'gone' | 'failed'; ok: boolean; output: string }>;
-  /** 技能编辑保存并同步（内容来自编辑器，路径/命令由服务端从 state+platforms.d 推导；failed=部分执行后中断，仍 200） */
-  saveAssetContent: (assetId: string, content: string) => Promise<{ status: 'ok' | 'invalid' | 'failed'; ok: boolean; output: string }>;
+  /** 技能编辑保存并同步（内容来自编辑器，路径/命令由服务端从 state+platforms.d 推导；file=附带文件相对路径；failed=部分执行后中断，仍 200） */
+  saveAssetContent: (assetId: string, content: string, file?: string) => Promise<{ status: 'ok' | 'invalid' | 'failed'; ok: boolean; output: string }>;
   onAfterAction?: () => void;
 }
 
@@ -188,7 +188,7 @@ export function createHandler(deps: AppDeps) {
 
       const contentMatch = path.match(/^\/api\/assets\/(.+)\/content$/);
       if (contentMatch && req.method === 'POST') {
-        let body: { content?: unknown; confirm?: unknown };
+        let body: { content?: unknown; confirm?: unknown; file?: unknown };
         try {
           body = JSON.parse(await readBody(req)) as typeof body;
         } catch {
@@ -203,9 +203,12 @@ export function createHandler(deps: AppDeps) {
         if (body.content.length > CONTENT_MAX_CHARS) {
           return json(res, 400, { error: `content 超过 ${CONTENT_MAX_CHARS} 字符上限（采集会在该上限截断，保存即漂移），请缩减后保存` });
         }
+        if (body.file !== undefined && (typeof body.file !== 'string' || body.file.length === 0)) {
+          return json(res, 400, { error: 'file 必须是技能内相对路径字符串' });
+        }
         const assetId = safeDecode(contentMatch[1]);
         if (!assetId.ok) return json(res, 400, { error: 'assetId 编码非法' });
-        const result = await deps.saveAssetContent(assetId.value, body.content);
+        const result = await deps.saveAssetContent(assetId.value, body.content, body.file as string | undefined);
         if (result.status === 'invalid') return json(res, 400, { error: result.output, assetId: assetId.value });
         // 走到这里 ok/failed 都已实际执行（failed=部分执行），都触发重采刷新对账视图
         deps.onAfterAction?.();

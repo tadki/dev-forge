@@ -153,6 +153,24 @@ test('skills: source inline edit, undo, save-and-sync (dry-run: library first, t
   await expect(page.locator('pre').filter({ hasText: '[dry-run] 将写入' })).toBeVisible();
 });
 
+test('skills: auxiliary file edit uses platform fileWrite channel (dry-run upsert)', async ({ page }) => {
+  await page.goto('/skills');
+  await page.locator('.tree-node', { hasText: '/code-review' }).first().click();
+  await page.locator('.panel .tab', { hasText: '源码' }).first().click();
+  // 附带文件也可编辑：FILES 侧栏切到 checklist.md
+  await page.locator('.tree-node', { hasText: 'checklist.md' }).first().click();
+  const editor = page.locator('textarea').first();
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveValue(/变更范围/);
+  await editor.fill('# checklist\n\n- [ ] 变更范围与回滚\n');
+  await page.getByRole('button', { name: /保存并同步/ }).click();
+  await expect(page.getByText('已同步')).toBeVisible();
+  // multica 附带文件走 fileWrite 声明通道：skill files upsert
+  const out = page.locator('pre').filter({ hasText: 'files' });
+  await expect(out).toBeVisible();
+  await expect(out).toContainText('multica skill files upsert sr-1 --path checklist.md');
+});
+
 test('projects: single project card, git identity, harness badge, workspace grouping', async ({ page }) => {
   await page.goto('/projects');
   await expect(page.locator('tr', { hasText: 'king-of-likes' }).first()).toBeVisible();

@@ -1,8 +1,8 @@
 import { copyFile, writeFile } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import type { Asset } from '@forge/schema';
 import type { PlatformDef, RegistryState, StoreRecord } from '@forge/collectors';
-import { resolveWriteChannel, writeStoreRecord } from '@forge/collectors';
+import { resolvePlatform, resolveWriteChannel, writeStoreRecord } from '@forge/collectors';
 
 /**
  * 技能编辑保存并同步（Owner 2026-11-10，方向：以库为准）：
@@ -11,6 +11,8 @@ import { resolveWriteChannel, writeStoreRecord } from '@forge/collectors';
  *    技能可部署在多个 Agent、分散在多个平台，全部同名实例都对照新内容更新（1:N）；
  * 3. 编辑资产自身 + 相关实例各自走 platforms.d 声明的写通道，把刚入库的内容推上去
  *    （等价于对账 store-drift 条目的「以库为准」push 方向，通道解析复用同一 resolveWriteChannel）。
+ * 可编辑对象：SKILL.md 本体（file 省略）或技能附带文件（file=技能内相对路径，须已在 payload.files 登记）；
+ * 附带文件通道走 kinds.skill.fileWrite 声明（file-write 平台无需声明，路径=dirname(本体)/{filePath}）。
  * 无平台特判。技能挂载形态（平台级技能库 → 分配给各 Agent，或 Agent 级实例）是平台适配层的差异：
  * 平台级实例更新一次即覆盖其下所有 Agent；Agent 级实例由采集器登记为独立资产，此处逐个更新。
  * 路径白名单/备份/超时与 reconcile-action 同一套安全约定。
@@ -64,6 +66,84 @@ function writablePaths(state: RegistryState): Set<string> {
   return out;
 }
 
+/** 本地技能目录（附带文件写入只允许落在已登记技能的目录内） */
+function skillDirs(state: RegistryState): string[] {
+  return state.assets.filter((a) => a.kind === 'skill' && isAbsolute(a.source.path)).map((a) => dirname(a.source.path));
+}
+
+interface SkillFileEntry {
+  path: string;
+  content?: string;
+}
+
+/** 附带文件路径合法性：技能内相对路径，拒绝绝对路径与 .. 穿越（兼容 '\' 分隔，防将来跑在 Windows） */
+function isSafeSkillFilePath(file: string): boolean {
+  return file.length > 0 && !isAbsolute(file) && !file.split(/[\\/]/).includes('..');
+}
+
+/** 编辑后的资产形态：本体 content 或附带文件 files[].content（实例缺该文件时按 upsert 补建） */
+function updatedAsset(source: Asset, file: string | undefined, content: string): Asset {
+  if (file === undefined) return { ...source, payload: { ...source.payload, content } };
+  const files = ((source.payload as { files?: SkillFileEntry[] }).files ?? []).slice();
+  const idx = files.findIndex((f) => f.path === file);
+  const nextFiles = idx >= 0 ? files.map((f) => (f.path === file ? { ...f, content } : f)) : [...files, { path: file, content }];
+  return { ...source, payload: { ...source.payload, files: nextFiles } };
+}
+
+/** 附带文件通道目标：fileWrite 声明（command 平台）或本体所在目录派生路径（file-write 平台） */
+function fileChannelTarget(asset: Asset, state: RegistryState, platforms: PlatformDef[], file: string): AssetContentSyncTarget {
+  const platform = resolvePlatform(asset, platforms);
+  if (!platform) {
+    return { platform: '—', kind: 'file', label: `物化 ${file}`, executable: false, note: '资产不匹配任何平台适配（platforms.d）' };
+  }
+  const pid = platform.id;
+  const kindDef = platform.kinds?.[asset.kind];
+  if (!kindDef) {
+    return { platform: pid, kind: 'file', label: `物化 ${file}`, executable: false, note: `平台 ${pid} 未声明 kind ${asset.kind}` };
+  }
+  if (kindDef.fileWrite?.type === 'command') {
+    const from = kindDef.fileWrite.platformIdFrom ?? 'self';
+    const platformId =
+      from === 'deployment'
+        ? ((state.assets.find((a) => a.kind === 'deployment' && (a.payload as { agent?: string }).agent?.toLowerCase() === asset.name.toLowerCase())?.payload as
+            | { platformId?: string }
+            | undefined)?.platformId)
+        : (asset.payload as { platformId?: string }).platformId;
+    const args = kindDef.fileWrite.cmd.slice(1).map((a) => {
+      if (a === '{platformId}') return platformId ?? '{platformId}';
+      if (a === '{filePath}') return file;
+      return a;
+    });
+    return {
+      platform: pid,
+      kind: 'command',
+      cmd: kindDef.fileWrite.cmd[0],
+      args,
+      executable: !!platformId,
+      label: `执行 ${pid} 文件更新命令 ${kindDef.fileWrite.cmd[0]} ${args.join(' ')}`,
+      note: platformId ? undefined : '未找到 platformId，需手动执行',
+    };
+  }
+  if (kindDef.fileWrite !== undefined && kindDef.fileWrite.type !== 'file-write') {
+    return { platform: pid, kind: 'file', label: `物化 ${file}`, executable: false, note: kindDef.fileWrite.advice };
+  }
+  if (kindDef.fileWrite === undefined && kindDef.write?.type !== 'file-write') {
+    return { platform: pid, kind: 'file', label: `物化 ${file}`, executable: false, note: `平台 ${pid} 未声明附带文件写通道（fileWrite）` };
+  }
+  // file-write 平台：附带文件 = dirname(本体)/{filePath}
+  const dir = dirname(asset.source.path);
+  const target = resolve(dir, file);
+  const ok = isAbsolute(asset.source.path) && target.startsWith(dir + sep);
+  return {
+    platform: pid,
+    kind: 'file',
+    path: target,
+    executable: ok,
+    label: `写本地文件 ${target}`,
+    note: ok ? undefined : '目标路径越出技能目录或本体不是本地绝对路径',
+  };
+}
+
 /** 与 reconcile.ts 跨平台技能配对同一口径：小写去非字母数字 */
 function normName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -82,7 +162,8 @@ export function relatedSkillInstances(asset: Asset, state: RegistryState): Asset
   );
 }
 
-function channelTarget(asset: Asset, state: RegistryState, platforms: PlatformDef[]): AssetContentSyncTarget {
+function channelTarget(asset: Asset, state: RegistryState, platforms: PlatformDef[], file?: string): AssetContentSyncTarget {
+  if (file !== undefined) return fileChannelTarget(asset, state, platforms, file);
   const resolved = resolveWriteChannel(asset, state.assets, platforms);
   if (!resolved) {
     return { platform: '—', kind: 'file', label: `物化 ${asset.source.path}`, executable: false, note: '资产不匹配任何平台适配（platforms.d）' };
@@ -119,22 +200,23 @@ export function planAssetContentSync(
   asset: Asset,
   state: RegistryState,
   platforms: PlatformDef[],
-  storeRecords?: Map<string, StoreRecord>
+  storeRecords?: Map<string, StoreRecord>,
+  file?: string
 ): { blocked?: string; targets: AssetContentSyncTarget[] } {
-  const targets: AssetContentSyncTarget[] = [channelTarget(asset, state, platforms)];
+  const targets: AssetContentSyncTarget[] = [channelTarget(asset, state, platforms, file)];
 
   // 1:N：技能可部署在多个 Agent、跨多个平台，全部同名实例都对照新内容更新（各自走本平台声明通道）
   const instances = relatedSkillInstances(asset, state);
-  for (const inst of instances) targets.push(channelTarget(inst, state, platforms));
+  for (const inst of instances) targets.push(channelTarget(inst, state, platforms, file));
 
   // 库内真源只收自建资产：第三方技能不入库（store 是 first-party 真源，create-only 不回收，
   // 写进去会永久污染对账配对）；第三方编辑仅更新其部署位置（本地文件即其源头）
   if (asset.provenance === 'first-party') {
-    targets.push({ platform: 'library', kind: 'store', assetId: asset.id, executable: true, label: `更新库内真源 ${asset.id}` });
+    targets.push({ platform: 'library', kind: 'store', assetId: asset.id, executable: true, label: `更新库内真源 ${asset.id}${file ? ` · ${file}` : ''}` });
   }
   for (const inst of instances) {
     if (storeRecords?.has(inst.id)) {
-      targets.push({ platform: 'library', kind: 'store', assetId: inst.id, executable: true, label: `更新库内真源 ${inst.id}` });
+      targets.push({ platform: 'library', kind: 'store', assetId: inst.id, executable: true, label: `更新库内真源 ${inst.id}${file ? ` · ${file}` : ''}` });
     }
   }
   // 自建技能没有任何平台通道可执行时仍可入库，但如实告知：内容只进了库，生产侧未落地；
@@ -152,7 +234,8 @@ export async function executeAssetContentSave(
   assetId: string,
   content: string,
   state: RegistryState,
-  deps: AssetContentSaveDeps
+  deps: AssetContentSaveDeps,
+  file?: string
 ): Promise<AssetContentSaveResult> {
   const asset = state.assets.find((a) => a.id === assetId);
   if (!asset) return { status: 'invalid', ok: false, output: `资产不在当前采集中：${assetId}`, targets: [] };
@@ -163,13 +246,23 @@ export async function executeAssetContentSave(
   if (content.length > CONTENT_MAX_CHARS) {
     return { status: 'invalid', ok: false, output: `content 超过 ${CONTENT_MAX_CHARS} 字符上限（采集会在该上限截断，保存即漂移），请缩减后保存`, targets: [] };
   }
+  if (file !== undefined) {
+    if (typeof file !== 'string' || !isSafeSkillFilePath(file)) {
+      return { status: 'invalid', ok: false, output: 'file 必须是技能内相对路径（禁止绝对路径与 .. 穿越）', targets: [] };
+    }
+    const registered = ((asset.payload as { files?: SkillFileEntry[] }).files ?? []).some((f) => f.path === file);
+    if (!registered) {
+      return { status: 'invalid', ok: false, output: `技能未登记该附带文件：${file}（仅可编辑采集登记的 files）`, targets: [] };
+    }
+  }
 
-  const { blocked, targets } = planAssetContentSync(asset, state, deps.platforms, deps.storeRecords);
+  const { blocked, targets } = planAssetContentSync(asset, state, deps.platforms, deps.storeRecords, file);
   // blocked 且无库目标 = 真的无事可做（第三方无通道）；有库目标 = 入库但生产侧未落地
   const hasStore = targets.some((t) => t.kind === 'store');
   if (blocked && !hasStore) return { status: 'invalid', ok: false, output: blocked, targets };
 
   const whitelist = writablePaths(state);
+  const dirs = skillDirs(state);
   // 库先落地，再推生产；blocked 不拒绝入库，只在输出里明示生产侧未落地
   const lines: string[] = blocked ? [`${blocked}（本次仅写入库内真源）`] : [];
   const ordered = [...targets.filter((t) => t.kind === 'store'), ...targets.filter((t) => t.kind !== 'store')];
@@ -180,7 +273,9 @@ export async function executeAssetContentSave(
         continue;
       }
       if (t.kind === 'file' && t.path) {
-        if (!whitelist.has(t.path)) throw new Error(`拒绝写入：${t.path} 不是当前采集到的资产路径`);
+        // 本体路径须在白名单；附带文件放宽为落在任一已登记技能目录内（路径由服务端从注册文件派生）
+        const writable = whitelist.has(t.path) || (file !== undefined && dirs.some((d) => t.path!.startsWith(d + sep)));
+        if (!writable) throw new Error(`拒绝写入：${t.path} 不是当前采集到的资产路径`);
         if (deps.dryRun) {
           lines.push(`[dry-run] 将写入 ${t.path}（${Buffer.byteLength(content)} 字节）`);
           continue;
@@ -209,7 +304,7 @@ export async function executeAssetContentSave(
       } else if (t.kind === 'store' && t.assetId) {
         if (!deps.storeDir) throw new Error('storeDir 未配置，无法写库');
         const source = state.assets.find((a) => a.id === t.assetId) ?? asset;
-        const updated: Asset = { ...source, payload: { ...source.payload, content } };
+        const updated = updatedAsset(source, file, content);
         if (deps.dryRun) {
           lines.push(`[dry-run] 将重写库内真源 ${t.assetId}（指纹重算）`);
           continue;
