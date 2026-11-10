@@ -8,7 +8,9 @@
 # "The user doesn't want to take this action right now" 被拒。
 # 本防线在 agent 可控面兜底：主会话想结束回合时，若仍有 sub-agent 未结束
 # （subagents/*.meta.json finished != true），以 exit 2 阻止，直到其结束或被
-# 显式停止。fail-open：载荷缺失/目录不存在/jq 失败一律放行（exit 0）。
+# 显式停止。失效语义分级：载荷级 fail-open——载荷缺失/transcript_path 或 session_id
+# 缺失/无 subagents 目录一律放行（exit 0）；meta 级 fail-closed——单份 meta 不可读
+# 或 jq 失败按「未结束」（finished=false）计并阻止 Stop（不可验证=未结束，保守取向）。
 #
 # stdin: CC Stop 载荷（session_id / transcript_path / stop_hook_active）。
 # 输出：无未结束 sub-agent → 无输出 exit 0（放行）；
