@@ -40,7 +40,11 @@ done
 SECTION=$(awk '/^### 5\.1 /{flag=1;next}/^### /{flag=0}flag' "$GUIDE")
 
 missing=0
-while IFS= read -r name; do
+# SEE-1559 hardener O2 修复：node join("\n") 无尾换行 → read 在 EOF 无换行时
+# 返回非零、循环体不执行 → 排序末位规则名（stop-guard-live-subagents）从未被
+# 校验（未登记规则置于末位时本门假绿，变异复跑证实）。双保险收口：
+# ① 产出端补尾换行；② 消费端 `|| [ -n "$name" ]` 兜底未终止末行。
+while IFS= read -r name || [ -n "$name" ]; do
   [ -z "$name" ] && continue
   # 表内登记形态：规则名/挂载名以反引号或裸文本出现即可（含 rules-v2 后缀注明）
   if ! grep -qF "$name" <<< "$SECTION"; then
@@ -58,7 +62,7 @@ for (const f of fs.readdirSync(rd).sort()) {
   const part = JSON.parse(fs.readFileSync(require("path").join(rd, f), "utf8"));
   for (const r of part.rules || []) names.push(r.name);
 }
-process.stdout.write(names.join("\n"));
+process.stdout.write(names.join("\n") + "\n");
 ' "$ROOT/claude-hooks/unified/rules-v2.json" "$ROOT/claude-hooks/unified/rules.d")
 
 if [ "$missing" -eq 0 ]; then

@@ -221,12 +221,22 @@ done
 [ "$EXEC_MISSING" -eq 0 ] && pass "5b: entry-point .sh artifacts executable in repo checkout" || true
 
 # 5c 清单覆盖挂载脚本全集（事故 6 回归钉，与部署无关的清单完整性）
+# SEE-1559 hardener O3 修复：need 原先仅取自 runscript-mounts.json——非该文件来源的
+# run_script 目标（stop-guard-subagents.sh 等）从清单漏列不会被本门发现（变异复跑
+# 证实假绿）。改为 union 全部 rules.d/*.json 的 run_script 目标。
 MOUNT_SCRIPTS=$(node -e "
-const r = require('$REPO_ROOT/claude-hooks/unified/rules.d/runscript-mounts.json');
+const fs = require('fs'), path = require('path');
+const rd = '$REPO_ROOT/claude-hooks/unified/rules.d';
 const m = require('$MANIFEST');
-const need = [...new Set(r.rules.filter(x=>x.action[0].op==='run_script').map(x=>x.action[0].path.replace('\${HOOKS_DIR}/','')))].sort();
+const need = new Set();
+for (const f of fs.readdirSync(rd).sort()) {
+  if (!f.endsWith('.json')) continue;
+  const part = JSON.parse(fs.readFileSync(path.join(rd, f), 'utf8'));
+  for (const r of part.rules || []) for (const a of r.action || [])
+    if (a.op === 'run_script' && a.path) need.add(a.path.replace('\${HOOKS_DIR}/',''));
+}
 const have = m.runtime_artifacts.filter(a=>!a.startsWith('unified/')).sort();
-const missing = need.filter(n=>!have.includes(n));
+const missing = [...need].sort().filter(n=>!have.includes(n));
 console.log(missing.length === 0 ? 'COMPLETE' : 'MISSING:' + missing.join(','));
 " 2>/dev/null)
 [ "$MOUNT_SCRIPTS" = "COMPLETE" ] && pass "5c: manifest covers all rules.d run_script targets" \
