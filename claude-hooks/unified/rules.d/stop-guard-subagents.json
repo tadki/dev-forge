@@ -1,0 +1,25 @@
+{
+  "description": "SEE-1559 根因防线（agent 可控面）：Stop 时点若存在未结束 sub-agent（session subagents/*.meta.json finished != true）则 exit 2 阻止结束回合。根因定案：Multica daemon 在 result 事件关闭 stdin（closeAfterControls），supplement 会话经 control 协议注册的 PreToolUse/PostToolUse hook 被 sub-agent 继承，stdin 关闭后 hook callback 永无应答，sub-agent 全部后续工具调用以「The user doesn't want to take this action right now」被拒（2026-11-10 SEE-1542 并行评审实测：首批可执行→主会话 turn 结束后全拒）。本规则使主会话在 sub-agent 存活期间不得 yield，回合保持活动即不触发 result→关流。stop_hook_active=true 时脚本自守放行（防 Stop 阻止死循环）；载荷缺失/无 subagents 目录/jq 失败 fail-open 放行。仅覆盖 Agent 工具 sub-agent（有 meta sidecar），不覆盖 run_in_background Bash 任务。",
+  "rules": [
+    {
+      "name": "stop-guard-live-subagents",
+      "owner": "Archi",
+      "blocking": true,
+      "version_note": "SEE-1559 §SPEC-005 agent 面实施。判定与 stop_hook_active 防环均由脚本承载（引擎 when 对布尔缺省值求值不稳，脚本内自检为权威道）。协议通道：run_script deny_exit_codes=[2] → 引擎 exitChannel 原样直通（exit 2 + stderr），CC 视为 Stop 阻塞错误并把 stderr 展示给模型，与 dev-forge 既有「fail-close 例外经 exit2 直通」通道一致（engine.js §run-script-exit2 非 PreToolUse 分支）。",
+      "on": {
+        "in": [
+          "Stop"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "run_script",
+          "path": "${HOOKS_DIR}/scripts/stop-guard-subagents.sh",
+          "timeout_ms": 5000,
+          "deny_exit_codes": [2]
+        }
+      ]
+    }
+  ]
+}
