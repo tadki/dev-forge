@@ -127,15 +127,24 @@ export function planAssetContentSync(
   const instances = relatedSkillInstances(asset, state);
   for (const inst of instances) targets.push(channelTarget(inst, state, platforms));
 
-  // 库内真源：编辑资产必入库（编辑即「先进入源头库」）；相关实例已有记录才重写，不给未声明资产建档
-  targets.push({ platform: 'library', kind: 'store', assetId: asset.id, executable: true, label: `更新库内真源 ${asset.id}` });
+  // 库内真源只收自建资产：第三方技能不入库（store 是 first-party 真源，create-only 不回收，
+  // 写进去会永久污染对账配对）；第三方编辑仅更新其部署位置（本地文件即其源头）
+  if (asset.provenance === 'first-party') {
+    targets.push({ platform: 'library', kind: 'store', assetId: asset.id, executable: true, label: `更新库内真源 ${asset.id}` });
+  }
   for (const inst of instances) {
     if (storeRecords?.has(inst.id)) {
       targets.push({ platform: 'library', kind: 'store', assetId: inst.id, executable: true, label: `更新库内真源 ${inst.id}` });
     }
   }
-  // 没有任何平台通道可执行时仍可入库，但如实告知：内容只进了库，生产侧未落地
-  const blocked = targets.some((t) => t.kind !== 'store' && t.executable) ? undefined : '无任何可执行的平台同步通道';
+  // 自建技能没有任何平台通道可执行时仍可入库，但如实告知：内容只进了库，生产侧未落地；
+  // 第三方无库目标且无通道 → 无事可做，直接拒绝
+  const hasStore = targets.some((t) => t.kind === 'store');
+  const blocked = targets.some((t) => t.kind !== 'store' && t.executable)
+    ? undefined
+    : hasStore
+      ? '无任何可执行的平台同步通道'
+      : '无任何可执行的同步通道（第三方技能不入库，也无平台写通道）';
   return { blocked, targets };
 }
 
@@ -156,6 +165,9 @@ export async function executeAssetContentSave(
   }
 
   const { blocked, targets } = planAssetContentSync(asset, state, deps.platforms, deps.storeRecords);
+  // blocked 且无库目标 = 真的无事可做（第三方无通道）；有库目标 = 入库但生产侧未落地
+  const hasStore = targets.some((t) => t.kind === 'store');
+  if (blocked && !hasStore) return { status: 'invalid', ok: false, output: blocked, targets };
 
   const whitelist = writablePaths(state);
   // 库先落地，再推生产；blocked 不拒绝入库，只在输出里明示生产侧未落地

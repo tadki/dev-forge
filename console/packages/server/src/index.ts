@@ -87,7 +87,8 @@ const handler = createHandler({
       exec: execCapture,
       dryRun: dryActions,
     });
-    if (result.status === 'ok') await engine.refreshReconcileAfterAction();
+    // failed 也已部分执行（入库/写文件），同样刷新对账，避免卡片陈旧
+    if (result.status !== 'invalid') await engine.refreshReconcileAfterAction();
     return { status: result.status, ok: result.ok, output: result.output };
   },
 });

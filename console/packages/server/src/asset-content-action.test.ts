@@ -124,6 +124,30 @@ describe('planAssetContentSync', () => {
     expect(targets.some((t) => t.kind === 'command')).toBe(true);
   });
 
+  it('第三方技能不入库：无 store 目标，仅更新其部署通道', () => {
+    const vendor = mk('skill:user-vendor', {
+      name: 'vendor',
+      provenance: 'third-party',
+      payload: { content: 'vendor body' },
+    });
+    const { blocked, targets } = planAssetContentSync(vendor, stateWith([vendor]), DEFAULT_PLATFORMS);
+    expect(blocked).toBeUndefined();
+    expect(targets.some((t) => t.kind === 'store')).toBe(false);
+    expect(targets[0]).toMatchObject({ platform: 'claude-code', kind: 'file', path: vendor.source.path });
+  });
+
+  it('第三方技能且无可执行通道 → 无事可做，invalid', () => {
+    const vendor = mk('skill:multica-vendor', {
+      name: 'vendor-x',
+      provenance: 'third-party',
+      platforms: ['multica'],
+      source: { collector: 'multica', path: 'multica://skills/v' },
+      payload: {},
+    });
+    const { blocked } = planAssetContentSync(vendor, stateWith([vendor]), DEFAULT_PLATFORMS);
+    expect(blocked).toContain('第三方技能不入库');
+  });
+
   it('无可执行平台通道 → blocked（但编辑侧库目标仍产出）', () => {
     const orphan = mk('skill:multica-orphan', {
       name: 'orphan',
@@ -256,6 +280,21 @@ describe('executeAssetContentSave', () => {
     expect(r.status).toBe('failed');
     expect(r.ok).toBe(false);
     expect(r.output).toContain('storeDir');
+  });
+
+  it('第三方技能保存：只写部署文件，不创建库记录', async () => {
+    const { asset: vendor, path: skillPath } = await realSkill('vendor-demo', 'vendor');
+    const thirdParty = { ...vendor, provenance: 'third-party' as const };
+    const storeDir = join(dir, 'store-vendor');
+    const r = await executeAssetContentSave(thirdParty.id, 'new vendor body', stateWith([thirdParty]), {
+      platforms: DEFAULT_PLATFORMS,
+      storeDir,
+      exec: execOk,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.output).not.toContain('库内真源');
+    expect(await readFile(skillPath, 'utf8')).toBe('new vendor body');
+    expect((await loadFirstPartyStore(storeDir)).records.size).toBe(0);
   });
 
   it('无可执行平台通道 → 仍入库并明示生产侧未落地', async () => {

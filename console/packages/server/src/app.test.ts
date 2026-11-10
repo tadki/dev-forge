@@ -364,6 +364,10 @@ describe('api endpoints', () => {
     const detail = await get(`/api/assets/${encodeURIComponent('skill:user-editable')}`, TOKEN);
     expect(detail.status).toBe(200);
     expect(detail.body.asset.payload.content).toBe('original body');
+
+    // 非法 URI 编码 → 400（客户端错误），不是 500
+    expect((await post({ confirm: true, content: 'x' }, '%')).status).toBe(400);
+    expect((await get('/api/assets/%', TOKEN)).status).toBe(400);
   });
 
   it('unknown path 404s as json', async () => {

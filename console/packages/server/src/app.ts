@@ -44,6 +44,15 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' }).end(body);
 }
 
+/** URI 解码：非法编码（如 %）按客户端错误 400 返回，而不是外层兜底成 500 */
+function safeDecode(raw: string): { ok: true; value: string } | { ok: false } {
+  try {
+    return { ok: true, value: decodeURIComponent(raw) };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function liteAsset(a: Asset): Record<string, unknown> {
   const { payload, ...rest } = a;
   const lightPayload: Record<string, unknown> = { ...payload };
@@ -194,16 +203,20 @@ export function createHandler(deps: AppDeps) {
         if (body.content.length > CONTENT_MAX_CHARS) {
           return json(res, 400, { error: `content 超过 ${CONTENT_MAX_CHARS} 字符上限（采集会在该上限截断，保存即漂移），请缩减后保存` });
         }
-        const assetId = decodeURIComponent(contentMatch[1]);
-        const result = await deps.saveAssetContent(assetId, body.content);
-        if (result.status === 'invalid') return json(res, 400, { error: result.output, assetId });
-        if (result.status === 'ok') deps.onAfterAction?.();
-        return json(res, 200, { ok: result.ok, assetId, output: result.output });
+        const assetId = safeDecode(contentMatch[1]);
+        if (!assetId.ok) return json(res, 400, { error: 'assetId 编码非法' });
+        const result = await deps.saveAssetContent(assetId.value, body.content);
+        if (result.status === 'invalid') return json(res, 400, { error: result.output, assetId: assetId.value });
+        // 走到这里 ok/failed 都已实际执行（failed=部分执行），都触发重采刷新对账视图
+        deps.onAfterAction?.();
+        return json(res, 200, { ok: result.ok, assetId: assetId.value, output: result.output });
       }
 
       const assetMatch = path.match(/^\/api\/assets\/(.+)$/);
       if (assetMatch && req.method === 'GET') {
-        const id = decodeURIComponent(assetMatch[1]);
+        const decoded = safeDecode(assetMatch[1]);
+        if (!decoded.ok) return json(res, 400, { error: 'assetId 编码非法' });
+        const id = decoded.value;
         const a = state.assets.find((x) => x.id === id);
         if (!a) return json(res, 404, { error: 'asset not found', id });
         const inbound = state.relations.filter((r) => r.to === id);
