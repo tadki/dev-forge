@@ -5,7 +5,7 @@
       "name": "stop-guard-live-subagents",
       "owner": "Archi",
       "blocking": true,
-      "version_note": "SEE-1559 §SPEC-005 agent 面实施。判定与 stop_hook_active 防环均由脚本承载（引擎 when 对布尔缺省值求值不稳，脚本内自检为权威道）。协议通道：run_script deny_exit_codes=[2] → 引擎 exitChannel 原样直通（exit 2 + stderr），CC 视为 Stop 阻塞错误并把 stderr 展示给模型，与 dev-forge 既有「fail-close 例外经 exit2 直通」通道一致（engine.js §run-script-exit2 非 PreToolUse 分支）。",
+      "version_note": "SEE-1559 §SPEC-005 agent 面实施。判定与 stop_hook_active 防环均由脚本承载（本规则不设 when 判别为设计选择：防环与判定统一在脚本内自检，单一权威道；非引擎缺陷——实读 when-ops.js payload 分支，equals:false 对缺省字段语义明确：undefined/null/false 视为未置位即命中、显式 true 不命中，早前「引擎 when 对布尔缺省值求值不稳」表述失实，SEE-1559 tidy 补充轮更正）。协议通道：run_script deny_exit_codes=[2] → 引擎 exitChannel 原样直通（exit 2 + stderr），CC 视为 Stop 阻塞错误并把 stderr 展示给模型，与 dev-forge 既有「fail-close 例外经 exit2 直通」通道一致（engine.js §run-script-exit2 非 PreToolUse 分支）。",
       "on": {
         "in": [
           "Stop"
