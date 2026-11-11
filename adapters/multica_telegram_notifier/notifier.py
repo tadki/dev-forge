@@ -7,7 +7,8 @@ Run modes:
 
 Exit codes: 0 delivered (once) / 2 config failure /
 3 stopped without delivering / 4 auth permanently rejected (--once) /
-5 delivery channel permanently down (--once) / 130 interrupted.
+5 delivery channel permanently down (--once) / 6 persistent retryable
+delivery failures (--once) / 130 interrupted.
 """
 
 import argparse
@@ -45,6 +46,7 @@ EXIT_CONFIG = 2
 EXIT_STOPPED = 3
 EXIT_AUTH_REJECTED = 4
 EXIT_CHANNEL_FAILED = 5
+EXIT_DELIVERY_FAILED = 6
 EXIT_INTERRUPTED = 130
 
 
@@ -88,6 +90,7 @@ class Notifier:
         self._chat_id = config.telegram_chat_id
         self._auth_failures = 0
         self._channel_failures = 0
+        self._transient_failures = 0
 
     def run(self) -> int:
         attempt = 0
@@ -99,37 +102,58 @@ class Notifier:
             except AuthRejected as exc:
                 self.logger.error("auth_rejected", error=str(exc))
                 # Auth happens before any Telegram send, so this session never
-                # tested the channel — the consecutive-failure run breaks here.
+                # tested the channel — every failure run breaks here.
                 self._channel_failures = 0
+                self._transient_failures = 0
                 self._auth_failures += 1
                 if self._once_bound_reached(self._auth_failures):
                     self.logger.error("auth_gave_up", attempts=self._auth_failures)
                     return EXIT_AUTH_REJECTED
             except (SessionError, WebSocketError, TelegramError, OSError) as exc:
                 self.logger.warning("session_ended", error=str(exc))
-                if isinstance(exc, TelegramError) and exc.is_channel_error:
-                    self._channel_failures += 1
-                    if self._once_bound_reached(self._channel_failures):
-                        self.logger.error("channel_gave_up", attempts=self._channel_failures)
-                        return EXIT_CHANNEL_FAILED
-                else:
-                    # Any other session outcome (ws drop, protocol deviation)
-                    # ends the run of consecutive channel failures.
-                    self._channel_failures = 0
+                fired = self._session_failure_exit(exc)
+                if fired is not None:
+                    return fired
             if delivered:
                 self._channel_failures = 0
+                self._transient_failures = 0
                 return EXIT_OK
             self._wait_backoff(attempt)
             attempt += 1
         self.logger.info("stopped")
         return EXIT_STOPPED
 
+    def _session_failure_exit(self, exc) -> int | None:
+        """Counts a session outcome toward the --once bounds; returns the exit
+        code when a bound fired, else None (and resets runs it breaks)."""
+        if isinstance(exc, TelegramError) and exc.is_channel_error:
+            self._channel_failures += 1
+            self._transient_failures = 0
+            if self._once_bound_reached(self._channel_failures):
+                self.logger.error("channel_gave_up", attempts=self._channel_failures)
+                return EXIT_CHANNEL_FAILED
+            return None
+        if isinstance(exc, TelegramError):
+            # E-1: persistent retryable failures (stuck 500/429 upstream) must
+            # also end a --once probe deterministically — without quarantining
+            # the still-pending notification.
+            self._transient_failures += 1
+            self._channel_failures = 0
+            if self._once_bound_reached(self._transient_failures):
+                self.logger.error("delivery_gave_up", attempts=self._transient_failures)
+                return EXIT_DELIVERY_FAILED
+            return None
+        # Any other session outcome (ws drop, protocol deviation) ends the
+        # runs of consecutive channel and transient failures.
+        self._channel_failures = 0
+        self._transient_failures = 0
+        return None
+
     def _once_bound_reached(self, failures: int) -> bool:
         # A --once live probe must terminate deterministically once a run of
-        # consecutive failures — channel failures (bot token invalid, bot
-        # blocked, chat missing) or auth rejections (permanently bad token) —
-        # fills one full backoff cycle; any other session outcome resets the
-        # run (see run()).
+        # consecutive failures — channel failures, retryable delivery
+        # failures, or auth rejections — fills one full backoff cycle; any
+        # other session outcome resets the runs (see run()).
         if not self.once:
             return False
         limit = len(self.config.reconnect_backoff or (1.0,))

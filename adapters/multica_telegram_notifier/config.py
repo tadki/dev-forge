@@ -138,7 +138,8 @@ def load_config(env: Mapping) -> Config:
             required("NOTIFIER_TELEGRAM_CHAT_ID"), "NOTIFIER_TELEGRAM_CHAT_ID"),
         server_url=server_url.rstrip("/"),
         workspace_id=required("NOTIFIER_WORKSPACE_ID"),
-        state_file=optional("NOTIFIER_STATE_FILE", default_state_file()),
+        state_file=os.path.expanduser(
+            optional("NOTIFIER_STATE_FILE", default_state_file())),
         telegram_api_base=optional("NOTIFIER_TELEGRAM_API_BASE", DEFAULT_TELEGRAM_API_BASE).rstrip("/"),
         reconnect_backoff=_parse_delays(
             optional("NOTIFIER_RECONNECT_BACKOFF", "1,2,4,8,15,30"), "NOTIFIER_RECONNECT_BACKOFF"),
@@ -150,8 +151,13 @@ def load_config(env: Mapping) -> Config:
 
 
 def load_config_file(path: str) -> Config:
-    with open(path, "r", encoding="utf-8") as handle:
-        text = handle.read()
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except UnicodeDecodeError as exc:
+        # A non-UTF-8 config file is a configuration error under the CLI
+        # contract (config_error JSON + exit 2), not a traceback crash.
+        raise ConfigError(f"config file is not valid UTF-8: {path}") from exc
     merged = dict(os.environ)
     merged.update(parse_env_text(text))
     return load_config(merged)
