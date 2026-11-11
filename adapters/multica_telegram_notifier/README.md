@@ -64,8 +64,10 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 - `--once`：投递第一条通知后以 exit 0 退出；配置缺失或无效（含 chat ID
   非正整数、超时/退避含 `nan`/`inf`）exit 2；PAT 被永久拒绝时在一个退避
   周期后以 exit 4 确定性退出；投递阶段通道持续不可用（bot 被拉黑、chat
-  丢失等，连续失败不被健康会话打断）在一个退避周期后以 exit 5 确定性退出
-  （live probe 不会无限重试）。
+  丢失等，连续失败不被健康会话打断）在一个退避周期后以 exit 5 确定性退出；
+  持续的可重试发送失败（如上游持续 500/429，连续失败不被健康会话打断）
+  在一个退避周期后以 exit 6 确定性退出——两种失败都不会把通知标记为
+  已处理，恢复后自动补投（live probe 不会无限重试）。
 - `--log-json <path>`：结构化 JSONL 日志追加写入该文件（stderr 同步输出）。
   日志中凭据字段一律被替换为 `[REDACTED]`，可安全留存作证据。
 - 通知触发源：任何会让你收到 Inbox 通知的真实动作（例如某个 agent 的正常汇报
@@ -81,7 +83,7 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 | `NOTIFIER_MULTICA_SERVER_URL` | 是 | — | Multica 部署根地址（http/https） |
 | `NOTIFIER_WORKSPACE_ID` | 是 | — | 只转发该 workspace 的 `inbox:new` |
 | `NOTIFIER_TELEGRAM_API_BASE` | 否 | `https://api.telegram.org` | 测试可指向本地伪 API |
-| `NOTIFIER_STATE_FILE` | 否 | `~/.local/state/dev-forge/multica-telegram-notifier/state.json` | 去重状态文件 |
+| `NOTIFIER_STATE_FILE` | 否 | `~/.local/state/dev-forge/multica-telegram-notifier/state.json` | 去重状态文件（支持 `~` 展开） |
 | `NOTIFIER_RECONNECT_BACKOFF` | 否 | `1,2,4,8,15,30` | 断线重连退避秒数序列 |
 | `NOTIFIER_SEND_RETRIES` | 否 | `1,2,4` | sendMessage 失败重试间隔秒数 |
 | `NOTIFIER_CONNECT_TIMEOUT` | 否 | `10` | 连接/HTTP 超时秒数 |

@@ -90,6 +90,24 @@ class TestLoadConfig:
         assert cfg.connect_timeout == 2.5
         assert cfg.read_timeout == 2.0
 
+    def test_state_file_tilde_is_expanded(self):
+        # E-2: the template documents a `~` path; a literal "~" directory in
+        # the CWD would be silently wrong, so expanduser is part of loading.
+        env = dict(REQUIRED)
+        env["NOTIFIER_STATE_FILE"] = "~/.local/state/dev-forge/x/state.json"
+        cfg = load_config(env)
+        assert not cfg.state_file.startswith("~")
+        assert cfg.state_file == os.path.expanduser("~/.local/state/dev-forge/x/state.json")
+
+    def test_non_utf8_config_file_raises_config_error(self, tmp_path):
+        # E-3: a non-UTF-8 config file is a configuration error (naming the
+        # file), not an unhandled UnicodeDecodeError traceback.
+        path = tmp_path / "bad.env"
+        path.write_bytes(b"\xff\xfe not utf-8 at all\n")
+        with pytest.raises(ConfigError) as exc:
+            load_config_file(str(path))
+        assert "bad.env" in str(exc.value) or "UTF-8" in str(exc.value)
+
     def test_invalid_backoff_fails_naming_key(self):
         env = dict(REQUIRED)
         env["NOTIFIER_RECONNECT_BACKOFF"] = "1,abc"

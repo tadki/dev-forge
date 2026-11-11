@@ -15,6 +15,7 @@ from multica_telegram_notifier.notifier import (
     EXIT_AUTH_REJECTED,
     EXIT_CHANNEL_FAILED,
     EXIT_CONFIG,
+    EXIT_DELIVERY_FAILED,
     EXIT_OK,
     EXIT_STOPPED,
     Notifier,
@@ -256,6 +257,17 @@ class TestStartupFailures:
         finally:
             server.close()
 
+    def test_non_utf8_config_file_exits_config_error(self, tmp_path, capsys):
+        # E-3: invalid config must follow the CLI contract — config_error JSON
+        # on stderr and exit 2, never a raw traceback with exit 1.
+        bad_path = tmp_path / "bad.env"
+        bad_path.write_bytes(b"\xff\xfe not utf-8 at all\n")
+        from multica_telegram_notifier.notifier import main
+        code = main(["--config", str(bad_path)])
+        assert code == EXIT_CONFIG
+        stderr = capsys.readouterr().err
+        assert "config_error" in stderr
+
 
 class TestPermanentSendFailure:
     def test_non_retryable_failure_quarantines_item_then_delivers_next(self, tmp_path, fake_telegram):
@@ -490,6 +502,54 @@ class TestOnceChannelBound:
             notifier, _cfg, _capture = build(
                 tmp_path, server, fake_telegram,
                 env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
+            notifier.once = False
+            stop = threading.Event()
+            notifier.stop_event = stop
+            stopper = threading.Timer(0.8, stop.set)
+            stopper.start()
+            thread, result = run_in_thread(notifier)
+            stopper.cancel()
+            assert result.get("code") == EXIT_STOPPED, result
+            assert len(send_calls(fake_telegram)) > 2, "steady mode retries beyond the once-bound"
+        finally:
+            server.close()
+
+    def test_once_gives_up_on_persistent_transient_failure_exit_6(self, tmp_path, fake_telegram):
+        # E-1: persistent retryable (non-channel) failures — e.g. a stuck
+        # 500/429 upstream — must end a --once probe deterministically while
+        # keeping the item pending (never quarantined).
+        fake_telegram.responses = [
+            (500, {"ok": False, "error_code": 500, "description": "internal error"}),
+        ] * 4  # each session burns send_retries before surfacing the failure
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
+                                       ("sleep", 0.1)])
+        try:
+            notifier, cfg, capture = build(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05",
+                          "NOTIFIER_SEND_RETRIES": "0.01"})
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_DELIVERY_FAILED, result
+            assert capture.events("delivery_gave_up")
+            assert len(capture.events("delivery_failed_permanent")) == 0
+            assert len(capture.events("channel_gave_up")) == 0
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert not state.is_seen("probe-item")
+        finally:
+            server.close()
+
+    def test_steady_mode_keeps_retrying_transient_failure(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (500, {"ok": False, "error_code": 500, "description": "internal error"}),
+        ] * 20
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
+                                       ("sleep", 0.1)])
+        try:
+            notifier, _cfg, _capture = build(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05",
+                          "NOTIFIER_SEND_RETRIES": "0.01"})
             notifier.once = False
             stop = threading.Event()
             notifier.stop_event = stop
