@@ -27,9 +27,12 @@ def _truncate_utf16(text: str, limit: int = MAX_TEXT_LENGTH) -> str:
     # Telegram measures length in UTF-16 code units (non-BMP chars count 2),
     # so cutting by Python len() alone can still exceed the limit for
     # emoji-heavy text; cut on the UTF-16 byte stream instead.
-    encoded = text.encode("utf-16-le")
+    # errors="ignore" also drops lone surrogates (possible in upstream
+    # "\udXXX" escapes) which would otherwise raise UnicodeEncodeError and
+    # crash the notifier loop.
+    encoded = text.encode("utf-16-le", errors="ignore")
     if len(encoded) <= limit * 2:
-        return text
+        return encoded.decode("utf-16-le")
     # errors="ignore" drops a dangling lone surrogate left by the byte cut.
     return encoded[: limit * 2].decode("utf-16-le", errors="ignore")
 
@@ -137,10 +140,14 @@ class TelegramClient:
         if not isinstance(body, dict) or body.get("ok") is not True:
             description = body.get("description", "invalid response") if isinstance(body, dict) else "invalid response"
             raw_code = body.get("error_code") if isinstance(body, dict) else None
+            error_code = raw_code if isinstance(raw_code, int) else None
+            # HTTP 200 + ok:false: classify by the body's error_code so the
+            # channel/message split matches the HTTP-status path.
             raise TelegramError(
                 f"telegram {method} failed: {description}",
                 retryable=False,
-                error_code=raw_code if isinstance(raw_code, int) else None)
+                error_code=error_code,
+                is_channel_error=error_code in CHANNEL_HTTP_CODES)
         return body
 
     @staticmethod

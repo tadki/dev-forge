@@ -57,7 +57,9 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 ```
 
 - `--once`：投递第一条通知后以 exit 0 退出；chat ID 发现失败或配置缺失 exit 2；
-  PAT 被永久拒绝时在一个退避周期后以 exit 4 确定性退出（live probe 不会无限重试）。
+  PAT 被永久拒绝时在一个退避周期后以 exit 4 确定性退出；投递通道持续不可用
+  （bot token 失效、bot 被拉黑等）在一个退避周期后以 exit 5 确定性退出
+  （live probe 不会无限重试）。
 - `--log-json <path>`：结构化 JSONL 日志追加写入该文件（stderr 同步输出）。
   日志中凭据字段一律被替换为 `[REDACTED]`，可安全留存作证据。
 - 通知触发源：任何会让你收到 Inbox 通知的真实动作（例如某个 agent 的正常汇报

@@ -119,6 +119,23 @@ class TestTextLengthLimit:
         assert len(body["text"].encode("utf-16-le")) // 2 == 4096
         assert body["text"].startswith("a" * 4000)
 
+    def test_lone_surrogate_does_not_crash_and_is_dropped(self, fake_telegram):
+        # A lone surrogate (e.g. from upstream "\ud800" escapes) must not
+        # blow up the UTF-16 encode inside truncation — it is dropped.
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        result = client.send_message(42, "hi \ud800 there", retries=retries, sleep=sleep)
+        assert result == {"message_id": 4242}
+        _path, body = fake_telegram.requests[0]
+        assert "hi  there" == body["text"]
+        assert "\ud800" not in body["text"]
+
+    def test_lone_surrogate_with_emoji_truncated_safely(self, fake_telegram):
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        client.send_message(42, "🚀" * 3000 + "\udfff", retries=retries, sleep=sleep)
+        _path, body = fake_telegram.requests[0]
+        assert len(body["text"].encode("utf-16-le")) // 2 == 4096
+        assert "\udfff" not in body["text"]
+
 
 class TestErrorClassification:
     def test_http_401_is_channel_error(self, fake_telegram):
@@ -170,6 +187,26 @@ class TestErrorClassification:
             client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
         assert exc.value.retryable is True
         assert exc.value.is_channel_error is True
+
+    def test_http_200_ok_false_with_channel_code_is_channel_error(self, fake_telegram):
+        # Some proxies/relays answer HTTP 200 with ok:false in the body; the
+        # channel/message classification must match the HTTP-status path.
+        fake_telegram.responses = [(200, {"ok": False, "error_code": 401,
+                                          "description": "Unauthorized"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.is_channel_error is True
+        assert exc.value.retryable is False
+
+    def test_http_200_ok_false_with_400_is_message_level(self, fake_telegram):
+        fake_telegram.responses = [(200, {"ok": False, "error_code": 400,
+                                          "description": "Bad Request: message text is empty"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.is_channel_error is False
+        assert exc.value.retryable is False
 
     def test_error_code_parsed_into_exception(self, fake_telegram):
         fake_telegram.responses = [(400, {"ok": False, "error_code": 400,
