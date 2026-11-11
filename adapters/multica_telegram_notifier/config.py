@@ -15,6 +15,9 @@ DEFAULT_TELEGRAM_API_BASE = "https://api.telegram.org"
 DEFAULT_RECONNECT_BACKOFF = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
 DEFAULT_SEND_RETRIES = (1.0, 2.0, 4.0)
 DEFAULT_CONNECT_TIMEOUT = 10.0
+# Must exceed the Multica server ping interval (~54 s): a longer quiet
+# stretch means the link is dead and the session should be rebuilt.
+DEFAULT_READ_TIMEOUT = 90.0
 
 REQUIRED_KEYS = (
     "NOTIFIER_MULTICA_PAT",
@@ -39,6 +42,7 @@ class Config:
     reconnect_backoff: tuple
     send_retries: tuple
     connect_timeout: float
+    read_timeout: float
 
 
 def parse_env_text(text: str) -> dict:
@@ -76,6 +80,16 @@ def _parse_delays(raw: str, key: str) -> tuple:
     return tuple(delays)
 
 
+def _parse_positive_seconds(raw: str, key: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} is not a number: {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{key} must be positive")
+    return value
+
+
 def load_config(env: Mapping) -> Config:
     def required(key: str) -> str:
         value = env.get(key)
@@ -93,13 +107,12 @@ def load_config(env: Mapping) -> Config:
         value = env.get(key)
         return default if value is None or not value.strip() else value.strip()
 
-    timeout_raw = optional("NOTIFIER_CONNECT_TIMEOUT", str(DEFAULT_CONNECT_TIMEOUT))
-    try:
-        connect_timeout = float(timeout_raw)
-    except ValueError as exc:
-        raise ConfigError(f"NOTIFIER_CONNECT_TIMEOUT is not a number: {timeout_raw!r}") from exc
-    if connect_timeout <= 0:
-        raise ConfigError("NOTIFIER_CONNECT_TIMEOUT must be positive")
+    connect_timeout = _parse_positive_seconds(
+        optional("NOTIFIER_CONNECT_TIMEOUT", str(DEFAULT_CONNECT_TIMEOUT)),
+        "NOTIFIER_CONNECT_TIMEOUT")
+    read_timeout = _parse_positive_seconds(
+        optional("NOTIFIER_READ_TIMEOUT", str(DEFAULT_READ_TIMEOUT)),
+        "NOTIFIER_READ_TIMEOUT")
 
     return Config(
         multica_pat=required("NOTIFIER_MULTICA_PAT"),
@@ -113,6 +126,7 @@ def load_config(env: Mapping) -> Config:
         send_retries=_parse_delays(
             optional("NOTIFIER_SEND_RETRIES", "1,2,4"), "NOTIFIER_SEND_RETRIES"),
         connect_timeout=connect_timeout,
+        read_timeout=read_timeout,
     )
 
 

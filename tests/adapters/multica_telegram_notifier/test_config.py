@@ -48,6 +48,7 @@ class TestLoadConfig:
         assert cfg.reconnect_backoff == (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
         assert cfg.send_retries == (1.0, 2.0, 4.0)
         assert cfg.connect_timeout == 10.0
+        assert cfg.read_timeout == 90.0
         assert cfg.state_file.endswith("state.json")
 
     @pytest.mark.parametrize("key", list(REQUIRED))
@@ -77,6 +78,7 @@ class TestLoadConfig:
             "NOTIFIER_RECONNECT_BACKOFF": "0.01,0.02",
             "NOTIFIER_SEND_RETRIES": "0.05",
             "NOTIFIER_CONNECT_TIMEOUT": "2.5",
+            "NOTIFIER_READ_TIMEOUT": "2",
         })
         cfg = load_config(env)
         assert cfg.telegram_api_base == "http://127.0.0.1:1"
@@ -84,6 +86,7 @@ class TestLoadConfig:
         assert cfg.reconnect_backoff == (0.01, 0.02)
         assert cfg.send_retries == (0.05,)
         assert cfg.connect_timeout == 2.5
+        assert cfg.read_timeout == 2.0
 
     def test_invalid_backoff_fails_naming_key(self):
         env = dict(REQUIRED)
@@ -95,6 +98,19 @@ class TestLoadConfig:
     def test_negative_timeout_fails(self):
         env = dict(REQUIRED)
         env["NOTIFIER_CONNECT_TIMEOUT"] = "-1"
+        with pytest.raises(ConfigError):
+            load_config(env)
+
+    def test_non_numeric_read_timeout_fails(self):
+        env = dict(REQUIRED)
+        env["NOTIFIER_READ_TIMEOUT"] = "abc"
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert "NOTIFIER_READ_TIMEOUT" in str(exc.value)
+
+    def test_non_positive_read_timeout_fails(self):
+        env = dict(REQUIRED)
+        env["NOTIFIER_READ_TIMEOUT"] = "0"
         with pytest.raises(ConfigError):
             load_config(env)
 

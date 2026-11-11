@@ -34,8 +34,8 @@ def _run_in_thread(notifier):
     return thread, result
 
 
-def _build(tmp_path, multica, telegram):
-    cfg = load_config(make_env(multica, telegram, tmp_path))
+def _build(tmp_path, multica, telegram, env_over=None):
+    cfg = load_config(make_env(multica, telegram, tmp_path, **(env_over or {})))
     logger = JsonLogger(Redactor([cfg.multica_pat, cfg.telegram_bot_token]),
                         stream=io.StringIO(), file_path=str(tmp_path / "probe.jsonl"))
     tg, state, ws_factory = build_components(cfg, ws_cls=WSClient)
@@ -46,7 +46,10 @@ class TestAuthFailureRecovery:
     def test_rejected_then_accepted_delivers(self, tmp_path, fake_telegram):
         server = FakeMulticaWS(reject_auth_times=2, script=[("text", make_inbox_frame())])
         try:
-            notifier, _cfg = _build(tmp_path, server, fake_telegram)
+            # Four-entry backoff so the once-mode auth bound (== len(backoff))
+            # does not fire before the third, accepted connection.
+            notifier, _cfg = _build(tmp_path, server, fake_telegram,
+                                    env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05,0.05,0.05"})
             _thread, result = _run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             assert server.connect_count == 3

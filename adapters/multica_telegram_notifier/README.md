@@ -11,7 +11,10 @@
    `{"type":"auth_ack"}`；失败会收到 `{"error":...}` 且连接被服务端关闭。
 3. 订阅免费：`inbox:new` 是个人事件，服务端只推给 token 对应的用户本人。
 4. 适配器按 `payload.item.workspace_id` 过滤目标 workspace，去重后把通知文本
-   通过 Telegram Bot API `sendMessage` 发给你的私聊（chat ID 自动发现）。
+   （超过 Telegram 4096 字符上限时截断）通过 Telegram Bot API `sendMessage`
+   发给你的私聊（chat ID 自动发现）。失效的 chat ID（Telegram 返回
+   「chat not found」）会自动重新发现并重试一次；被 Telegram 永久拒绝的通知
+   会记入已处理状态并告警，不会在重连后无限重发。
 5. 断线自动重连（指数退避），malformed 帧忽略，已投递通知持久化在本地状态文件，
    重启/重连不会重复发送。
 
@@ -50,7 +53,8 @@ python3 adapters/multica_telegram_notifier/notifier.py \
   --once --log-json ./live-probe.jsonl
 ```
 
-- `--once`：投递第一条通知后以 exit 0 退出；chat ID 发现失败或配置缺失 exit 2。
+- `--once`：投递第一条通知后以 exit 0 退出；chat ID 发现失败或配置缺失 exit 2；
+  PAT 被永久拒绝时在一个退避周期后以 exit 4 确定性退出（live probe 不会无限重试）。
 - `--log-json <path>`：结构化 JSONL 日志追加写入该文件（stderr 同步输出）。
   日志中凭据字段一律被替换为 `[REDACTED]`，可安全留存作证据。
 - 通知触发源：任何会让你收到 Inbox 通知的真实动作（例如某个 agent 的正常汇报
@@ -69,6 +73,7 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 | `NOTIFIER_RECONNECT_BACKOFF` | 否 | `1,2,4,8,15,30` | 断线重连退避秒数序列 |
 | `NOTIFIER_SEND_RETRIES` | 否 | `1,2,4` | sendMessage 失败重试间隔秒数 |
 | `NOTIFIER_CONNECT_TIMEOUT` | 否 | `10` | 连接/HTTP 超时秒数 |
+| `NOTIFIER_READ_TIMEOUT` | 否 | `90` | 单帧读取超时秒数（须大于服务端 ~54s ping 周期；超时视为半开连接并重建会话） |
 
 配置文件里已有的值优先于同名进程环境变量；进程环境变量再作为缺省回退。
 
