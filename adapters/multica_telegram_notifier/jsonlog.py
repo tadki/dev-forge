@@ -33,6 +33,10 @@ class JsonLogger:
         for key, value in fields.items():
             record[key] = self.redactor.redact_value(value)
         line = json.dumps(record, ensure_ascii=False, default=str)
+        # Sanitize once before any sink: lone surrogates (possible in
+        # upstream "\udXXX" escapes) cannot be UTF-8 encoded and would crash
+        # the JSONL file write even after a successful delivery.
+        line = line.encode("utf-8", errors="ignore").decode("utf-8")
         self._write_line(line)
 
     def debug(self, event: str, **fields) -> None:

@@ -100,6 +100,9 @@ class Notifier:
                 attempt = 0
             except AuthRejected as exc:
                 self.logger.error("auth_rejected", error=str(exc))
+                # Auth happens before any Telegram send, so this session never
+                # tested the channel — the consecutive-failure run breaks here.
+                self._channel_failures = 0
                 self._auth_failures += 1
                 if self._auth_bound_reached():
                     self.logger.error("auth_gave_up", attempts=self._auth_failures)
@@ -111,6 +114,10 @@ class Notifier:
                     if self._channel_bound_reached():
                         self.logger.error("channel_gave_up", attempts=self._channel_failures)
                         return EXIT_CHANNEL_FAILED
+                else:
+                    # Any other session outcome (ws drop, protocol deviation)
+                    # ends the run of consecutive channel failures.
+                    self._channel_failures = 0
             if delivered:
                 self._channel_failures = 0
                 return EXIT_OK
@@ -122,7 +129,8 @@ class Notifier:
     def _channel_bound_reached(self) -> bool:
         # --once live probe must terminate deterministically when the delivery
         # channel (bot token, bot blocked, chat missing) stays broken; one
-        # full backoff cycle of consecutive channel failures is enough.
+        # full backoff cycle of CONSECUTIVE channel failures is enough — any
+        # other session outcome resets the run (see run()).
         if not self.once:
             return False
         limit = len(self.config.reconnect_backoff or (1.0,))
