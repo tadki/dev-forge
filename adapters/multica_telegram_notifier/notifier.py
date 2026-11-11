@@ -104,14 +104,14 @@ class Notifier:
                 # tested the channel — the consecutive-failure run breaks here.
                 self._channel_failures = 0
                 self._auth_failures += 1
-                if self._auth_bound_reached():
+                if self._once_bound_reached(self._auth_failures):
                     self.logger.error("auth_gave_up", attempts=self._auth_failures)
                     return EXIT_AUTH_REJECTED
             except (SessionError, WebSocketError, TelegramError, OSError) as exc:
                 self.logger.warning("session_ended", error=str(exc))
                 if isinstance(exc, TelegramError) and exc.is_channel_error:
                     self._channel_failures += 1
-                    if self._channel_bound_reached():
+                    if self._once_bound_reached(self._channel_failures):
                         self.logger.error("channel_gave_up", attempts=self._channel_failures)
                         return EXIT_CHANNEL_FAILED
                 else:
@@ -126,24 +126,16 @@ class Notifier:
         self.logger.info("stopped")
         return EXIT_STOPPED
 
-    def _channel_bound_reached(self) -> bool:
-        # --once live probe must terminate deterministically when the delivery
-        # channel (bot token, bot blocked, chat missing) stays broken; one
-        # full backoff cycle of CONSECUTIVE channel failures is enough — any
-        # other session outcome resets the run (see run()).
+    def _once_bound_reached(self, failures: int) -> bool:
+        # A --once live probe must terminate deterministically once a run of
+        # consecutive failures — channel failures (bot token invalid, bot
+        # blocked, chat missing) or auth rejections (permanently bad token) —
+        # fills one full backoff cycle; any other session outcome resets the
+        # run (see run()).
         if not self.once:
             return False
         limit = len(self.config.reconnect_backoff or (1.0,))
-        return self._channel_failures >= limit
-
-    def _auth_bound_reached(self) -> bool:
-        # A --once live probe must terminate deterministically on a permanently
-        # bad token instead of retrying forever; one full backoff cycle of
-        # consecutive rejections is enough evidence the token won't recover.
-        if not self.once:
-            return False
-        limit = len(self.config.reconnect_backoff or (1.0,))
-        return self._auth_failures >= limit
+        return failures >= limit
 
     def _ensure_chat_id(self) -> int:
         if self.state.chat_id is not None:

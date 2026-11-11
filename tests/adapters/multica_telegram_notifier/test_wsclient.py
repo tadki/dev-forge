@@ -3,7 +3,9 @@ masking, keepalive, fragmentation, malformed-input tolerance."""
 
 import json
 import socket
+import struct
 import threading
+import time
 
 import pytest
 
@@ -14,12 +16,12 @@ from multica_telegram_notifier.wsclient import (
     parse_ws_url,
 )
 
-from multica_notifier_fakes import wait_for
+from multica_notifier_fakes import FakeMulticaWS, wait_for
 
 
 def _refusing_port_server():
-    """Starts a plain TCP server answering a fixed HTTP response; returns
-    (port, response_bytes, shutdown_fn)."""
+    """Starts a plain TCP server answering a fixed HTTP 404; returns
+    (port, server_socket)."""
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", 0))
@@ -116,8 +118,6 @@ class TestDataPath:
         client.close()
 
     def test_ping_answered_with_pong_and_ack_received(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
         server = FakeMulticaWS(script=[("ping", b"ka"), ("text", '{"type":"after-ping"}'), ("sleep", 5)])
         try:
             client = WSClient(server.url)
@@ -133,8 +133,6 @@ class TestDataPath:
             server.close()
 
     def test_server_close_raises_websocketclosed(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
         server = FakeMulticaWS(script=[("close",)])
         try:
             client = WSClient(server.url)
@@ -150,8 +148,6 @@ class TestDataPath:
 
 class TestMalformedTolerance:
     def test_non_utf8_payload_ignored_then_text_received(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
         bad = bytes([0x81, 0x03, 0xFF, 0xFE, 0xFD])  # FIN+text, invalid UTF-8
         server = FakeMulticaWS(script=[("raw", bad), ("text", '{"type":"auth_ack"}')])
         try:
@@ -164,8 +160,6 @@ class TestMalformedTolerance:
             server.close()
 
     def test_binary_frame_ignored_then_text_received(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
         server = FakeMulticaWS(script=[("raw", bytes([0x82, 0x02, 0x01, 0x02])),
                                       ("text", '{"type":"auth_ack"}')])
         try:
@@ -178,8 +172,6 @@ class TestMalformedTolerance:
             server.close()
 
     def test_fragmented_text_reassembled(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
         part1 = bytes([0x01, 0x05]) + b'{"typ'   # FIN=0 text, 5-byte part
         part2 = bytes([0x80, 0x08]) + b'e":"ok"}'  # FIN=1 continuation, 8-byte part
         server = FakeMulticaWS(script=[("raw", part1), ("raw", part2)])
@@ -194,8 +186,6 @@ class TestMalformedTolerance:
             server.close()
 
     def test_orphan_continuation_ignored(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
         orphan = bytes([0x80, 0x02]) + b"ab"
         server = FakeMulticaWS(script=[("raw", orphan), ("text", '{"type":"auth_ack"}')])
         try:
@@ -208,8 +198,6 @@ class TestMalformedTolerance:
             server.close()
 
     def test_oversize_frame_is_error_not_hang(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
         declared = struct_len_bytes(2 * 1024 * 1024)
         server = FakeMulticaWS(script=[("raw", declared)])
         try:
@@ -226,17 +214,11 @@ class TestMalformedTolerance:
 
 def struct_len_bytes(n):
     """A header declaring a 64-bit length of n bytes with no payload."""
-    import struct
-
     return struct.pack("!BBQ", 0x81, 127, n)
 
 
 class TestReadTimeout:
     def test_silent_server_raises_closed_quickly(self):
-        from multica_notifier_fakes import FakeMulticaWS
-
-        import time
-
         server = FakeMulticaWS(script=[("sleep", 5)])
         try:
             client = WSClient(server.url, read_timeout=0.4)
