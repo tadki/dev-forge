@@ -170,7 +170,10 @@ export interface PlatformView {
 export interface PlatformsView {
   platforms: PlatformView[];
   declaredCount: number;
-  unadapted: { assetCount: number; kinds: Array<{ kind: string; count: number; paths: string[] }> };
+  unadapted: {
+    assetCount: number;
+    kinds: Array<{ kind: string; count: number; firstPartyCount: number; collectors: string[]; assets: PlatformAssetLite[] }>;
+  };
   generatedAt: string;
   diagnostics: Array<{ level: string; message: string; path?: string }>;
 }

@@ -249,7 +249,7 @@ describe('buildPlatformsView', () => {
     });
     expect(v.unadapted.assetCount).toBe(1);
     expect(v.unadapted.kinds[0]).toMatchObject({ kind: 'service', count: 1 });
-    expect(v.unadapted.kinds[0].paths).toEqual(['systemd://user/grepai-watch.service']);
+    expect(v.unadapted.kinds[0].assets[0]).toMatchObject({ id: 'service:grepai', path: 'systemd://user/grepai-watch.service' });
   });
 
   it('YAML 未声明的实有 kind → declared=false；kind 序循 ASSET_KINDS', () => {

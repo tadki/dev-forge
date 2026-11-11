@@ -555,9 +555,17 @@ export interface PlatformView {
   kinds: PlatformKindView[];
 }
 
+export interface PlatformsUnadaptedKind {
+  kind: string;
+  count: number;
+  firstPartyCount: number;
+  collectors: string[];
+  assets: PlatformAssetLite[];
+}
+
 export interface PlatformsUnadapted {
   assetCount: number;
-  kinds: Array<{ kind: string; count: number; paths: string[] }>;
+  kinds: PlatformsUnadaptedKind[];
 }
 
 export interface PlatformsView {
@@ -568,7 +576,6 @@ export interface PlatformsView {
 }
 
 const ASSETS_PER_KIND_CAP = 30;
-const PATH_SAMPLE_CAP = 3;
 
 function kindOrderIndex(kind: string): number {
   const i = (ASSET_KINDS as readonly string[]).indexOf(kind);
@@ -665,7 +672,13 @@ export function buildPlatformsView(
       assetCount: unadapted.length,
       kinds: [...unadaptedByKind.keys()].sort(sortKinds).map((kind) => {
         const list = unadaptedByKind.get(kind) ?? [];
-        return { kind, count: list.length, paths: list.slice(0, PATH_SAMPLE_CAP).map((a) => a.source.path) };
+        return {
+          kind,
+          count: list.length,
+          firstPartyCount: list.filter((a) => a.provenance === 'first-party').length,
+          collectors: [...new Set(list.map((a) => a.source.collector))].sort(),
+          assets: list.slice(0, ASSETS_PER_KIND_CAP).map(assetLite),
+        };
       }),
     },
   };

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../api';
-import type { PlatformDiscoveryChannel, PlatformKindContract, PlatformReadChannel, PlatformsView, PlatformWriteChannel } from '../types';
+import type { PlatformAssetLite, PlatformDiscoveryChannel, PlatformKindContract, PlatformReadChannel, PlatformsView, PlatformWriteChannel } from '../types';
 import { Badge, Chip, Panel } from '../components/ui';
 import { KIND_ORDER } from '../kinds';
 import type { PageCtx } from './ctx';
@@ -202,38 +202,132 @@ interface KindRow extends PlatformKindContract {
   id: string;
 }
 
+interface UnclassifiedAsset extends PlatformAssetLite {
+  kind: string;
+  collectors: string[];
+}
+
+/** 未归类资产明细：无任何平台声明命中的资产，右侧展示全字段 */
+function UnclassifiedDetail({ asset }: { asset: UnclassifiedAsset }) {
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div className="row mb">
+        <span className="mono" style={{ fontWeight: 700 }}>
+          {asset.name}
+        </span>
+        <Badge tone="warn">{asset.kind}</Badge>
+        {asset.provenance === 'first-party' && (
+          <Badge tone="default" style={{ background: '#cca700' }}>
+            自建
+          </Badge>
+        )}
+        <Badge tone={asset.enabled ? 'ok' : 'off'}>{asset.enabled ? '启用' : '停用'}</Badge>
+      </div>
+      <div className="dim" style={{ ...SMALL, marginBottom: 'var(--sp-3)' }}>
+        该资产未声明任何已注册平台（platforms.d），不归属任一平台契约——可在资产自重声明或平台契约中补充归属。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 'var(--sp-3)', alignItems: 'start' }}>
+        <div>
+          <FieldLine label="资产 ID">
+            <span className="mono" style={SMALL}>
+              {asset.id}
+            </span>
+          </FieldLine>
+          <FieldLine label="类型">
+            <span className="mono" style={SMALL}>
+              {asset.kind}
+            </span>
+          </FieldLine>
+          <FieldLine label="路径">
+            <span className="mono" style={SMALL}>
+              {asset.path}
+            </span>
+          </FieldLine>
+        </div>
+        <div>
+          <FieldLine label="来源">
+            {asset.provenance === 'first-party' ? (
+              '自建 first-party'
+            ) : asset.provenance === 'third-party' ? (
+              '第三方 third-party'
+            ) : (
+              <Dash />
+            )}
+          </FieldLine>
+          <FieldLine label="采集器">
+            {asset.collectors.length ? (
+              <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                {asset.collectors.map((c) => (
+                  <Chip key={c}>{c}</Chip>
+                ))}
+              </span>
+            ) : (
+              <Dash />
+            )}
+          </FieldLine>
+          <FieldLine label="平台 ID">
+            {asset.platformId ? (
+              <span className="mono" style={SMALL}>
+                {asset.platformId}
+              </span>
+            ) : (
+              <Dash />
+            )}
+          </FieldLine>
+        </div>
+      </div>
+      {asset.summary && (
+        <div style={{ marginTop: 'var(--sp-3)' }}>
+          <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
+            摘要 SUMMARY
+          </div>
+          <div style={{ ...SMALL, whiteSpace: 'pre-wrap' }}>{asset.summary}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PlatformsPage(_props: { ctx: PageCtx }) {
   const q = useQuery({ queryKey: ['platforms'], queryFn: () => apiGet<PlatformsView>('/api/platforms') });
+  const [tab, setTab] = useState<'adapted' | 'unclassified'>('adapted');
   const [selPlatformId, setSelPlatformId] = useState<string | null>(null);
   const [selKey, setSelKey] = useState<string | null>(null);
+  const [selAssetId, setSelAssetId] = useState<string | null>(null);
   if (!q.data) return <div className="dim">加载中…</div>;
   const v = q.data;
   // 平台可能共享同一资产（多平台声明），页头唯一计数以 declaredCount + unadapted 为准
   const adapted = v.declaredCount;
   const grandTotal = adapted + v.unadapted.assetCount;
   const p = v.platforms.find((x) => x.id === selPlatformId) ?? v.platforms[0];
-  if (!p) return <div className="dim">无已适配平台（console/platforms.d 为空）</div>;
-  // 契约列表 = 全部资产大类（YAML 未声明的 kind 也占一行，标未适配）
-  const rows: KindRow[] = KIND_ORDER.map((kind) => {
-    const decl = p.kinds.find((k) => k.kind === kind);
-    return {
-      id: `${p.id}:${kind}`,
-      kind,
-      declared: !!decl,
-      ...(decl?.applicable === false ? { applicable: false as const } : {}),
-      ...(decl?.note !== undefined ? { note: decl.note } : {}),
-      discovery: decl?.discovery,
-      ...(decl?.registryPlatforms?.length ? { registryPlatforms: decl.registryPlatforms } : {}),
-      read: decl?.read,
-      write: decl?.write,
-      assetCount: decl?.assetCount ?? 0,
-      firstPartyCount: decl?.firstPartyCount ?? 0,
-      collectors: decl?.collectors ?? [],
-      assets: decl?.assets ?? [],
-    };
-  });
+  // 契约列表 = 全部资产大类（YAML 未声明的 kind 也占一行，标未适配）；无平台契约时为空
+  const rows: KindRow[] = !p
+    ? []
+    : KIND_ORDER.map((kind) => {
+        const decl = p.kinds.find((k) => k.kind === kind);
+        return {
+          id: `${p.id}:${kind}`,
+          kind,
+          declared: !!decl,
+          ...(decl?.applicable === false ? { applicable: false as const } : {}),
+          ...(decl?.note !== undefined ? { note: decl.note } : {}),
+          discovery: decl?.discovery,
+          ...(decl?.registryPlatforms?.length ? { registryPlatforms: decl.registryPlatforms } : {}),
+          read: decl?.read,
+          write: decl?.write,
+          assetCount: decl?.assetCount ?? 0,
+          firstPartyCount: decl?.firstPartyCount ?? 0,
+          collectors: decl?.collectors ?? [],
+          assets: decl?.assets ?? [],
+        };
+      });
   // 详情默认展示首个 kind，切换平台时重置
   const sel = rows.find((r) => r.id === selKey) ?? rows[0];
+  // 未归类资产（无任何平台声明命中）：按 kind 分组，选中项在右侧展示明细
+  const unclassifiedAssets: UnclassifiedAsset[] = v.unadapted.kinds.flatMap((k) =>
+    k.assets.map((a) => ({ ...a, kind: k.kind, collectors: k.collectors }))
+  );
+  const selAsset = unclassifiedAssets.find((a) => a.id === selAssetId) ?? unclassifiedAssets[0];
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -241,7 +335,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
         <div>
           <h2>平台</h2>
           <div className="sub tagline">
-            PLATFORMS · {v.platforms.length} 平台 · {adapted}/{grandTotal} 资产已适配 · 契约 console/platforms.d
+            PLATFORMS · {v.platforms.length} 平台 · {adapted}/{grandTotal} 资产已适配 · {v.unadapted.assetCount} 未归类 · 契约 console/platforms.d
           </div>
         </div>
       </div>
@@ -259,63 +353,158 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
         </Panel>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateRows: 'minmax(0, 3fr) minmax(0, 1fr)', gap: 'var(--sp-4)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(375px, 1fr) minmax(0, 5fr)', gap: 'var(--sp-4)', minHeight: 0 }}>
-          <Panel style={PANEL_FILL}>
-            <div className="sect" style={{ marginTop: 0 }}>
-              <span className="no">01</span>
-              <span className="title">适配平台</span>
-              <span className="en">{v.platforms.length} ADAPTED</span>
-            </div>
-            <div style={SCROLL}>
-              {v.platforms.map((item) => {
-                const active = item.id === p.id;
-                const adaptedKinds = item.kinds.filter((k) => k.declared).length;
-                return (
-                  <div
-                    key={item.id}
-                    className="platform-item"
-                    onClick={() => {
-                      setSelPlatformId(item.id);
-                      setSelKey(null);
-                    }}
-                    style={{
-                      cursor: 'pointer',
-                      display: 'flex',
-                      gap: 8,
-                      alignItems: 'flex-start',
-                      padding: '8px 6px',
-                      borderBottom: '1px solid var(--khaki)',
-                      borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
-                      background: active ? 'var(--cream)' : undefined,
-                    }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: active ? 700 : 400 }}>{item.label ?? item.id}</div>
-                      <div className="mono dim" style={LABEL}>
-                        {item.id}
+      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(375px, 1fr) minmax(0, 5fr)', gap: 'var(--sp-4)' }}>
+        {/* 左栏：标签切换「已适配平台 / 未归类资产」，下方列表随标签切换 */}
+        <Panel style={PANEL_FILL}>
+          <div className="sect" style={{ marginTop: 0 }}>
+            <span className="no">01</span>
+            <span className="title">平台</span>
+            <span className="en">{tab === 'adapted' ? `${v.platforms.length} ADAPTED` : `${v.unadapted.assetCount} UNCLASSIFIED`}</span>
+          </div>
+          <div className="tabs" style={{ marginBottom: 'var(--sp-2)' }}>
+            <button className={`tab ${tab === 'adapted' ? 'active' : ''}`} onClick={() => setTab('adapted')}>
+              已适配平台 <span className="dim">{v.platforms.length}</span>
+            </button>
+            <button className={`tab ${tab === 'unclassified' ? 'active' : ''}`} onClick={() => setTab('unclassified')}>
+              未归类资产 <span className="dim">{v.unadapted.assetCount}</span>
+            </button>
+          </div>
+          <div style={SCROLL}>
+            {tab === 'adapted' ? (
+              v.platforms.length === 0 ? (
+                <div className="dim">无已适配平台（console/platforms.d 为空）</div>
+              ) : (
+                v.platforms.map((item) => {
+                  const active = item.id === p?.id;
+                  const adaptedKinds = item.kinds.filter((k) => k.declared).length;
+                  return (
+                    <div
+                      key={item.id}
+                      className="platform-item"
+                      onClick={() => {
+                        setSelPlatformId(item.id);
+                        setSelKey(null);
+                      }}
+                      style={{
+                        cursor: 'pointer',
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'flex-start',
+                        padding: '8px 6px',
+                        borderBottom: '1px solid var(--khaki)',
+                        borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
+                        background: active ? 'var(--cream)' : undefined,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: active ? 700 : 400 }}>{item.label ?? item.id}</div>
+                        <div className="mono dim" style={LABEL}>
+                          {item.id}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <Badge tone={item.totalAssets > 0 ? 'ok' : 'off'}>{item.totalAssets}</Badge>
+                        <div className="dim" style={LABEL}>
+                          {adaptedKinds}/{KIND_ORDER.length} kinds
+                        </div>
                       </div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <Badge tone={item.totalAssets > 0 ? 'ok' : 'off'}>{item.totalAssets}</Badge>
-                      <div className="dim" style={LABEL}>
-                        {adaptedKinds}/{KIND_ORDER.length} kinds
-                      </div>
-                    </div>
+                  );
+                })
+              )
+            ) : v.unadapted.kinds.length === 0 ? (
+              <div className="dim">（无未归类资产）</div>
+            ) : (
+              v.unadapted.kinds.map((k) => (
+                <div key={k.kind}>
+                  <div className="row" style={{ gap: 6, alignItems: 'center', padding: '7px 6px 5px', borderBottom: '1px solid var(--khaki)' }}>
+                    <span className="mono" style={{ fontWeight: 700 }}>
+                      {k.kind}
+                    </span>
+                    <Badge tone="warn">{k.count}</Badge>
+                    {k.firstPartyCount > 0 && (
+                      <Badge tone="default" style={{ background: '#cca700' }} title={`自建 ${k.firstPartyCount} / ${k.count} 个资产`}>
+                        {k.firstPartyCount}
+                      </Badge>
+                    )}
+                    {k.collectors.map((c) => (
+                      <Chip key={c}>{c}</Chip>
+                    ))}
                   </div>
-                );
-              })}
-            </div>
-          </Panel>
+                  {k.assets.map((a) => {
+                    const active = a.id === selAsset?.id;
+                    return (
+                      <div
+                        key={a.id}
+                        className="unclassified-item"
+                        onClick={() => setSelAssetId(a.id)}
+                        style={{
+                          cursor: 'pointer',
+                          display: 'flex',
+                          gap: 8,
+                          alignItems: 'flex-start',
+                          padding: '8px 6px',
+                          borderBottom: '1px solid var(--khaki)',
+                          borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
+                          background: active ? 'var(--cream)' : undefined,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: active ? 700 : 400 }}>{a.name}</div>
+                          <div className="mono dim" style={LABEL}>
+                            {a.path}
+                          </div>
+                        </div>
+                        {a.provenance === 'first-party' && (
+                          <span
+                            className="mono"
+                            style={{
+                              background: '#cca700',
+                              color: 'var(--ink)',
+                              borderRadius: 3,
+                              padding: '0 5px',
+                              fontSize: 'var(--fs-label)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            自建
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {k.count > k.assets.length && (
+                    <div className="dim" style={{ ...SMALL, padding: '2px 6px' }}>
+                      …其余 {k.count - k.assets.length} 个
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
 
           <Panel style={PANEL_FILL}>
             <div className="sect" style={{ marginTop: 0 }}>
               <span className="no">02</span>
-              <span className="title">{p.label ?? p.id}</span>
+              <span className="title">{tab === 'adapted' ? (p?.label ?? p?.id ?? '平台契约') : '未归类资产明细'}</span>
               <span className="en">
-                PLATFORM CONTRACT · {p.id} · {p.totalAssets} ASSETS · 声明即归属（asset.platforms）
+                {tab === 'adapted'
+                  ? p
+                    ? `PLATFORM CONTRACT · ${p.id} · ${p.totalAssets} ASSETS · 声明即归属（asset.platforms）`
+                    : ''
+                  : `UNCLASSIFIED · 无平台声明命中 · ${v.unadapted.assetCount} ASSETS`}
               </span>
             </div>
+            {tab === 'unclassified' ? (
+              selAsset ? (
+                <UnclassifiedDetail asset={selAsset} />
+              ) : (
+                <div className="dim">（无未归类资产）</div>
+              )
+            ) : !p || !sel ? (
+              <div className="dim">无已适配平台（console/platforms.d 为空）</div>
+            ) : (
             <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(220px, 28%) minmax(0, 1fr)', gap: 'var(--sp-3)', overflow: 'hidden' }}>
               {/* 左栏：契约单行列表（kind + 读写 badge，无具体命令），内部滚动 */}
               <div style={{ minHeight: 0, overflowY: 'auto' }}>
@@ -447,28 +636,8 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                 )}
               </div>
             </div>
+            )}
           </Panel>
-        </div>
-
-        <Panel style={PANEL_FILL}>
-          <div className="sect" style={{ marginTop: 0 }}>
-            <span className="no">03</span>
-            <span className="title">未适配</span>
-            <span className="en">UNADAPTED · {v.unadapted.assetCount} ASSETS 无平台声明命中</span>
-          </div>
-          <div style={SCROLL}>
-            {v.unadapted.kinds.length === 0 && <div className="dim">（无未适配资产）</div>}
-            {v.unadapted.kinds.map((k) => (
-              <div key={k.kind} className="row" style={{ padding: '3px 0', borderBottom: '1px solid var(--khaki)' }}>
-                <Badge tone="warn">{k.count}</Badge>
-                <span className="mono">{k.kind}</span>
-                <span className="mono dim" style={{ ...SMALL, flex: 1 }}>
-                  {k.paths.join(' · ')}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Panel>
       </div>
     </div>
   );

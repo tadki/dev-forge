@@ -202,7 +202,7 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   await expect(page.getByText('multica agent list').first()).toBeVisible();
   await expect(page.getByText('multica agent update {platformId} --instructions {content}').first()).toBeVisible();
   await expect(page.getByText('发现命令').first()).toBeVisible();
-  await expect(page.getByText('详情命令').first()).toBeVisible();
+  await expect(page.getByText('读取命令').first()).toBeVisible();
   await expect(page.getByText('Fronti').first()).toBeVisible(); // agent 详情含资产清单
   // 点选 skill 契约 → 右侧详情切换（detailCmd + platformId 来源）
   await page.locator('.kind-item').filter({ hasText: 'skill' }).first().click();
@@ -211,9 +211,11 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   await expect(page.getByText('platformId ← self').first()).toBeVisible();
   // 未声明 kind 也占一行且标未适配（multica 未声明 hook-registration）
   await expect(page.locator('.kind-item').filter({ hasText: 'hook-registration' }).first()).toBeVisible();
-  // 未适配桶：systemd:// 3 个 service
-  await expect(page.locator('.sect', { hasText: '未适配' })).toBeVisible();
-  await expect(page.getByText('systemd://user/grepai-watch.service').first()).toBeVisible();
+  // 左栏标签切换：未归类资产 tab 列出无平台声明命中的资产（fixture 仅自建日检报告），选中后右侧显示明细
+  await page.locator('.tab', { hasText: '未归类资产' }).click();
+  await expect(page.getByText('/e2e/toolchain-reports/latest.json').first()).toBeVisible();
+  await page.locator('.unclassified-item').first().click();
+  await expect(page.getByText('未归类资产明细').first()).toBeVisible();
 });
 
 test('graph: nodes render and inspector works', async ({ page }) => {
