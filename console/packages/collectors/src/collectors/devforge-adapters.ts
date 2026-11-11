@@ -25,9 +25,9 @@ export const devforgeAdaptersCollector: Collector = {
           summary: purpose.slice(0, 120),
           attach: { level: 'user' },
           enforcement: 'derived',
-          // dev-forge 工具链内部文件：归属由 registry.d 声明（devforge-adapters → claude-code）
+          // 跨平台胶水脚本，无平台归属语义：显式豁免（platform=none），归属/元信息仍由 registry.d 盖章
           platforms: [],
-          source: { collector: 'devforge-adapters', path: p, sha256: sha256(md) },
+          source: { collector: 'devforge-adapters', path: p, sha256: sha256(md), platform: 'none' },
           payload: { envContract: envNames, lines: md.split('\n').length, content: md },
           tags: ['adapter', 'devforge'],
         })

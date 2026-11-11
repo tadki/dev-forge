@@ -30,18 +30,20 @@ export const healthCollector: Collector = {
     return paths;
   },
   async collect(ctx) {
+    // 报告是工具链产出而非资产 kind（Owner 2026-11-11）：采集照常，挂 custom 观测桶展示（同 firelog 活动流），
+    // platforms 留空落未适配桶——报告跨平台，不隶属单一平台契约
     const assets: Asset[] = [];
     const tc = await readJson<ToolchainReport>(ctx.config.reports.toolchainLatest);
     if (tc) {
       assets.push(
         asset({
-          id: 'report:toolchain-latest',
-          kind: 'report',
+          id: 'custom:toolchain-latest',
+          kind: 'custom',
           name: '工具链日检（toolchain_daily_check）',
           summary: `${tc.health ?? '?'} · redline ${tc.redline_count ?? 0} · ${tc.generated_at ?? ''}`,
           attach: { level: 'user' },
           enforcement: 'derived',
-          platforms: ['claude-code'],
+          platforms: [],
           source: { collector: 'health', path: ctx.config.reports.toolchainLatest },
           payload: {
             health: tc.health,
@@ -55,20 +57,20 @@ export const healthCollector: Collector = {
         })
       );
     } else if (await exists(ctx.config.reports.toolchainLatest)) {
-      assets.push(asset({ id: 'report:toolchain-latest', kind: 'report', name: '工具链日检', summary: '解析失败', attach: { level: 'user' }, enforcement: 'derived', platforms: ['claude-code'], source: { collector: 'health', path: ctx.config.reports.toolchainLatest }, payload: {}, tags: ['health'] }));
+      assets.push(asset({ id: 'custom:toolchain-latest', kind: 'custom', name: '工具链日检', summary: '解析失败', attach: { level: 'user' }, enforcement: 'derived', platforms: [], source: { collector: 'health', path: ctx.config.reports.toolchainLatest }, payload: {}, tags: ['health'] }));
     }
 
     const arch = await readJson<ArchReport>(ctx.config.reports.archPatrol);
     if (arch) {
       assets.push(
         asset({
-          id: 'report:arch-patrol',
-          kind: 'report',
+          id: 'custom:arch-patrol',
+          kind: 'custom',
           name: 'KOL 架构巡逻（architecture_sweep）',
           summary: `${arch.summary ?? `exit ${arch.exit_code ?? '?'}`} · ${arch.generated_at ?? ''}`,
           attach: { level: 'user' },
           enforcement: 'derived',
-          platforms: ['multica'],
+          platforms: [],
           source: { collector: 'health', path: ctx.config.reports.archPatrol },
           payload: { generatedAt: arch.generated_at, exitCode: arch.exit_code, report: arch },
           tags: ['health', 'arch-patrol'],

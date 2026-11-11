@@ -16,13 +16,16 @@ export const ASSET_KINDS = [
   // 单一 autopilot kind 把平台对象与本地脚本混为一谈，是平台页归属错位的根因。
   'autopilot-registration',
   'autopilot-script',
+  // adapter：跨平台胶水脚本（协议翻译/启动包装/事件转发/跨机操作），不适配任何平台——
+  // 无平台读写契约（平台页「不适用」），资产落未适配桶，注册表照常收录（Owner 2026-11-11）
   'adapter',
   // 本地补丁：我们对第三方文件的修改（hindsight-local-mods 等）。第三方文件本体仍归
   // 第三方，改动以 patch 资产名义注册为自建；payload 记录应用事实基线 + drift 实测状态
   'patch',
   'mcp-endpoint',
   'project',
-  'report',
+  // report 不是资产 kind（Owner 2026-11-11）：报告是工具链产出/观测视图，不改变工具运行逻辑。
+  // 采集照常（health collector），挂 custom 观测桶展示，同 firelog 活动流。
   'env',
   'custom',
 ] as const;
@@ -303,17 +306,6 @@ const projectPayload = z.looseObject({
   mcpServers: z.array(z.string()).optional(),
 });
 
-const reportPayload = z.looseObject({
-  health: z.string().optional(),
-  generatedAt: z.string().optional(),
-  redlineCount: z.number().optional(),
-  redlines: z.array(z.unknown()).optional(),
-  dimensions: z.unknown().optional(),
-  inputMissing: z.unknown().optional(),
-  exitCode: z.number().optional(),
-  report: z.record(z.string(), z.unknown()).optional(),
-});
-
 const envPayload = z.looseObject({
   values: z.record(z.string(), z.unknown()).optional(),
   count: z.number().optional(),
@@ -334,7 +326,6 @@ export const payloadSchemas: Record<AssetKind, z.ZodType> = {
   patch: patchPayload,
   'mcp-endpoint': mcpEndpointPayload,
   project: projectPayload,
-  report: reportPayload,
   env: envPayload,
   // custom 是通用兜底 kind（sessions/activity/plugins/recent-tasks…），不做字段约束
   custom: z.looseObject({}),

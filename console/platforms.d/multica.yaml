@@ -90,7 +90,7 @@ kinds:
     note: 'multica 平台无 hooks 设置与挂载入口；hook 脚本在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）'
   adapter:
     applicable: false
-    note: 'multica 平台无 adapter 对象：adapters 为 dev-forge 本地脚本，归属 claude-code'
+    note: 'adapter 是跨平台胶水脚本，不归属任何平台（含 multica）：采集显式 platform=none（Owner 2026-11-11）'
   deployment:
     discovery:
       mode: scan

@@ -47,7 +47,7 @@ const state: RegistryState = {
     mk('hook-rule:push-guard-master-gate', 'hook-rule', {
       payload: { whenHuman: '工具 Bash 且 命令(当前) ~git push', actions: [{ op: 'deny' }] },
     }),
-    mk('report:toolchain-latest', 'report', { payload: { health: 'GREEN', generatedAt: '2026-11-03T04:00:00+08:00', redlineCount: 0 } }),
+    mk('custom:toolchain-latest', 'custom', { payload: { health: 'GREEN', generatedAt: '2026-11-03T04:00:00+08:00', redlineCount: 0 } }),
     mk('skill:ecc-deep-research', 'skill', { provenance: 'third-party' }),
     mk('skill:user-editable', 'skill', {
       name: 'editable',
@@ -109,7 +109,7 @@ beforeAll(async () => {
     platforms: () => DEFAULT_PLATFORMS,
     registryEntries: () => [
       { id: 'devforge-hooks-engine', platforms: ['claude-code'] },
-      { id: 'devforge-adapters', platforms: ['claude-code'] },
+      { id: 'devforge-adapters' }, // 跨平台胶水脚本：不声明平台（Owner 2026-11-11）
       { id: 'hindsight-integration', platforms: ['claude-code'] },
       { id: 'devforge-autopilots', platforms: ['multica'] },
     ],

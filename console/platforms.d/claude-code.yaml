@@ -58,16 +58,10 @@ kinds:
       note: 'dev-forge 挂载脚本与 lib 经 registry.d 盖章；项目钩子（claude-projects）扫描直接声明——同 kind 混合'
     read: { how: file }
     write: { type: file-write }
+  # adapter 是跨平台胶水脚本（协议翻译/启动包装/事件转发/跨机操作），无平台归属语义（Owner 2026-11-11）
   adapter:
-    discovery:
-      mode: declared
-      how: file
-      collector: devforge-adapters
-      paths: ["<devforge>/adapters/*"]
-      registry: devforge-adapters
-      note: '本地适配脚本（.sh/.py/.js，提取 env 契约）；归属由 registry.d 条目盖章'
-    read: { how: file }
-    write: { type: file-write }
+    applicable: false
+    note: 'adapter 是跨平台胶水脚本，不归属任何平台：采集显式 platform=none，不参与任何平台读写契约'
   patch:
     discovery:
       mode: declared
@@ -121,21 +115,12 @@ kinds:
       note: '登记驱动：workspaces.projects 注册路径 → 扫描 .claude/CLAUDE.md/.mcp.json 等（harnesses 声明门控）'
     read: { how: file, note: '项目登记本身无正文，内容读其子资产' }
     write: { type: none, advice: '项目登记在 console.config.yaml，不支持物化' }
-  report:
-    discovery:
-      mode: scan
-      how: file
-      collector: health
-      paths: ["~/.multica/toolchain-reports/latest.json", "~/.multica/arch-patrol/last_report.json"]
-      note: '外部工具产出的健康报告（只读监控）'
-    read: { how: file }
-    write: { type: none, advice: '外部工具产出，只读' }
   custom:
     discovery:
       mode: scan
       how: derived
       collector: claude-global
-      note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志类 custom 无平台声明，落未适配桶'
+      note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志/健康报告类 custom 无平台声明，落未适配桶'
     read: { how: file, note: '读 settings.json 源文件（采集已脱敏）' }
     write: { type: none, advice: '聚合/观测型资产，无写通道' }
   # systemd 服务是 dev 机器运行时对象（采集显式 platform:none），不是 Claude Code 平台对象

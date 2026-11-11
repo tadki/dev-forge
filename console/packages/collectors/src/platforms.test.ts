@@ -126,7 +126,7 @@ describe('platforms.d 结构校验（坏文件出诊断并跳过）', () => {
     await writeFile(join(badDir, 'h.yaml'), 'id: bad-read-none\nkinds: { skill: { discovery: { mode: scan, how: file, paths: [x] }, read: { how: none }, write: { type: file-write } } }\n');
     await writeFile(
       join(badDir, 'i.yaml'),
-      'id: good-contract\nkinds:\n  skill:\n    discovery: { mode: scan, how: cli, collector: test, cmd: [t, list], files: true, note: 清单即归属 }\n    read: { how: api, cmd: [t, get, "{id}"], note: 逐条取正文 }\n    write: { type: file-write }\n  instruction:\n    discovery: { mode: scan, how: file, paths: ["<project>/CLAUDE.md"] }\n    read: { how: file }\n    write: { type: file-write }\n  hook-rule:\n    discovery: { mode: declared, how: file, paths: ["/repo/*.json"], registry: devforge-hooks-engine, note: 盖章归属 }\n    read: { how: file }\n    write: { type: file-write }\n  report:\n    discovery: { mode: scan, how: derived, collector: test, note: 派生采样 }\n    read: { how: none, note: 无正文可读 }\n    write: { type: none, advice: 只读 }\n'
+      'id: good-contract\nkinds:\n  skill:\n    discovery: { mode: scan, how: cli, collector: test, cmd: [t, list], files: true, note: 清单即归属 }\n    read: { how: api, cmd: [t, get, "{id}"], note: 逐条取正文 }\n    write: { type: file-write }\n  instruction:\n    discovery: { mode: scan, how: file, paths: ["<project>/CLAUDE.md"] }\n    read: { how: file }\n    write: { type: file-write }\n  hook-rule:\n    discovery: { mode: declared, how: file, paths: ["/repo/*.json"], registry: devforge-hooks-engine, note: 盖章归属 }\n    read: { how: file }\n    write: { type: file-write }\n'
     );
     const { platforms, diagnostics } = await loadPlatforms(badDir);
     expect(platforms.map((p) => p.id)).toEqual(['good-contract']);
@@ -201,10 +201,12 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     // hook-registration：settings.json 挂载点实测（scan）；dev-forge 注册清单工件经 registry.d 盖章（同 kind 混合，note 说明）
     expect(cc?.kinds?.['hook-registration']?.discovery?.paths).toEqual(['~/.claude/settings.json']);
     expect(cc?.kinds?.['hook-registration']?.write).toEqual({ type: 'file-write' });
-    // hook-rule / adapter / patch：声明式发现——registry.d 条目盖章归属
+    // hook-rule / patch：声明式发现——registry.d 条目盖章归属
     expect(cc?.kinds?.['hook-rule']?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-hooks-engine' });
-    expect(cc?.kinds?.adapter?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-adapters' });
     expect(cc?.kinds?.patch?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-patches' });
+    // adapter 是跨平台胶水脚本，无平台归属语义：两端平台均显式不适用，不参与读写契约（Owner 2026-11-11）
+    expect(cc?.kinds?.adapter).toEqual({ applicable: false, note: expect.stringContaining('跨平台胶水') });
+    expect(multica?.kinds?.adapter).toEqual({ applicable: false, note: expect.stringContaining('跨平台胶水') });
     // Claude Code 无 autopilot 体系：两类 autopilot kind 均「不适用」
     expect(cc?.kinds?.['autopilot-registration']?.applicable).toBe(false);
     expect(cc?.kinds?.['autopilot-script']?.applicable).toBe(false);

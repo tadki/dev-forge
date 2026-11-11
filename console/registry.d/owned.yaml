@@ -47,9 +47,10 @@ entries:
     meta: { owner: jerry, category: governance, lifecycle: stable, criticality: medium, runtime: multica }
 
   - id: devforge-adapters
+    # adapter 是跨平台胶水脚本（协议翻译/启动包装/事件转发/跨机操作），不适配任何平台：
+    # 不声明 platforms（不参与平台对账），资产落平台页未适配桶，注册表照常收录（Owner 2026-11-11）
     match: { pathPrefix: "/home/jerry/tools/dev-forge/adapters/" }
-    platforms: [claude-code]
-    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: claude-code }
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: standalone }
 
   - id: devforge-patches
     # 本地补丁程序（对第三方运行时/配置的修改以补丁为单位管理；Owner 2026-11-11 从 ~/.hindsight/patches 收编进仓库 patches/）

@@ -723,17 +723,15 @@
       }
     },
     {
-      "id": "report:toolchain-latest",
-      "kind": "report",
+      "id": "custom:toolchain-latest",
+      "kind": "custom",
       "name": "工具链日检",
       "summary": "GREEN · redline 0",
       "attach": {
         "level": "user"
       },
       "enforcement": "derived",
-      "platforms": [
-        "claude-code"
-      ],
+      "platforms": [],
       "provenance": "first-party",
       "tags": [
         "health",

@@ -110,7 +110,7 @@ export function createHandler(deps: AppDeps) {
       if (path === '/api/overview') {
         const counts: Record<string, number> = {};
         for (const a of state.assets) counts[a.kind] = (counts[a.kind] ?? 0) + 1;
-        const report = state.assets.find((a) => a.id === 'report:toolchain-latest');
+        const report = state.assets.find((a) => a.id === 'custom:toolchain-latest');
         const health = report
           ? {
               status: (report.payload as { health?: string }).health ?? 'UNKNOWN',

@@ -29,12 +29,12 @@
               "hook-rule",
               "hook-script",
               "service",
-              "autopilot",
+              "autopilot-registration",
+              "autopilot-script",
               "adapter",
               "patch",
               "mcp-endpoint",
               "project",
-              "report",
               "env",
               "custom"
             ]

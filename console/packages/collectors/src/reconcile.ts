@@ -457,8 +457,8 @@ export function buildReconcileReport(
   }
 
   // 兜底：有平台归属但没有被任何 platforms 声明覆盖的自建资产（按 kind×平台分组提示补声明）。
-  // custom/report 是采集器派生的观测视图（活动流、报告、样本聚合），不参与平台对账。
-  const NET_EXCLUDED_KINDS = new Set(['custom', 'report']);
+  // custom 是采集器派生的观测视图（活动流、健康报告、样本聚合），不参与平台对账。
+  const NET_EXCLUDED_KINDS = new Set(['custom']);
   const uncoveredGroups = new Map<string, Asset[]>();
   for (const a of state.assets) {
     if (a.provenance !== 'first-party' || a.platforms.length === 0 || covered.has(a.id)) continue;

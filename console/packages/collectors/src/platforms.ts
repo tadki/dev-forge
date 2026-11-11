@@ -148,17 +148,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         read: { how: 'file' },
         write: { type: 'file-write' },
       },
+      // adapter 是跨平台胶水脚本（协议翻译/启动包装/事件转发/跨机操作），无平台归属语义（Owner 2026-11-11）
       adapter: {
-        discovery: {
-          mode: 'declared',
-          how: 'file',
-          collector: 'devforge-adapters',
-          paths: ['<devforge>/adapters/*'],
-          registry: 'devforge-adapters',
-          note: '本地适配脚本（.sh/.py/.js，提取 env 契约）；归属由 registry.d 条目盖章',
-        },
-        read: { how: 'file' },
-        write: { type: 'file-write' },
+        applicable: false,
+        note: 'adapter 是跨平台胶水脚本，不归属任何平台：采集显式 platform=none，不参与任何平台读写契约',
       },
       patch: {
         discovery: {
@@ -224,23 +217,12 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         read: { how: 'file', note: '项目登记本身无正文，内容读其子资产' },
         write: { type: 'none', advice: '项目登记在 console.config.yaml，不支持物化' },
       },
-      report: {
-        discovery: {
-          mode: 'scan',
-          how: 'file',
-          collector: 'health',
-          paths: ['~/.multica/toolchain-reports/latest.json', '~/.multica/arch-patrol/last_report.json'],
-          note: '外部工具产出的健康报告（只读监控）',
-        },
-        read: { how: 'file' },
-        write: { type: 'none', advice: '外部工具产出，只读' },
-      },
       custom: {
         discovery: {
           mode: 'scan',
           how: 'derived',
           collector: 'claude-global',
-          note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志类 custom 无平台声明，落未适配桶',
+          note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志/健康报告类 custom 无平台声明，落未适配桶',
         },
         read: { how: 'file', note: '读 settings.json 源文件（采集已脱敏）' },
         write: { type: 'none', advice: '聚合/观测型资产，无写通道' },
@@ -331,7 +313,7 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
       },
       adapter: {
         applicable: false,
-        note: 'multica 平台无 adapter 对象：adapters 为 dev-forge 本地脚本，归属 claude-code',
+        note: 'adapter 是跨平台胶水脚本，不归属任何平台（含 multica）：采集显式 platform=none（Owner 2026-11-11）',
       },
       deployment: {
         discovery: {
