@@ -1,0 +1,318 @@
+{
+  "program": "hindsight-local-mods",
+  "appliedAt": "2026-11-11T15:12:32.983Z",
+  "applierPath": "/home/jerry/tools/dev-forge/patches/hindsight-local-mods.sh",
+  "applierSha256": "68491a01d9aa9a700e46e549f0b9942be0e209ebfe0951b293ba8900345b6965",
+  "runtimeDir": "/home/jerry/.hindsight/coding-agents",
+  "anchor": {
+    "package": "@vectorize-io/hindsight-coding-agents",
+    "version": "0.8.2"
+  },
+  "targets": [
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/antigravity-hook.js",
+      "sha256": "4639fa6edd391c3d6bb2bae18b3f0595538963108c56e1ae422d48a2e82fb26b",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/antigravity-statusline.js",
+      "sha256": "e24f8c36ff47549414ca483506222e1ec07f2f63ac31ed76c4bd46b38c008d66",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/antigravity-stop-hook.js",
+      "sha256": "83be80506a965ed8fbfdad3d62dfbd2bba3dadde10cff9d44b6d201cc379f979",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/claude-hook.js",
+      "sha256": "b780ea8e1bcddf9e655c055a777e956aa505c76b6213c83cb72e6a11bf10a5ea",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/claude-sessionstart-hook.js",
+      "sha256": "9e918aa54775c2770547eb02e66a430216f7baab4232eb04489c024eb8dfc66a",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/claude-stop-hook.js",
+      "sha256": "ca1bd24c60be2c6a8ee3dbdb793c061ff6346a95939713e33066277fabc86716",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/cline.js",
+      "sha256": "09fcc705ce6e3cc59ce90373ae723c2ed2298f4f97aff799785b1e3b6c080893",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/codebuddy-hook.js",
+      "sha256": "c0a0494e72a26456e0eeb05e4b929c3cbae6514067fa58afb43e3afcc2405e40",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/codebuddy-sessionstart-hook.js",
+      "sha256": "2bc4083b6d256386cfdd5c16c615847e780479a2afddd08c3700ce4a4bb1e526",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/codebuddy-stop-hook.js",
+      "sha256": "beaf3f27d57ef2e90da9f1cebd2177d900d310f66551d61f0b7c0a6a917f930d",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/codex-hook.js",
+      "sha256": "d14690448686073ef69e0cdb0ded46e216963d3850e695511121949651cfc486",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/codex-sessionstart-hook.js",
+      "sha256": "3e17b2b87547a156caab28c2a05706cc120abdf1711e6e940c145e93d16e852b",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/codex-stop-hook.js",
+      "sha256": "5a40f6e9e2aa03cfb91a8b017eaf1db958c6ebe9527aa601702bb12aa5ef538c",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/copilot-hook.js",
+      "sha256": "b956576339268145df6bd3f43d140d040a24793b3f7c6ee3ffd8d015b71b97d8",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/copilot-sessionstart-hook.js",
+      "sha256": "1c734d512456161444ea9cd9058984a4f5332e8b477139c44f84e3327d513889",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/copilot-stop-hook.js",
+      "sha256": "272048001673ed8cb71f54120dd07905746cc253cc461a642331c63187254843",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/cursor-hook.js",
+      "sha256": "fcc3a973321a088895c527a970c5f01175e28004927ab1397bfb059530a8a39b",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/cursor-sessionstart-hook.js",
+      "sha256": "d35fc5bcc7ca2404c3b710994c95433cc41ca584b8e6bf23c445eb840deb61fb",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/cursor-stop-hook.js",
+      "sha256": "eca7452afa6e8b9b4260dd257a2e13afda3296aa7fa384eaba02cbf093abbfe9",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/daemon-start.js",
+      "sha256": "76113ce005d58ead8c74d23934e5ccb8cdba5ce2c563ef6bf555c39ce230c689",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/dcode-hook.js",
+      "sha256": "3682057646d5b1f057d4df7290a9b8a2fb8de755ef14fedfd7356a94fa0956ad",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/dcode-sessionstart-hook.js",
+      "sha256": "60a4252baee62087abe1e59cbc044510254c76e1e0df8cd11f3349c67614dbaf",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/dcode-stop-hook.js",
+      "sha256": "a360719b82a85eea1b094112e64254cfef751ce8b8a1c8028f58191810db2f6d",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/deepen.js",
+      "sha256": "cd7e9c87002de6a9d4601e52e516657245b946143dd7c6d62003330304a8139e",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/devin-hook.js",
+      "sha256": "069bc73c6fe613cc396c2a7fd02e487b1b9fc36c345f9293d8bd95fb486f2e9d",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/devin-sessionstart-hook.js",
+      "sha256": "9325bbf4bd00e9a22089ea48096ca8910b5a15d86e56e6acd44cd7b276c56778",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/devin-stop-hook.js",
+      "sha256": "ae7f01c21c089b3880b2a4544b81138e81b0ae4e3e9349b64b68549993c2f1d9",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/droid-hook.js",
+      "sha256": "e7223fce288c8e1fcdca4191409c0cecf073f7b919b2e25601f04bb3b8017aa5",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/droid-sessionstart-hook.js",
+      "sha256": "eac081a6722163dcc38ea3e5d921f61d35cfce8e45d76f4d8812d22d5f179887",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/droid-stop-hook.js",
+      "sha256": "7a97e57380cfc24c4105911efae1a96070b013aebf5d06bce30f969c064ca717",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/dsh.js",
+      "sha256": "19edd22b3644c7979858c188098ab00985c7cb604d80e1cb7d8ec8a4762ca085",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/grok-hook.js",
+      "sha256": "ec83bb29c18b71818586d252e1c77a1f201c33124e5a52dc906710424e8824ff",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/grok-sessionstart-hook.js",
+      "sha256": "d93d3b2949b0c52e6cfd7420b6c3d68dad56d3aa491d8ae0d7c03dd9053c6e5f",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/grok-stop-hook.js",
+      "sha256": "ae146fa71c8b08444772bdd24ce20fd324c8cca87618bdc0de5ef3733314570b",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/hindsight-seed.js",
+      "sha256": "cf2a7782faf0246c6661af97f0122c5ce1a4e94f6093662dbe1838e8ca0ddbc0",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/index.js",
+      "sha256": "a21a3ad9565433a3d6eacc68a56cfd9279a75a6e2da65d6548c9e70c54e13539",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/installer.js",
+      "sha256": "bd2f0030445db14188eade582ecd739c02c16c65684938e7e400aa1a3722f95e",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/kilo.js",
+      "sha256": "1a1a25d747a2af7c27d5b59cb8f746160a09a01e62089e1630561721df9d897f",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/kimi-hook.js",
+      "sha256": "14900242af9d2a6068227709a160376942f5fddfc4c0b2276f7f2f9d15aeeb5e",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/kimi-sessionstart-hook.js",
+      "sha256": "5f3beb0c91029d1486451afca051e2eb0d0df1527d216363609292229e54d1ca",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/kimi-stop-hook.js",
+      "sha256": "f1a21c31717a4bcf0237bedf12313443c75235b5a69efdc7fb745738de91cb9e",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/mcp-server.js",
+      "sha256": "e361cd78894e3db9fa4346f9a92b54ced3a98973dd0ea0218a5373b4a73dcff6",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/opencode2.js",
+      "sha256": "d994cf7e24b85de36294dcbadc7459fe5cce3c7c15047509347174ead23d8b59",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/pi.js",
+      "sha256": "e91938daecec7981a6ad7b8829141d2beb5856cab36d88d69019424206c9b9eb",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/prime-agent.js",
+      "sha256": "4910bc1988c6431121694faadc1e16c80943704674480d40ad4a9517da15b7c0",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/qwen-hook.js",
+      "sha256": "d9929b73fef9e4089f7526e5e0651c83c7d8bf8a6790fe0e0903cbc357e4a680",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/qwen-sessionstart-hook.js",
+      "sha256": "c04a6248cb10ad1da0f4c4e84ff80e05470746b7d0dda3b99752f2cb0d422409",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/qwen-stop-hook.js",
+      "sha256": "2408976e0fd67dde49d57156f22855398500e23774c4ae72de9d484f3f6afb95",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/status.js",
+      "sha256": "1cf8ca0e02323958148f905a48ce7075ad3b6866fb5c2e2057623e76fb3e280e",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/survey-supervisor.js",
+      "sha256": "0f043f761dc8fc5112ddf86959a8dc926c8fe32d9b8e8cdbfcddb650537ae587",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/traecode-hook.js",
+      "sha256": "5fffbe12fea567a6fe67259c0803229972cda2eaf88ebf1a15d52a430f43f24b",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/traecode-sessionstart-hook.js",
+      "sha256": "d17e9b9641e039b9fe6a27a6ea4b5459e4040ecdf8cab1c676e327e43f71d61d",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/traecode-stop-hook.js",
+      "sha256": "4e8690dd314392585cbf98d543c88b6f8a13f6624750c74a45a0e495e6155983",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/workbuddy-hook.js",
+      "sha256": "837cc610c53dc2976925bddaa06647268cb9efa796e563a4c064031a9accb81c",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/workbuddy-sessionstart-hook.js",
+      "sha256": "213edf4e4fb415a98b1814ac0dd778c02b8812295fd1c1866bae39d7de73aa14",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/workbuddy-stop-hook.js",
+      "sha256": "70b27aa9ff2ec866a36d4c11c103835e87ec4cfb926448f14f2263b9882cf203",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/zcode-hook.js",
+      "sha256": "b2ab9a826dd89f20d1c2c9ab4432f4ded2d77482523f4f9904fd2c64d666d271",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/zcode-sessionstart-hook.js",
+      "sha256": "45e29d49c2be700e970d6cb94e06eb9cb89de6bdbce2dced79843496db69306a",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/dist/zcode-stop-hook.js",
+      "sha256": "c8b9337179a6936c702c41bb07d37b02e046cc955f18b8c468d94d7f1056f91b",
+      "note": "capture_initiative 工具注册/提示行移除面"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agents/skill/SKILL.md",
+      "sha256": "65ba47f48bf6fc3cea9399809029abeda4d5cbb0aa182db68249ac989e2bde2e",
+      "note": "skill 文档 capture_initiative 条目清理"
+    },
+    {
+      "path": "/home/jerry/.hindsight/coding-agent.json",
+      "sha256": "7c4e843b9fbd521e535e94e7c1ae26f41db077cea94745d6753f8d83f97883d2",
+      "note": "autoUpdate=false + 知识页播种全关 + bank 键"
+    }
+  ]
+}

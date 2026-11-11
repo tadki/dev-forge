@@ -16,7 +16,7 @@ let target = '';
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'forge-patches-'));
-  patchesDir = join(root, '.hindsight', 'patches');
+  patchesDir = join(root, 'patches');
   runtimeDir = join(root, '.hindsight', 'coding-agents');
   await mkdir(patchesDir, { recursive: true });
   await mkdir(join(runtimeDir, 'dist'), { recursive: true });

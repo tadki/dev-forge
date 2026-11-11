@@ -204,7 +204,7 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     // hook-rule / adapter / patch：声明式发现——registry.d 条目盖章归属
     expect(cc?.kinds?.['hook-rule']?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-hooks-engine' });
     expect(cc?.kinds?.adapter?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-adapters' });
-    expect(cc?.kinds?.patch?.discovery).toMatchObject({ mode: 'declared', registry: 'hindsight-integration' });
+    expect(cc?.kinds?.patch?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-patches' });
     // Claude Code 无 autopilot 体系：两类 autopilot kind 均「不适用」
     expect(cc?.kinds?.['autopilot-registration']?.applicable).toBe(false);
     expect(cc?.kinds?.['autopilot-script']?.applicable).toBe(false);

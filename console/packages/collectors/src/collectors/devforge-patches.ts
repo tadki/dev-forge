@@ -5,8 +5,10 @@ import { asset, type CollectContext, type Collector } from '../types.js';
 
 /**
  * 本地补丁（patch kind）：我们对第三方文件的修改以补丁程序为单位注册为自建资产。
- * 补丁脚本按契约在每次运行后写 <program>.state.json（应用事实基线：目标指纹 + 上游
- * 锚定版本 + 脚本自身指纹——机器生成，非手写声明）。本采集器读基线并实测三类漂移：
+ * 补丁脚本收编在 dev-forge 仓库 patches/ 下统一管理（补丁不依赖存放位置生效；
+ * 平台归属由 registry.d 声明，与扫描路径无关）。脚本按契约在每次运行后写
+ * <program>.state.json（应用事实基线：目标指纹 + 上游锚定版本 + 脚本自身指纹——
+ * 机器生成，非手写声明）。本采集器读基线并实测三类漂移：
  * - drifted：目标文件指纹/上游版本与基线不符（升级覆盖、他人改动）
  * - stale：补丁脚本自身改过但未重跑（基线还停在旧脚本）
  * - unverified：脚本在但没有 state（从未按契约跑过）
@@ -23,7 +25,7 @@ interface PatchState {
 
 type PatchLiveState = 'applied' | 'drifted' | 'stale' | 'unverified';
 
-const patchesDir = (ctx: CollectContext): string => join(ctx.paths.home, '.hindsight', 'patches');
+const patchesDir = (ctx: CollectContext): string => join(ctx.paths.devforge, 'patches');
 
 /** state 无 runtimeDir 时从 dist 目标路径推导（dist/x.js 的上上级即运行时根） */
 function guessRuntimeDir(state: PatchState): string | undefined {
@@ -99,7 +101,7 @@ export const devforgePatchesCollector: Collector = {
           attach: { level: 'user' },
           enforcement: 'enforced',
           provenance: 'first-party',
-          // 补丁本体在 ~/.hindsight（第三方域）；归属由 registry.d 声明（hindsight-integration → claude-code）
+          // 补丁本体在 dev-forge/patches（自建域）；归属由 registry.d 声明（devforge-patches → claude-code）
           platforms: [],
           source: { collector: 'devforge-patches', path: applier, sha256: applierSha },
           payload: {

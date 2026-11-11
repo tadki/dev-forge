@@ -51,6 +51,12 @@ entries:
     platforms: [claude-code]
     meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: claude-code }
 
+  - id: devforge-patches
+    # 本地补丁程序（对第三方运行时/配置的修改以补丁为单位管理；Owner 2026-11-11 从 ~/.hindsight/patches 收编进仓库 patches/）
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/patches/" }
+    platforms: [claude-code]
+    meta: { owner: jerry, category: memory, lifecycle: stable, criticality: medium, runtime: claude-code, notes: "hindsight 插件本地补丁；应用基线 state 由 devforge-patches 采集器实测漂移" }
+
   # 宽泛兜底：dev-forge 仓库下其余资产（必须排在所有 dev-forge 子路径条目之后）
   - id: devforge-core
     match: { pathPrefix: "/home/jerry/tools/dev-forge/" }
