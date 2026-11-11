@@ -91,6 +91,7 @@ class Notifier:
         self._auth_failures = 0
         self._channel_failures = 0
         self._transient_failures = 0
+        self._total_failures = 0
 
     def run(self) -> int:
         attempt = 0
@@ -105,6 +106,7 @@ class Notifier:
                 # tested the channel — every failure run breaks here.
                 self._channel_failures = 0
                 self._transient_failures = 0
+                self._total_failures = 0
                 self._auth_failures += 1
                 if self._once_bound_reached(self._auth_failures):
                     self.logger.error("auth_gave_up", attempts=self._auth_failures)
@@ -117,6 +119,7 @@ class Notifier:
             if delivered:
                 self._channel_failures = 0
                 self._transient_failures = 0
+                self._total_failures = 0
                 return EXIT_OK
             self._wait_backoff(attempt)
             attempt += 1
@@ -129,24 +132,33 @@ class Notifier:
         if isinstance(exc, TelegramError) and exc.is_channel_error:
             self._channel_failures += 1
             self._transient_failures = 0
+            self._total_failures += 1
             if self._once_bound_reached(self._channel_failures):
                 self.logger.error("channel_gave_up", attempts=self._channel_failures)
                 return EXIT_CHANNEL_FAILED
-            return None
-        if isinstance(exc, TelegramError):
+        elif isinstance(exc, TelegramError):
             # E-1: persistent retryable failures (stuck 500/429 upstream) must
             # also end a --once probe deterministically — without quarantining
             # the still-pending notification.
             self._transient_failures += 1
             self._channel_failures = 0
+            self._total_failures += 1
             if self._once_bound_reached(self._transient_failures):
                 self.logger.error("delivery_gave_up", attempts=self._transient_failures)
                 return EXIT_DELIVERY_FAILED
+        else:
+            # Any other session outcome (ws drop, protocol deviation) ends the
+            # runs of consecutive channel and transient failures.
+            self._channel_failures = 0
+            self._transient_failures = 0
+            self._total_failures = 0
             return None
-        # Any other session outcome (ws drop, protocol deviation) ends the
-        # runs of consecutive channel and transient failures.
-        self._channel_failures = 0
-        self._transient_failures = 0
+        # F-1: channel and transient counters clear each other, so strictly
+        # alternating failures would never reach a per-class bound; the total
+        # Telegram-failure run bounds the probe regardless of the pattern.
+        if self._once_bound_reached(self._total_failures):
+            self.logger.error("delivery_gave_up", attempts=self._total_failures)
+            return EXIT_DELIVERY_FAILED
         return None
 
     def _once_bound_reached(self, failures: int) -> bool:
@@ -296,7 +308,7 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return EXIT_CONFIG
     logger = JsonLogger(Redactor([config.multica_pat, config.telegram_bot_token]),
-                        file_path=args.log_json)
+                        file_path=os.path.expanduser(args.log_json) if args.log_json else None)
     telegram, state, ws_factory = build_components(config)
     notifier = Notifier(config, logger, telegram, state, ws_factory, once=args.once)
     try:
