@@ -373,22 +373,22 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     {sel.note}
                   </div>
                 )}
-                <div>
-                  <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
-                    发现通道 DISCOVERY · 怎么确定资产适配本平台
-                  </div>
-                  <DiscoveryCell discovery={sel.discovery} notApplicable={sel.declared && sel.applicable === false} />
-                </div>
-                <div className="grid grid-2" style={{ alignItems: 'start', marginTop: 'var(--sp-3)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--sp-3)', alignItems: 'start' }}>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
-                      读通道 READ · 怎么读到正文
+                      发现通道 DISCOVERY
+                    </div>
+                    <DiscoveryCell discovery={sel.discovery} notApplicable={sel.declared && sel.applicable === false} />
+                  </div>
+                  <div>
+                    <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
+                      读通道 READ
                     </div>
                     <ReadCell read={sel.read} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
-                      写通道 WRITE · 怎么物化
+                      写通道 WRITE
                     </div>
                     <WriteCell write={sel.write} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
