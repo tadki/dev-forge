@@ -320,7 +320,10 @@ class TestErrorBodyReadRobustness:
         def broken_read(*_args, **_kwargs):
             raise http.client.IncompleteRead(partial=b"ok\":fal")
 
-        fp = type("BrokenFP", (), {"read": staticmethod(broken_read)})()
+        # Full fp lifecycle (read + no-op close): urllib destroys the HTTPError
+        # body on GC, and a missing close() leaks a PytestUnraisable warning.
+        fp = type("BrokenFP", (), {"read": staticmethod(broken_read),
+                                   "close": staticmethod(lambda: None)})()
         exc = urllib.error.HTTPError(
             "http://telegram.invalid/botX/sendMessage", 500, "oops",
             email.message.Message(), fp)
