@@ -299,6 +299,54 @@ class TestPermanentSendFailure:
             server.close()
 
 
+class TestChannelFailureKeepsPending:
+    def test_401_keeps_item_pending_and_delivers_after_recovery(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (200, {"ok": True, "result": [private_chat_update(987654)]}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+        ]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="during-outage")), ("close",)])
+        try:
+            notifier, cfg, capture = build(tmp_path, server, fake_telegram)
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            # Channel failure must NOT quarantine: the item stays pending and
+            # is delivered once the channel works again (next session).
+            assert len(capture.events("delivery_failed_permanent")) == 0
+            assert capture.events("session_ended")
+            sends = send_calls(fake_telegram)
+            assert len(sends) == 2
+            assert sends[0][1]["text"] == sends[1][1]["text"]
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.is_seen("during-outage")
+        finally:
+            server.close()
+
+    def test_stale_chat_rediscovery_failure_keeps_item_pending(self, tmp_path, fake_telegram):
+        # Channel dead AND chat gone: rediscovery fails (no /start yet) — the
+        # notification must survive and flow once the channel recovers.
+        fake_telegram.responses = [
+            (200, {"ok": True, "result": [private_chat_update(1111111)]}),
+            (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
+            (200, {"ok": True, "result": []}),
+        ]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="orphaned")), ("close",)])
+        try:
+            notifier, cfg, capture = build(tmp_path, server, fake_telegram)
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert len(capture.events("delivery_failed_permanent")) == 0
+            sends = send_calls(fake_telegram)
+            assert [body["chat_id"] for _p, body in sends] == [1111111, 987654]
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.is_seen("orphaned")
+            assert state.chat_id == 987654
+        finally:
+            server.close()
+
+
 class TestStaleChatRecovery:
     def test_stale_chat_id_rediscovered_and_retried(self, tmp_path, fake_telegram):
         fake_telegram.responses = [

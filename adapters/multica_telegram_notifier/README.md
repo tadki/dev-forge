@@ -11,10 +11,12 @@
    `{"type":"auth_ack"}`；失败会收到 `{"error":...}` 且连接被服务端关闭。
 3. 订阅免费：`inbox:new` 是个人事件，服务端只推给 token 对应的用户本人。
 4. 适配器按 `payload.item.workspace_id` 过滤目标 workspace，去重后把通知文本
-   （超过 Telegram 4096 字符上限时截断）通过 Telegram Bot API `sendMessage`
-   发给你的私聊（chat ID 自动发现）。失效的 chat ID（Telegram 返回
-   「chat not found」）会自动重新发现并重试一次；被 Telegram 永久拒绝的通知
-   会记入已处理状态并告警，不会在重连后无限重发。
+   （按 Telegram 的 UTF-16 计长口径截断到 4096 以内）通过 Telegram Bot API
+   `sendMessage` 发给你的私聊（chat ID 自动发现）。失效的 chat ID（Telegram
+   返回「chat not found」）会自动重新发现并重试一次；被 Telegram 永久拒绝的
+   通知会记入已处理状态并告警，不会在重连后无限重发。通道级故障（bot token
+   失效、bot 被拉黑、chat 尚未建立等）则保留待投递语义：通知不丢失，通道恢复
+   （如重新 `/start`、换 token）后自动补投。
 5. 断线自动重连（指数退避），malformed 帧忽略，已投递通知持久化在本地状态文件，
    重启/重连不会重复发送。
 
@@ -48,9 +50,10 @@ python3 adapters/multica_telegram_notifier/notifier.py \
   --config ~/.config/dev-forge/see-1561.env
 
 # 单次 live probe：命中第一条真实通知后退出，exit 0（§SPEC-005 判据命令）
+# 运行产物（日志/状态）一律放仓库外路径，不要落在 git 工作树里
 python3 adapters/multica_telegram_notifier/notifier.py \
   --config ~/.config/dev-forge/see-1561.env \
-  --once --log-json ./live-probe.jsonl
+  --once --log-json ~/.local/state/dev-forge/see-1561-live-probe/probe.jsonl
 ```
 
 - `--once`：投递第一条通知后以 exit 0 退出；chat ID 发现失败或配置缺失 exit 2；
@@ -81,6 +84,9 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 
 - PAT 与 bot token 只放在权限 600 的本地配置文件中，不进仓库、不进日志、不进
   issue/评论；状态文件只存已投递通知 ID 与 chat ID。
+- 运行产物（`--log-json` 日志、状态文件）都应放在仓库外（默认
+  `~/.local/state/dev-forge/...`）；仓库 `.gitignore` 另有 `live-probe*.jsonl`
+  兜底，避免探针产物被误提交。
 - 日志与异常文本经全局 redaction；Telegram 客户端构造错误消息时刻意不带含
   token 的 URL。
 - 泄漏应急：在 BotFather `/revoke` 换 token；在 Multica 设置里删除并重建 PAT。

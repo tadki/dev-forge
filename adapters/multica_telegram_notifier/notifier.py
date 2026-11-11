@@ -130,6 +130,10 @@ class Notifier:
         return chat_id
 
     def _rediscover_chat_id(self) -> int:
+        # Invalidate the in-memory id BEFORE discovery: if discovery fails
+        # (channel still down), the next session must re-ensure from scratch
+        # instead of reusing the proven-stale id.
+        self._chat_id = None
         self.state.chat_id = None
         self.state.save()
         chat_id = self.telegram.discover_chat_id()
@@ -195,7 +199,10 @@ class Notifier:
         try:
             result = self._send_notification(text)
         except TelegramError as exc:
-            if exc.retryable:
+            if exc.retryable or exc.is_channel_error:
+                # Transient or channel-level failure: the item stays pending
+                # and the session loop retries — only a rejection of the
+                # message itself may quarantine it.
                 raise
             # A permanent rejection would otherwise be treated as an ordinary
             # session end and re-sent on every reconnect forever; record the

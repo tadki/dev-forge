@@ -18,3 +18,6 @@ console/e2e/playwright-report/
 
 # claude 本地运行态（hook-fire 日志、push-guard 审计、settings.local.json）
 .claude/
+
+# SEE-1561 notifier live-probe 运行产物（正常应写仓库外路径，此处兜底防误提交）
+live-probe*.jsonl
