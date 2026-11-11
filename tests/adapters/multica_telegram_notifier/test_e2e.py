@@ -15,7 +15,7 @@ from multica_telegram_notifier.notifier import EXIT_OK, Notifier, build_componen
 from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.wsclient import WSClient
 
-from multica_notifier_fakes import FakeMulticaWS, make_env, make_inbox_frame, private_chat_update
+from multica_notifier_fakes import FakeMulticaWS, make_env, make_inbox_frame
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 PAT = "test-pat-value-0123456789"
@@ -61,9 +61,7 @@ class TestAuthFailureRecovery:
 
 class TestSendFailureRetry:
     def test_500_then_ok_delivers_with_retry(self, tmp_path, fake_telegram):
-        # First response feeds chat-id discovery; the 500 hits sendMessage.
-        fake_telegram.responses = [(200, {"ok": True, "result": [private_chat_update(987654)]}),
-                                   (500, {"ok": False, "description": "upstream dead"})]
+        fake_telegram.responses = [(500, {"ok": False, "description": "upstream dead"})]
         server = FakeMulticaWS(script=[("text", make_inbox_frame())])
         try:
             notifier, _cfg = _build(tmp_path, server, fake_telegram)
@@ -106,6 +104,33 @@ class TestSurrogateLogE2E:
             assert "SEE-1561 收口" in log_text
             send_calls = [req for req in fake_telegram.requests if req[0].endswith("/sendMessage")]
             assert len(send_calls) == 1
+        finally:
+            server.close()
+
+
+class TestFragmentedFrameE2E:
+    def test_inbox_frame_split_mid_codepoint_still_delivers(self, tmp_path, fake_telegram):
+        # D-2 end-to-end: one inbox frame delivered as two WebSocket
+        # fragments split inside a multi-byte character must still produce a
+        # delivered notification.
+        from multica_notifier_fakes import text_frame_bytes
+
+        frame = json.loads(make_inbox_frame(item_overrides={"title": "中文分片通知"}))
+        payload = json.dumps(frame, ensure_ascii=False).encode("utf-8")
+        cut = payload.index("中".encode("utf-8")) + 1  # inside the 3-byte 中
+        server = FakeMulticaWS(script=[
+            ("raw", text_frame_bytes(payload[:cut], fin=False)),
+            ("raw", text_frame_bytes(payload[cut:], fin=True, opcode=0x0)),
+            ("sleep", 5),
+        ])
+        try:
+            notifier, _cfg = _build(tmp_path, server, fake_telegram,
+                                    env_over={"NOTIFIER_READ_TIMEOUT": "2"})
+            _thread, result = _run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            send_calls = [req for req in fake_telegram.requests if req[0].endswith("/sendMessage")]
+            assert len(send_calls) == 1
+            assert "中文分片通知" in send_calls[0][1]["text"]
         finally:
             server.close()
 

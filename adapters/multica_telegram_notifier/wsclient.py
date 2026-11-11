@@ -60,7 +60,7 @@ class WSClient:
         self.max_frame_bytes = max_frame_bytes
         self.read_timeout = read_timeout
         self._sock = None
-        self._frag_parts = None
+        self._frag_bytes = None
 
     def connect(self) -> None:
         host, port, path, tls = parse_ws_url(self.url)
@@ -93,12 +93,16 @@ class WSClient:
                 self._send_frame(OP_CLOSE, b"")
                 raise WebSocketClosed("server closed connection")
             if opcode == OP_TEXT:
-                text = self._decode_text(payload)
-                if text is None:
+                if not fin:
+                    # Fragments are reassembled as RAW BYTES and decoded only
+                    # once complete: a multi-byte character may be split
+                    # across any byte boundary (RFC 6455 fragments are
+                    # arbitrary), and per-fragment UTF-8 decode would drop it.
+                    self._frag_bytes = bytearray(payload)
                     continue
-                if fin:
+                text = self._decode_text(payload)
+                if text is not None:
                     return text
-                self._frag_parts = [text]
                 continue
             if opcode == OP_CONT:
                 text = self._handle_continuation(fin, payload)
@@ -164,25 +168,21 @@ class WSClient:
         return lines[0] + (" " + detail if detail else ""), accept
 
     def _handle_continuation(self, fin, payload):
-        if self._frag_parts is None:
+        if self._frag_bytes is None:
             return None
-        text = self._decode_text(payload)
-        if text is None:
-            self._frag_parts = None
+        self._frag_bytes.extend(payload)
+        if not fin:
             return None
-        self._frag_parts.append(text)
-        if fin:
-            joined = "".join(self._frag_parts)
-            self._frag_parts = None
-            return joined
-        return None
+        data = bytes(self._frag_bytes)
+        self._frag_bytes = None
+        return self._decode_text(data)
 
     def _decode_text(self, payload: bytes):
         try:
             return payload.decode("utf-8")
         except UnicodeDecodeError:
             # Malformed text payload: drop any partial fragment and keep reading.
-            self._frag_parts = None
+            self._frag_bytes = None
             return None
 
     def _read_frame(self):

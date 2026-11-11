@@ -65,7 +65,9 @@ def inbox_item_id(item: dict) -> str:
     if isinstance(item_id, str) and item_id:
         return item_id
     # Stable fallback for items without an id so reconnect dedup still works.
-    canonical = json.dumps(item, sort_keys=True, ensure_ascii=False)
+    # ensure_ascii (default) escapes lone surrogates from upstream "\udXXX"
+    # payloads to ASCII, so the UTF-8 encode can never raise.
+    canonical = json.dumps(item, sort_keys=True)
     return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
 
 

@@ -1,11 +1,11 @@
-"""§SPEC-002: Telegram chat-id discovery and sendMessage normal/error paths;
-the bot token never appears in raised error messages."""
+"""§SPEC-002: Telegram sendMessage normal/error paths, result validation and
+text limits; the bot token never appears in raised error messages."""
 
 import pytest
 
 from multica_telegram_notifier.telegram import TelegramClient, TelegramError
 
-from multica_notifier_fakes import FakeTelegram, private_chat_update
+from multica_notifier_fakes import FakeTelegram
 
 BOT = "test-bot-token-value"
 
@@ -65,20 +65,29 @@ class TestSendMessage:
         assert BOT not in str(exc.value)
 
 
-class TestGetUpdates:
-    def test_returns_result_list(self, fake_telegram):
-        fake_telegram.responses = [(200, {"ok": True, "result": [private_chat_update(7)]})]
-        client, _retries, _sleep = make_client(fake_telegram.base_url)
-        updates = client.get_updates()
-        assert updates == [private_chat_update(7)]
-        path, _body = fake_telegram.requests[0]
-        assert path.endswith("/getUpdates")
-
-    def test_invalid_result_raises(self, fake_telegram):
+class TestSendInvalidResult:
+    def test_non_object_result_raises_telegram_error_not_attribute_error(self, fake_telegram):
+        # A broken/malicious proxy answering ok:true with a non-object result
+        # must surface as TelegramError, never crash the caller.
         fake_telegram.responses = [(200, {"ok": True, "result": "nope"})]
         client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.retryable is True
+        assert exc.value.is_channel_error is True
+        assert BOT not in str(exc.value)
+
+    def test_missing_result_raises_telegram_error(self, fake_telegram):
+        fake_telegram.responses = [(200, {"ok": True})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
         with pytest.raises(TelegramError):
-            client.get_updates()
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+
+    def test_numeric_result_raises_telegram_error(self, fake_telegram):
+        fake_telegram.responses = [(200, {"ok": True, "result": 123})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError):
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
 
 
 class TestTextLengthLimit:
@@ -237,24 +246,6 @@ class TestErrorClassification:
         assert exc.value.retryable is False
 
 
-class TestDiscoverChatId:
-    def test_finds_private_chat(self, fake_telegram):
-        fake_telegram.responses = [(200, {"ok": True, "result": [private_chat_update(987654)]})]
-        client, _retries, _sleep = make_client(fake_telegram.base_url)
-        assert client.discover_chat_id() == 987654
-
-    def test_prefers_most_recent_private_chat(self, fake_telegram):
-        updates = [private_chat_update(111), private_chat_update(222)]
-        fake_telegram.responses = [(200, {"ok": True, "result": updates})]
-        client, _retries, _sleep = make_client(fake_telegram.base_url)
-        assert client.discover_chat_id() == 222
-
-    def test_group_chats_ignored(self, fake_telegram):
-        group = {"update_id": 2, "message": {"chat": {"id": 5, "type": "group"}, "text": "hi"}}
-        fake_telegram.responses = [(200, {"ok": True, "result": [group]})]
-        client, _retries, _sleep = make_client(fake_telegram.base_url)
-        with pytest.raises(TelegramError) as exc:
-            client.discover_chat_id()
-        assert "/start" in str(exc.value)
-        assert exc.value.retryable is False
-        assert exc.value.is_channel_error is True
+# D-1: chat-id discovery/selection is gone by design — the adapter only ever
+# writes to the configured NOTIFIER_TELEGRAM_CHAT_ID, so other private chats
+# in the bot's updates can never receive Inbox content.

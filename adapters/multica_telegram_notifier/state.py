@@ -1,5 +1,5 @@
-"""Dedup + chat-id state, persisted as JSON so delivery survives restarts
-and reconnects do not double-send (§SPEC-003).
+"""Dedup state, persisted as JSON so delivery survives restarts and
+reconnects do not double-send (§SPEC-003).
 
 mark_seen saves immediately: the durable "delivered" fact is what makes the
 at-least-once session semantics safe. A corrupt file recovers to a fresh
@@ -18,7 +18,6 @@ class DedupState:
         self.path = path if path is not None else default_state_file()
         self.capacity = capacity
         self.delivered = []
-        self.chat_id = None
         self.corrupt = False
 
     def load(self) -> None:
@@ -35,18 +34,18 @@ class DedupState:
             return
         delivered = data.get("delivered")
         if isinstance(delivered, list):
+            # Unknown/legacy keys (e.g. an old chat_id cache) are ignored:
+            # the configured chat id is the single authority.
             self.delivered = [x for x in delivered if isinstance(x, str)][: self.capacity]
-        self.chat_id = self._valid_chat_id(data.get("chat_id"))
 
     def save(self) -> None:
         parent = os.path.dirname(self.path)
         if parent:
             os.makedirs(parent, exist_ok=True)
         tmp_path = self.path + ".tmp"
-        payload = json.dumps(
-            {"delivered": self.delivered, "chat_id": self.chat_id},
-            ensure_ascii=False,
-        )
+        # ensure_ascii (default) escapes lone surrogates from upstream ids, so
+        # the strict UTF-8 file write can never raise.
+        payload = json.dumps({"delivered": self.delivered})
         # Atomic replace: a crash mid-write can never leave a half-written
         # state file behind — readers see either the old or the new content.
         with open(tmp_path, "w", encoding="utf-8") as handle:
@@ -63,13 +62,3 @@ class DedupState:
         if len(self.delivered) > self.capacity:
             self.delivered = self.delivered[-self.capacity:]
         self.save()
-
-    def set_chat_id(self, chat_id: int) -> None:
-        self.chat_id = chat_id
-        self.save()
-
-    @staticmethod
-    def _valid_chat_id(raw):
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            return raw
-        return None

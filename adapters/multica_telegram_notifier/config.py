@@ -6,6 +6,7 @@ Missing required keys fail loudly naming the key — never guess a default for
 a credential or endpoint.
 """
 
+import math
 import os
 import urllib.parse
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ DEFAULT_READ_TIMEOUT = 90.0
 REQUIRED_KEYS = (
     "NOTIFIER_MULTICA_PAT",
     "NOTIFIER_TELEGRAM_BOT_TOKEN",
+    "NOTIFIER_TELEGRAM_CHAT_ID",
     "NOTIFIER_MULTICA_SERVER_URL",
     "NOTIFIER_WORKSPACE_ID",
 )
@@ -33,6 +35,7 @@ class ConfigError(Exception):
 class Config:
     multica_pat: str
     telegram_bot_token: str
+    telegram_chat_id: int
     server_url: str
     workspace_id: str
     state_file: str
@@ -72,6 +75,10 @@ def _parse_delays(raw: str, key: str) -> tuple:
             seconds = float(part)
         except ValueError as exc:
             raise ConfigError(f"{key} has a non-numeric delay: {part!r}") from exc
+        # nan/inf parse as floats but make every later comparison meaningless,
+        # so they are configuration errors, not accepted values.
+        if not math.isfinite(seconds):
+            raise ConfigError(f"{key} has a non-finite delay: {part!r}")
         if seconds < 0:
             raise ConfigError(f"{key} has a negative delay: {part!r}")
         delays.append(seconds)
@@ -83,8 +90,20 @@ def _parse_positive_seconds(raw: str, key: str) -> float:
         value = float(raw)
     except ValueError as exc:
         raise ConfigError(f"{key} is not a number: {raw!r}") from exc
+    if not math.isfinite(value):
+        raise ConfigError(f"{key} is not finite: {raw!r}")
     if value <= 0:
         raise ConfigError(f"{key} must be positive")
+    return value
+
+
+def _parse_positive_int(raw: str, key: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} is not an integer: {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{key} must be a positive integer")
     return value
 
 
@@ -115,6 +134,8 @@ def load_config(env: Mapping) -> Config:
     return Config(
         multica_pat=required("NOTIFIER_MULTICA_PAT"),
         telegram_bot_token=required("NOTIFIER_TELEGRAM_BOT_TOKEN"),
+        telegram_chat_id=_parse_positive_int(
+            required("NOTIFIER_TELEGRAM_CHAT_ID"), "NOTIFIER_TELEGRAM_CHAT_ID"),
         server_url=server_url.rstrip("/"),
         workspace_id=required("NOTIFIER_WORKSPACE_ID"),
         state_file=optional("NOTIFIER_STATE_FILE", default_state_file()),

@@ -71,23 +71,17 @@ class TestCapacity:
         assert not reloaded.is_seen("item-0")
 
 
-class TestChatIdCache:
-    def test_chat_id_roundtrip(self, tmp_path):
-        path = str(tmp_path / "state.json")
-        state = DedupState(path)
-        state.load()
-        state.chat_id = 987654
-        state.save()
-        with open(path, encoding="utf-8") as handle:
-            raw = json.load(handle)
-        assert raw["chat_id"] == 987654
-        reloaded = DedupState(path)
-        reloaded.load()
-        assert reloaded.chat_id == 987654
-
-    def test_invalid_chat_id_ignored_on_load(self, tmp_path):
+class TestLegacyFields:
+    def test_legacy_chat_id_key_in_state_file_is_ignored(self, tmp_path):
+        # Older state files cached a chat id; the config key is now the single
+        # authority, so loading must tolerate and ignore the leftover field.
         path = tmp_path / "state.json"
-        path.write_text('{"chat_id": "not-a-number", "delivered": []}', encoding="utf-8")
+        path.write_text('{"chat_id": 555000, "delivered": ["old-item"]}', encoding="utf-8")
         state = DedupState(str(path))
         state.load()
-        assert state.chat_id is None
+        assert state.is_seen("old-item")
+        assert not state.corrupt
+        state.mark_seen("new-item")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        assert "chat_id" not in raw
+        assert raw["delivered"] == ["old-item", "new-item"]
