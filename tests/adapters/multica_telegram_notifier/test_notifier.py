@@ -8,6 +8,7 @@ import io
 import json
 import os
 import threading
+from pathlib import Path
 
 from multica_telegram_notifier.config import load_config
 from multica_telegram_notifier.jsonlog import JsonLogger
@@ -254,6 +255,26 @@ class TestStartupFailures:
             paths = [p for p, _ in fake_telegram.requests]
             assert paths == [f"/bot{BOT}/sendMessage"]
             assert fake_telegram.requests[0][1]["chat_id"] == 987654
+        finally:
+            server.close()
+
+    def test_log_json_tilde_path_expanded_not_literal(self, tmp_path, fake_telegram, monkeypatch):
+        # F-3: --log-json must expand `~` like NOTIFIER_STATE_FILE does; the
+        # old behavior silently created a literal "./~" tree under the CWD.
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            for key in [k for k in os.environ if k.startswith("NOTIFIER_")]:
+                monkeypatch.delenv(key, raising=False)
+            monkeypatch.setenv("HOME", str(tmp_path))
+            env = make_env(server, fake_telegram, tmp_path)
+            env_path = tmp_path / "log.env"
+            env_path.write_text("\n".join(f"{k}={v}" for k, v in env.items()), encoding="utf-8")
+            from multica_telegram_notifier.notifier import main
+            code = main(["--config", str(env_path), "--once",
+                         "--log-json", "~/see1561-log/probe.jsonl"])
+            assert code == EXIT_OK
+            assert (tmp_path / "see1561-log" / "probe.jsonl").exists()
+            assert not (Path.cwd() / "~").exists()
         finally:
             server.close()
 
@@ -536,6 +557,40 @@ class TestOnceChannelBound:
             assert capture.events("delivery_gave_up")
             assert len(capture.events("delivery_failed_permanent")) == 0
             assert len(capture.events("channel_gave_up")) == 0
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert not state.is_seen("probe-item")
+        finally:
+            server.close()
+
+    def test_once_alternating_failures_still_bound_exit_6(self, tmp_path, fake_telegram):
+        # F-1: channel and transient counters clear each other, so strictly
+        # alternating 500/401 would never reach a per-class bound; the total
+        # Telegram-failure run must still bound the probe (item stays pending).
+        fake_telegram.responses = [
+            # Each session surfaces its LAST response; 500/500 keeps it
+            # transient, then a lone 401 surfaces channel — a true surfaced
+            # alternation that per-class bounds can never accumulate.
+            (500, {"ok": False, "error_code": 500, "description": "internal error"}),
+            (500, {"ok": False, "error_code": 500, "description": "internal error"}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+            (500, {"ok": False, "error_code": 500, "description": "internal error"}),
+            (500, {"ok": False, "error_code": 500, "description": "internal error"}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+        ]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
+                                       ("sleep", 0.1)])
+        try:
+            notifier, cfg, capture = build(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05",
+                          "NOTIFIER_SEND_RETRIES": "0.01"})
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_DELIVERY_FAILED, result
+            assert capture.events("delivery_gave_up")
+            assert len(capture.events("delivery_failed_permanent")) == 0
             state = DedupState(cfg.state_file)
             state.load()
             assert not state.is_seen("probe-item")
