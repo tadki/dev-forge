@@ -14,8 +14,24 @@ import urllib.request
 
 RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504}
 
+# Channel-level failures: the delivery pipe itself is broken (bot token
+# invalid, bot blocked, endpoint not found) — notifications must stay
+# pending until the channel recovers, never be quarantined per-message.
+CHANNEL_HTTP_CODES = {401, 403, 404}
+
 # Telegram sendMessage hard limit on the text field (Bot API contract).
 MAX_TEXT_LENGTH = 4096
+
+
+def _truncate_utf16(text: str, limit: int = MAX_TEXT_LENGTH) -> str:
+    # Telegram measures length in UTF-16 code units (non-BMP chars count 2),
+    # so cutting by Python len() alone can still exceed the limit for
+    # emoji-heavy text; cut on the UTF-16 byte stream instead.
+    encoded = text.encode("utf-16-le")
+    if len(encoded) <= limit * 2:
+        return text
+    # errors="ignore" drops a dangling lone surrogate left by the byte cut.
+    return encoded[: limit * 2].decode("utf-16-le", errors="ignore")
 
 
 def _error_detail(exc) -> tuple:
@@ -35,10 +51,12 @@ def _error_detail(exc) -> tuple:
 
 
 class TelegramError(Exception):
-    def __init__(self, message: str, retryable: bool = True, error_code=None):
+    def __init__(self, message: str, retryable: bool = True, error_code=None,
+                 is_channel_error: bool = False):
         super().__init__(message)
         self.retryable = retryable
         self.error_code = error_code
+        self.is_channel_error = is_channel_error
 
 
 class TelegramClient:
@@ -49,8 +67,8 @@ class TelegramClient:
 
     def send_message(self, chat_id: int, text: str, retries=(), sleep=time.sleep) -> dict:
         # Truncate at the API boundary: one oversized inbox item must not
-        # wedge delivery (Telegram rejects > 4096 outright).
-        text = text[:MAX_TEXT_LENGTH]
+        # wedge delivery (Telegram rejects > 4096 UTF-16 units outright).
+        text = _truncate_utf16(text)
         attempts = 1 + len(retries)
         for attempt in range(attempts):
             try:
@@ -66,7 +84,8 @@ class TelegramClient:
         body = self._call("getUpdates", {})
         result = body.get("result")
         if not isinstance(result, list):
-            raise TelegramError("getUpdates returned an invalid result", retryable=False)
+            raise TelegramError("getUpdates returned an invalid result", retryable=False,
+                                is_channel_error=True)
         return result
 
     def discover_chat_id(self) -> int:
@@ -78,6 +97,7 @@ class TelegramClient:
             "no private chat found in getUpdates; open the new bot in Telegram "
             "and send /start first",
             retryable=False,
+            is_channel_error=True,
         )
 
     # --- internals ---
@@ -102,11 +122,13 @@ class TelegramClient:
                 f"telegram {method} failed: {detail}",
                 retryable=exc.code in RETRYABLE_HTTP,
                 error_code=error_code,
+                is_channel_error=exc.code in CHANNEL_HTTP_CODES,
             ) from None
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
             reason = type(exc).__name__
             raise TelegramError(
-                f"telegram {method} network error: {reason}", retryable=True) from None
+                f"telegram {method} network error: {reason}", retryable=True,
+                is_channel_error=True) from None
         try:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):

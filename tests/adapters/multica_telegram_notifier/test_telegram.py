@@ -96,6 +96,81 @@ class TestTextLengthLimit:
         _path, body = fake_telegram.requests[0]
         assert body["text"] == "y" * 4096
 
+    def test_non_bmp_heavy_text_truncated_by_utf16_units(self, fake_telegram):
+        # 3000 emoji = 3000 Python chars but 6000 UTF-16 units: a codepoint
+        # cut alone would still exceed Telegram's limit.
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        client.send_message(42, "🚀" * 3000, retries=retries, sleep=sleep)
+        _path, body = fake_telegram.requests[0]
+        assert len(body["text"].encode("utf-16-le")) // 2 == 4096
+        assert len(body["text"]) == 2048
+
+    def test_text_at_utf16_limit_unchanged(self, fake_telegram):
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        client.send_message(42, "🚀" * 2048, retries=retries, sleep=sleep)
+        _path, body = fake_telegram.requests[0]
+        assert body["text"] == "🚀" * 2048
+
+    def test_mixed_text_truncated_at_utf16_boundary(self, fake_telegram):
+        # 4000 ASCII + 100 emoji = 4200 UTF-16 units → cut to 4096.
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        client.send_message(42, "a" * 4000 + "🚀" * 100, retries=retries, sleep=sleep)
+        _path, body = fake_telegram.requests[0]
+        assert len(body["text"].encode("utf-16-le")) // 2 == 4096
+        assert body["text"].startswith("a" * 4000)
+
+
+class TestErrorClassification:
+    def test_http_401_is_channel_error(self, fake_telegram):
+        fake_telegram.responses = [(401, {"ok": False, "error_code": 401,
+                                          "description": "Unauthorized"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.is_channel_error is True
+        assert exc.value.retryable is False
+
+    def test_http_403_blocked_bot_is_channel_error(self, fake_telegram):
+        fake_telegram.responses = [(403, {"ok": False, "error_code": 403,
+                                          "description": "Forbidden: bot was blocked by the user"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.is_channel_error is True
+
+    def test_http_404_is_channel_error(self, fake_telegram):
+        fake_telegram.responses = [(404, {"ok": False, "error_code": 404,
+                                          "description": "Not Found"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.is_channel_error is True
+
+    def test_http_400_is_message_level(self, fake_telegram):
+        fake_telegram.responses = [(400, {"ok": False, "error_code": 400,
+                                          "description": "Bad Request: message text is empty"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.is_channel_error is False
+        assert exc.value.retryable is False
+
+    def test_server_error_is_retryable_not_channel(self, fake_telegram):
+        fake_telegram.responses = [(500, {"ok": False, "error_code": 500,
+                                          "description": "internal error"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.retryable is True
+        assert exc.value.is_channel_error is False
+
+    def test_network_error_is_channel_and_retryable(self):
+        client = TelegramClient("http://127.0.0.1:1", BOT, timeout=1.0)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.retryable is True
+        assert exc.value.is_channel_error is True
+
     def test_error_code_parsed_into_exception(self, fake_telegram):
         fake_telegram.responses = [(400, {"ok": False, "error_code": 400,
                                           "description": "Bad Request: chat not found"})]
@@ -126,3 +201,4 @@ class TestDiscoverChatId:
             client.discover_chat_id()
         assert "/start" in str(exc.value)
         assert exc.value.retryable is False
+        assert exc.value.is_channel_error is True
