@@ -245,6 +245,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         read: { how: 'file', note: '读 settings.json 源文件（采集已脱敏）' },
         write: { type: 'none', advice: '聚合/观测型资产，无写通道' },
       },
+      service: {
+        applicable: false,
+        note: 'Claude Code 无 service 对象：systemd 运行时探针是 dev 机器对象（source.platform=none），不归属任何平台',
+      },
       deployment: {
         applicable: false,
         note: 'Claude Code 无部署实例对象：deployment 是 multica 的 agent×运行环境绑定（platformId/workspaceId/status），本地文件系统平台不存在此概念',

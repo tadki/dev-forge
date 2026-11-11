@@ -138,6 +138,10 @@ kinds:
       note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志类 custom 无平台声明，落未适配桶'
     read: { how: file, note: '读 settings.json 源文件（采集已脱敏）' }
     write: { type: none, advice: '聚合/观测型资产，无写通道' }
+  # systemd 服务是 dev 机器运行时对象（采集显式 platform:none），不是 Claude Code 平台对象
+  service:
+    applicable: false
+    note: 'Claude Code 无 service 对象：systemd 运行时探针是 dev 机器对象（source.platform=none），不归属任何平台'
   # deployment 平台页显示「不适用」而非「未适配」：Claude Code 结构上无部署实例对象
   deployment:
     applicable: false
