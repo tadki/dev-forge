@@ -13,7 +13,11 @@ export function CustomPage(_props: { ctx: PageCtx }) {
   const [sel, setSel] = useState<string | null>(null);
   const [pushText, setPushText] = useState('');
   const [pushResult, setPushResult] = useState('');
-  const rows = list.data?.assets ?? [];
+  const allRows = list.data?.assets ?? [];
+  // 报告类（工具链产出观测）：firelog 活动流、日检、架构巡逻等——tag 由采集器打点，kind 仍归 custom 桶
+  const reportRows = allRows.filter((r) => r.tags.includes('report'));
+  const otherRows = allRows.filter((r) => !r.tags.includes('report'));
+  const rows = [...reportRows, ...otherRows];
   const selId = sel ?? rows[0]?.id ?? null;
   const selected = rows.find((r) => r.id === selId);
 
@@ -33,19 +37,30 @@ export function CustomPage(_props: { ctx: PageCtx }) {
     <div>
       <div className="page-head">
         <div>
-          <h2>通用资产</h2>
-          <div className="sub tagline">CUSTOM · 兜底视图：custom kind 与未知类型 · 永不白屏</div>
+          <h2>其他资产</h2>
+          <div className="sub tagline">CUSTOM · 兜底视图：custom kind 与未知类型 · 报告类单列 · 永不白屏</div>
         </div>
       </div>
 
       <div className="grid grid-2">
-        <Panel title="custom 资产" en={`${rows.length}`}>
-          {rows.map((r) => (
-            <div key={r.id} className={`tree-node ${r.id === selId ? 'sel' : ''}`} onClick={() => setSel(r.id)}>
-              {r.name} <span className="dim">{r.summary.slice(0, 60)}</span>
-            </div>
-          ))}
-        </Panel>
+        <div>
+          <Panel title="报告" en={`${reportRows.length}`} className={otherRows.length ? 'mb' : ''}>
+            {reportRows.map((r) => (
+              <div key={r.id} className={`tree-node ${r.id === selId ? 'sel' : ''}`} onClick={() => setSel(r.id)}>
+                {r.name} <span className="dim">{r.summary.slice(0, 60)}</span>
+              </div>
+            ))}
+            {reportRows.length === 0 && <div className="dim">—</div>}
+          </Panel>
+          <Panel title="其他" en={`${otherRows.length}`}>
+            {otherRows.map((r) => (
+              <div key={r.id} className={`tree-node ${r.id === selId ? 'sel' : ''}`} onClick={() => setSel(r.id)}>
+                {r.name} <span className="dim">{r.summary.slice(0, 60)}</span>
+              </div>
+            ))}
+            {otherRows.length === 0 && <div className="dim">—</div>}
+          </Panel>
+        </div>
         <Panel title={selected?.name ?? '—'} en="PAYLOAD">
           {selected ? <JsonView data={selected.payload} /> : <div className="dim">—</div>}
         </Panel>

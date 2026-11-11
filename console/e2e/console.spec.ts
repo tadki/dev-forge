@@ -52,7 +52,7 @@ test('nav: all 11 pages render with header', async ({ page }) => {
     ['/services', '服务'],
     ['/autopilots', '巡逻'],
     ['/graph', '关系图'],
-    ['/custom', '通用资产'],
+    ['/custom', '其他资产'],
     ['/effective', '有效 HARNESS'],
     ['/platforms', '平台'],
   ];

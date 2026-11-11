@@ -734,6 +734,7 @@
       "platforms": [],
       "provenance": "first-party",
       "tags": [
+        "report",
         "health",
         "toolchain"
       ],
@@ -809,6 +810,7 @@
       ],
       "provenance": "first-party",
       "tags": [
+        "report",
         "activity"
       ],
       "enabled": true,

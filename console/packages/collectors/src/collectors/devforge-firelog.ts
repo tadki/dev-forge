@@ -87,7 +87,7 @@ export const devforgeFirelogCollector: Collector = {
       platforms: [],
       source: { collector: 'devforge-firelog', path: logs[0].path, platform: 'none' },
       payload: { events: top, denyCount, globalLogBytes: globalSize },
-      tags: ['activity', 'firelog'],
+      tags: ['report', 'activity', 'firelog'],
     });
     void readFile;
     return { assets: [a], relations: [], diagnostics: ctx.diagnostics };

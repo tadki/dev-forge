@@ -11,7 +11,7 @@ const ITEMS: Array<{ to: string; icon: string; zh: string; en: string }> = [
   { to: '/services', icon: '▨', zh: '服务', en: 'SERVICES' },
   { to: '/autopilots', icon: '▩', zh: '巡逻', en: 'AUTOPILOTS' },
   { to: '/platforms', icon: '◨', zh: '平台', en: 'PLATFORMS' },
-  { to: '/custom', icon: '○', zh: '通用资产', en: 'CUSTOM' },
+  { to: '/custom', icon: '○', zh: '其他资产', en: 'CUSTOM' },
   { to: '/registry', icon: '◧', zh: '注册表', en: 'REGISTRY' },
   { to: '/graph', icon: '◇', zh: '关系图', en: 'GRAPH' },
 ];

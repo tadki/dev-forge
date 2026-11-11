@@ -15,7 +15,7 @@ interface ToolchainReport {
 interface ArchReport {
   generated_at?: string;
   exit_code?: number;
-  summary?: string;
+  summary?: string | { total_findings?: number; new_findings?: number };
   [k: string]: unknown;
 }
 
@@ -53,27 +53,31 @@ export const healthCollector: Collector = {
             dimensions: tc.dimensions,
             inputMissing: tc.input_missing,
           },
-          tags: ['health', 'toolchain', ...(tc.health === 'REDLINE' ? ['alert'] : [])],
+          tags: ['report', 'health', 'toolchain', ...(tc.health === 'REDLINE' ? ['alert'] : [])],
         })
       );
     } else if (await exists(ctx.config.reports.toolchainLatest)) {
-      assets.push(asset({ id: 'custom:toolchain-latest', kind: 'custom', name: '工具链日检', summary: '解析失败', attach: { level: 'user' }, enforcement: 'derived', platforms: [], source: { collector: 'health', path: ctx.config.reports.toolchainLatest }, payload: {}, tags: ['health'] }));
+      assets.push(asset({ id: 'custom:toolchain-latest', kind: 'custom', name: '工具链日检', summary: '解析失败', attach: { level: 'user' }, enforcement: 'derived', platforms: [], source: { collector: 'health', path: ctx.config.reports.toolchainLatest }, payload: {}, tags: ['report', 'health'] }));
     }
 
     const arch = await readJson<ArchReport>(ctx.config.reports.archPatrol);
     if (arch) {
+      const archSummary =
+        typeof arch.summary === 'string'
+          ? arch.summary
+          : `${arch.summary?.new_findings ?? '?'} new / ${arch.summary?.total_findings ?? '?'} findings`;
       assets.push(
         asset({
           id: 'custom:arch-patrol',
           kind: 'custom',
           name: 'KOL 架构巡逻（architecture_sweep）',
-          summary: `${arch.summary ?? `exit ${arch.exit_code ?? '?'}`} · ${arch.generated_at ?? ''}`,
+          summary: `${archSummary} · exit ${arch.exit_code ?? '?'} · ${arch.generated_at ?? ''}`,
           attach: { level: 'user' },
           enforcement: 'derived',
           platforms: [],
           source: { collector: 'health', path: ctx.config.reports.archPatrol },
           payload: { generatedAt: arch.generated_at, exitCode: arch.exit_code, report: arch },
-          tags: ['health', 'arch-patrol'],
+          tags: ['report', 'health', 'arch-patrol'],
         })
       );
     }
