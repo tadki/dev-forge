@@ -233,7 +233,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: active ? 700 : 400 }}>{item.label ?? item.id}</div>
                       <div className="mono dim" style={LABEL}>
-                        {item.id} · {item.matchPathPrefix.join(' ') || '—'}
+                        {item.id}
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
@@ -253,7 +253,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
               <span className="no">02</span>
               <span className="title">{p.label ?? p.id}</span>
               <span className="en">
-                READ / WRITE CONTRACT · {p.id} · {p.totalAssets} ASSETS · MATCH {p.matchPathPrefix.join(' ')}
+                READ / WRITE CONTRACT · {p.id} · {p.totalAssets} ASSETS · 声明即归属（asset.platforms）
               </span>
             </div>
             <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(220px, 28%) minmax(0, 1fr)', gap: 'var(--sp-3)', overflow: 'hidden' }}>

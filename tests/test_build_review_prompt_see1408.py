@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BUILDER_PATH = REPO_ROOT / "review-prompts/toolchain/build_review_prompt.py"
-TEMPLATE_PATH = REPO_ROOT / "review-prompts/toolchain/prompts/toolchain_review_prompt.md"
+BUILDER_PATH = REPO_ROOT / "autopilots/review-prompts/toolchain/build_review_prompt.py"
+TEMPLATE_PATH = REPO_ROOT / "autopilots/review-prompts/toolchain/prompts/toolchain_review_prompt.md"
 
 
 def _load_builder():
@@ -261,6 +261,6 @@ class TestDefaultStateFilePath:
         )
         _template, _daily, _ledger, state = builder.resolve_paths(args, "2026-10-21")
         assert state == (
-            tmp_path / "review-prompts" / "toolchain" / "ledger" / "review-state.json"
+            tmp_path / "autopilots" / "review-prompts" / "toolchain" / "ledger" / "review-state.json"
         )
         assert ".multica" not in str(state)

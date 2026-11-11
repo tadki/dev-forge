@@ -26,9 +26,9 @@ import toolchain_daily_check as tdc  # noqa: E402
 
 @pytest.fixture()
 def checker(tmp_path, monkeypatch):
-    """DailyCheck 实例，root 钉到 tmp 仓结构（review-prompts/toolchain/ledger/）。"""
+    """DailyCheck 实例，root 钉到 tmp 仓结构（autopilots/review-prompts/toolchain/ledger/）。"""
     root = tmp_path / "repo"
-    ledger_dir = root / "review-prompts" / "toolchain" / "ledger"
+    ledger_dir = root / "autopilots" / "review-prompts" / "toolchain" / "ledger"
     ledger_dir.mkdir(parents=True)
     monkeypatch.setattr(tdc.DailyCheck, "__init__", tdc.DailyCheck.__init__)
     c = tdc.DailyCheck(argparse.Namespace(

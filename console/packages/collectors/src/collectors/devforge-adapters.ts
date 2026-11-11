@@ -25,7 +25,8 @@ export const devforgeAdaptersCollector: Collector = {
           summary: purpose.slice(0, 120),
           attach: { level: 'user' },
           enforcement: 'derived',
-          platforms: ['claude-code'],
+          // dev-forge 工具链内部文件：归属由 registry.d 声明（devforge-adapters → claude-code）
+          platforms: [],
           source: { collector: 'devforge-adapters', path: p, sha256: sha256(md) },
           payload: { envContract: envNames, lines: md.split('\n').length, content: md },
           tags: ['adapter', 'devforge'],

@@ -15,7 +15,8 @@ export const TRUTH_KINDS: readonly AssetKind[] = [
   'hook-rule',
   'hook-script',
   'adapter',
-  'autopilot',
+  'autopilot-script',
+  'autopilot-registration',
 ];
 
 export function isTruthKind(kind: string): boolean {
@@ -68,12 +69,11 @@ function contentView(asset: Asset): Record<string, unknown> {
       return { sha256: asset.source.sha256, ...pick(p, ['purpose']) };
     case 'adapter':
       return { sha256: asset.source.sha256, ...pick(p, ['envContract', 'purpose']) };
-    case 'autopilot': {
-      if (asset.source.path.startsWith('/')) {
-        // 本地脚本型 / 配置 / agent 评审型
-        return { sha256: asset.source.sha256, ...pick(p, ['purpose', 'reviewKind', 'templates']) };
-      }
-      // multica 平台型：只取调度定义，剔除 status/lastRun*/nextRunAt（含 triggers 内的 next_run_at）。
+    case 'autopilot-script':
+      // 本地脚本型 / 配置 / agent 评审型（content 已归档不进指纹）
+      return { sha256: asset.source.sha256, ...pick(p, ['purpose', 'reviewKind', 'templates']) };
+    case 'autopilot-registration': {
+      // multica 平台注册项：只取调度定义，剔除 status/lastRun*/nextRunAt（含 triggers 内的 next_run_at）。
       // assignee 剔除：agent list 故障时解析为原始 UUID、恢复后为名字，指纹会在两次采集间来回翻转制造假漂移。
       const triggers = (p.triggers as Array<Record<string, unknown>> | undefined)?.map((t) =>
         pick(t, ['id', 'kind', 'cron_expression', 'timezone', 'enabled'])

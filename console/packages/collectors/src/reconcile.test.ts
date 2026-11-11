@@ -313,7 +313,7 @@ describe('store-drift（库 vs 生产）', () => {
 
   it('无写通道 kind（multica autopilot）→ push 不可执行且带建议', () => {
     const prod = declared(
-      mk('autopilot:multica-zzz', 'autopilot', {
+      mk('autopilot-registration:multica-zzz', 'autopilot-registration', {
         platforms: ['multica'],
         source: { collector: 'multica', path: 'multica://autopilots/z' },
         payload: { description: 'd' },
@@ -341,7 +341,8 @@ describe('store-drift（库 vs 生产）', () => {
 
   it('脚本型 autopilot（无文本字段）分叉 → 内容视图逐字段 diff 仍可展示', () => {
     const prod = declared(
-      mk('autopilot:script-sweep', 'autopilot', {
+      mk('autopilot-script:script-sweep', 'autopilot-script', {
+        platforms: ['multica'],
         source: { collector: 'devforge-autopilots', path: '/x/autopilots/sweep.py', sha256: 'prod-sha-aaa' },
         payload: { script: true, lines: 12, purpose: '新用途' },
       })
@@ -369,7 +370,8 @@ describe('store-drift（库 vs 生产）', () => {
     const oldBody = '#!/usr/bin/env python3\n# Architecture sweep\n\ndef run_ok(cmd):\n    return True\n\ndef main():\n    print("sweep")\n';
     const newBody = '#!/usr/bin/env python3\n# Architecture sweep\n\ndef main():\n    print("sweep")\n';
     const prod = declared(
-      mk('autopilot:script-sweep', 'autopilot', {
+      mk('autopilot-script:script-sweep', 'autopilot-script', {
+        platforms: ['multica'],
         source: { collector: 'devforge-autopilots', path: '/x/autopilots/sweep.py', sha256: 'prod-sha-aaa' },
         payload: { script: true, lines: newBody.split('\n').length, purpose: 'sweep', content: newBody },
       })

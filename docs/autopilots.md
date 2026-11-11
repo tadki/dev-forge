@@ -218,21 +218,21 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 
 ## 5. 架构半周检 Agent 评审（Architecture Review Refacty）
 
-> 每周两次（周二 / 周五 03:00 Asia/Hong_Kong，= 工具链半周检 02:30 + 30 分钟）纯 agent 高维架构只读巡检。拼装已脚本化：执行 agent 每期运行 `.dev/review-prompts/architecture/build_review_prompt.py`，脚本输出即当期完整评审 prompt。完整规格见 prompt 模板 `.dev/review-prompts/architecture/prompts/architecture_review_prompt.md` 与 autopilot description 本地副本 `.dev/autopilot_descriptions/architecture_review_refacty.md`。
+> 每周两次（周二 / 周五 03:00 Asia/Hong_Kong，= 工具链半周检 02:30 + 30 分钟）纯 agent 高维架构只读巡检。拼装已脚本化：执行 agent 每期运行 `autopilots/review-prompts/architecture/build_review_prompt.py`，脚本输出即当期完整评审 prompt。完整规格见 prompt 模板 `autopilots/review-prompts/architecture/prompts/architecture_review_prompt.md`。
 
 - **Autopilot ID**: `a08b4ae1-737f-4c63-bc6f-fa0943b965f1`
 - **Assignee**: Refacty（agent `3c6b6d88-ce6c-4e02-a78e-24ee08e70c85`）
 - **执行模式**: `create_issue`（每次跑出一个执行 issue）
 - **执行 issue 标题模板**: `架构半周检报告 {{date}}`（UTC YYYY-MM-DD；检查汇报以评论形式发到该执行 issue 下，不新开 issue）
 - **调度**: cron `0 3 * * 2,5` Asia/Hong_Kong（trigger id `5d26c3bc-53b4-40dc-8be7-a436cd88a5bb`，与工具链半周检同为周二/周五）
-- **拼装脚本**: `.dev/review-prompts/architecture/build_review_prompt.py`（期次自增、四主题轮换 `(nth-1) % 4`：数据流与耦合 / 状态机与生命周期 / 模块边界与扩展点 / 可测性与反模式、占位符替换、Kill Switch 预检内置）
-- **评审模板（脚本素材）**: `.dev/review-prompts/architecture/prompts/architecture_review_prompt.md`
-- **滚动台账**: `.dev/review-prompts/architecture/ledger/YYYY-MM.md`（按月滚动，fingerprint 去重与趋势比对的数据底座）
+- **拼装脚本**: `autopilots/review-prompts/architecture/build_review_prompt.py`（期次自增、四主题轮换 `(nth-1) % 4`：数据流与耦合 / 状态机与生命周期 / 模块边界与扩展点 / 可测性与反模式、占位符替换、Kill Switch 预检内置）
+- **评审模板（脚本素材）**: `autopilots/review-prompts/architecture/prompts/architecture_review_prompt.md`
+- **滚动台账**: `autopilots/review-prompts/architecture/ledger/YYYY-MM.md`（按月滚动，fingerprint 去重与趋势比对的数据底座）
 
 ### 执行步骤
 
 1. 检出 `master`：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`
-2. 运行拼装脚本生成当期评审任务：`python3 KingOfLikes-Godot/.dev/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md`（退出码 0 正常 / 3 本期跳过 / 2 错误记台账）
+2. 运行拼装脚本生成当期评审任务：`python3 dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md`（退出码 0 正常 / 3 本期跳过 / 2 错误记台账）
 3. 照 `./review_prompt.md` 执行**只读**巡检（当次主题/指引是焦点而非边界——指引框架外、但只要落在本次巡检关注范围内的架构建议同样欢迎且鼓励），按其末节「7. 产出」把检查汇报（完整报告）作为评论发到本执行 issue 下 + 台账追加
 4. 本执行 issue 标 done
 
@@ -276,7 +276,7 @@ autopilot 共用，见 `autopilots/kill_switch.py`）：
 - `KILL_SWITCH=true` 环境变量保留为会话级临时覆盖，语义与 paused 文件一致。
 - 显式 `--kill-switch true|false` 参数优先于上述默认值。
 - `toolchain/toolchain_daily_check.py` F5 维度核对单源状态：历史别名
-  `review-prompts/toolchain/ledger/DISABLED` 仍生效，但会告警提示收敛到规范入口。
+  `autopilots/review-prompts/toolchain/ledger/DISABLED` 仍生效，但会告警提示收敛到规范入口。
 
 ---
 

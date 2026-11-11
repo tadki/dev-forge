@@ -83,7 +83,9 @@ export const devforgeFirelogCollector: Collector = {
       summary: `${top.length} 条 · deny ${denyCount}`,
       attach: { level: 'user' },
       enforcement: 'derived',
-      source: { collector: 'devforge-firelog', path: logs[0].path },
+      // 活动流是 hook 运行时日志聚合（dev-forge 工具链产物），不隶属单一平台
+      platforms: [],
+      source: { collector: 'devforge-firelog', path: logs[0].path, platform: 'none' },
       payload: { events: top, denyCount, globalLogBytes: globalSize },
       tags: ['activity', 'firelog'],
     });

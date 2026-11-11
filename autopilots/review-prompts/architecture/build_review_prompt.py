@@ -6,7 +6,7 @@
 手工拼装 §N 章节、猜测期次。
 
 用法（每期运行，一条命令）：
-    python3 dev-forge/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md
+    python3 dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md
 
 脚本自动完成：期次递增（本地计数器持久化）、四主题轮换、占位符替换、Kill Switch 预检。
 模板 §7.1 已含可填空报告骨架，随主题节一并拼入输出。
@@ -14,9 +14,9 @@
 可选参数（一般不需要）：
     --nth N          强制指定期次（调试用；正常情况省略，由脚本自动管理）
     --date DATE      本期日期（缺省今天 UTC）
-    --repo-root DIR  仓库根目录（缺省取脚本所在位置的 ../..）
+    --repo-root DIR  仓库根目录（缺省向上找 .git）
     --daily-report-dir PATH  占位符 {{daily_report_dir}} 的值（缺省 ~/.multica/arch-patrol/，与 Part A 日检产物同目录）
-    --ledger-path PATH       占位符 {{ledger_path}} 的值（缺省 review-prompts/architecture/ledger/YYYY-MM.md，按 --date 月份）
+    --ledger-path PATH       占位符 {{ledger_path}} 的值（缺省 autopilots/review-prompts/architecture/ledger/YYYY-MM.md，按 --date 月份）
     --state-file PATH        期次计数器持久化文件（缺省 <daily-report-dir>/review-state.json）
 
 退出码：
@@ -34,7 +34,7 @@ import re
 import sys
 from pathlib import Path
 
-TEMPLATE_PATH_REL = Path("review-prompts/architecture/prompts/architecture_review_prompt.md")
+TEMPLATE_PATH_REL = Path("autopilots/review-prompts/architecture/prompts/architecture_review_prompt.md")
 
 # 期次 -> (主题素材节号, 主题中文名, 主题英文 key)；素材节正文经 theme_body 注入 §1.1
 THEMES = [
@@ -50,7 +50,11 @@ ASSEMBLE_SECTIONS_ORDER = [1, 2, 3]
 
 
 def find_repo_root(script_path: Path) -> Path:
-    return script_path.resolve().parent.parent.parent
+    """向上找 .git 定位仓根（不依赖脚本层级，目录重排不破）。"""
+    for d in script_path.resolve().parents:
+        if (d / ".git").exists():
+            return d
+    raise SystemExit("ERROR: 向上未找到 .git，无法定位仓库根；请用 --repo-root 显式指定")
 
 
 def parse_sections(template_text: str) -> dict[int, str]:
@@ -184,7 +188,7 @@ def main() -> int:
         return 2
 
     daily_report_dir = Path(args.daily_report_dir or "~/.multica/arch-patrol/").expanduser()
-    ledger_path = Path(args.ledger_path) if args.ledger_path else Path(f"review-prompts/architecture/ledger/{date_str[:7]}.md")
+    ledger_path = Path(args.ledger_path) if args.ledger_path else Path(f"autopilots/review-prompts/architecture/ledger/{date_str[:7]}.md")
     state_file = Path(args.state_file).expanduser() if args.state_file else daily_report_dir / "review-state.json"
 
     kill = check_kill_switch(daily_report_dir, ledger_path)

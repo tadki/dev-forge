@@ -165,12 +165,13 @@ export function createHandler(deps: AppDeps) {
 
       if (path === '/api/assets' && req.method === 'GET') {
         const kind = url.searchParams.get('kind');
+        const kindSet = kind ? new Set(kind.split(',').map((k) => k.trim()).filter(Boolean)) : null;
         const q = (url.searchParams.get('q') ?? '').toLowerCase();
         const provenance = url.searchParams.get('provenance');
         const workspace = url.searchParams.get('workspace');
         const attachLevel = url.searchParams.get('attach');
         let list = state.assets;
-        if (kind) list = list.filter((a) => a.kind === kind);
+        if (kindSet) list = list.filter((a) => kindSet.has(a.kind));
         if (provenance) list = list.filter((a) => a.provenance === provenance);
         if (attachLevel) list = list.filter((a) => a.attach.level === attachLevel);
         if (workspace) {
@@ -229,8 +230,9 @@ export function createHandler(deps: AppDeps) {
 
       if (path === '/api/graph') {
         const kindFilter = url.searchParams.get('kind');
+        const kindSet = kindFilter ? new Set(kindFilter.split(',').map((k) => k.trim()).filter(Boolean)) : null;
         const nodes = state.assets
-          .filter((a) => !kindFilter || a.kind === kindFilter)
+          .filter((a) => !kindSet || kindSet.has(a.kind))
           .map((a) => ({ id: a.id, kind: a.kind, name: a.name, attach: a.attach, provenance: a.provenance }));
         const ids = new Set(nodes.map((n) => n.id));
         const edges = state.relations.filter((r) => ids.has(r.from) && ids.has(r.to));

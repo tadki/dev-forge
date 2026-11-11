@@ -5,11 +5,15 @@ import { ASSET_KINDS, type Asset, type Diagnostic } from '@forge/schema';
 
 /**
  * 平台适配层（Owner 2026-11-06）：每个平台一套读写适配，声明在 console/platforms.d/*.yaml。
- * - match：资产归属识别（替代散落的 source.path.startsWith('multica://') 硬编码）
+ * - 平台归属（Owner 2026-11-11）：以资产自声明 platforms 为准，采集路径完全不参与归属——
+ *   平台原生源（multica://、~/.claude 配置域）由采集器声明；dev-forge 工具链内部文件由
+ *   registry.d/owned.yaml 声明、overlay 盖到资产上（扫描路径只证明「是 dev-forge 的什么」，
+ *   证明不了平台归属）。空声明 / source.platform='none' = 不归属任何平台，落平台页未适配桶。
+ *   平台页若出现归属错误的资产，修的是声明（采集器或 owned.yaml），不是归桶逻辑。
  * - kinds[kind].read：读取方式（cli 命令 / file 扫描路径 / derived 派生 / none），平台页文档化展示
  * - kinds[kind].write：以库为准物化通道——file-write（本地文件）/ command（平台 CLI）/ none+advice（仅建议）
  * 安全校验（路径白名单/备份/dry-run）不在 YAML，仍在执行器代码。
- * 新增平台：PLATFORM_IDS 加 id → 复制一份 YAML（DEFAULT_PLATFORMS 同步，锁步单测兜底）→ 采集器发出匹配 pathPrefix 的 source.path。
+ * 新增平台：PLATFORM_IDS 加 id → 复制一份 YAML（DEFAULT_PLATFORMS 同步，锁步单测兜底）→ 采集器给资产声明该平台 id。
  */
 export interface PlatformWriteCommand {
   type: 'command';
@@ -54,7 +58,6 @@ export interface PlatformKindDef {
 export interface PlatformDef {
   id: string;
   label?: string;
-  match: { pathPrefix?: string[] };
   kinds?: Record<string, PlatformKindDef>;
 }
 
@@ -68,7 +71,6 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
   {
     id: 'claude-code',
     label: 'Claude Code（本地文件系统）',
-    match: { pathPrefix: ['/'] },
     kinds: {
       instruction: {
         read: {
@@ -133,14 +135,13 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         },
         write: { type: 'file-write' },
       },
-      autopilot: {
-        read: {
-          how: 'file',
-          collector: 'devforge-autopilots',
-          paths: ['<devforge>/autopilots/*.py', '<devforge>/autopilots/configs/*.json', '<devforge>/review-prompts/*'],
-          note: '脚本型巡逻 + architecture_sweep 配置 + agent 评审巡逻',
-        },
-        write: { type: 'file-write' },
+      'autopilot-registration': {
+        applicable: false,
+        note: 'Claude Code 无 autopilot 体系：注册项是 multica 平台对象，由资产声明归属 multica',
+      },
+      'autopilot-script': {
+        applicable: false,
+        note: 'Claude Code 无 autopilot 体系：dev-forge 巡逻脚本/评审巡逻由 registry.d 声明归属 multica',
       },
       'hook-registration': {
         read: {
@@ -187,20 +188,11 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         },
         write: { type: 'none', advice: '外部工具产出，只读' },
       },
-      service: {
-        read: {
-          how: 'file',
-          collector: 'devforge-launch',
-          paths: ['<devforge>/repo-sync/repos.d/*.json'],
-          note: 'repo-sync 配置 + systemctl 实值探测；systemd:// 来源无平台归属（见平台页未适配桶）',
-        },
-        write: { type: 'none', advice: '启停走服务动作（systemctl --user / repo-sync launcher），配置在 repos.d 手工编辑' },
-      },
       custom: {
         read: {
           how: 'derived',
           collector: 'claude-global',
-          note: 'settings.json permissions/enabledPlugins、hindsight 配置、firelog 等杂项（各采集器附带产出）',
+          note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志类 custom 无平台声明，落未适配桶',
         },
         write: { type: 'none', advice: '聚合/观测型资产，无写通道' },
       },
@@ -213,7 +205,6 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
   {
     id: 'multica',
     label: 'multica 平台',
-    match: { pathPrefix: ['multica://'] },
     kinds: {
       skill: {
         read: {
@@ -245,7 +236,7 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         },
         write: { type: 'none', advice: 'multica agent update <AGENT_ID> --instructions "$(cat <资产路径>)"（需指定目标 agent）' },
       },
-      autopilot: {
+      'autopilot-registration': {
         read: {
           how: 'cli',
           collector: 'multica',
@@ -255,8 +246,17 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         },
         write: { type: 'none', advice: 'multica autopilot 暂无通用更新命令：请在平台侧修改后重采，或改为「以生产为准」采纳进库' },
       },
+      'autopilot-script': {
+        read: {
+          how: 'file',
+          collector: 'devforge-autopilots',
+          paths: ['<devforge>/autopilots/*.py', '<devforge>/autopilots/*.sh', '<devforge>/autopilots/configs/*.json', '<devforge>/autopilots/review-prompts/*'],
+          note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻（registry.d 声明归属 multica，multica autopilot 引用执行）',
+        },
+        write: { type: 'file-write' },
+      },
       'hook-rule': {
-        read: { how: 'none', note: '规则源文件在 dev-forge 仓库（devforge-hooks 采集，路径归属 claude-code），无 multica 对象' },
+        read: { how: 'none', note: '规则源文件在 dev-forge 仓库（devforge-hooks 采集，registry.d 声明 claude-code+multica），无 multica 平台对象' },
         write: { type: 'none', advice: 'hook 规则经全局 ~/.claude hooks 生效于 multica 会话；以库为准时改 dev-forge 源文件即可，无平台对象' },
       },
       'hook-script': {
@@ -341,13 +341,8 @@ const isStrArr = (x: unknown): x is string[] => Array.isArray(x) && x.every((c) 
 /** 结构校验：YAML 不跑 zod，手工断言关键形状，坏文件出诊断并跳过（不进入执行路径） */
 function platformDefIssue(def: unknown): string | null {
   if (!def || typeof def !== 'object') return 'not an object';
-  const d = def as { id?: unknown; match?: unknown; kinds?: unknown };
+  const d = def as { id?: unknown; kinds?: unknown };
   if (typeof d.id !== 'string' || !d.id) return 'id 缺失或非字符串';
-  if (!d.match || typeof d.match !== 'object') return 'match 缺失';
-  const prefix = (d.match as { pathPrefix?: unknown }).pathPrefix;
-  if (prefix !== undefined && (!Array.isArray(prefix) || prefix.some((p) => typeof p !== 'string'))) {
-    return 'match.pathPrefix 必须是字符串数组';
-  }
   if (d.kinds === undefined) return null;
   if (!d.kinds || typeof d.kinds !== 'object') return 'kinds 必须是映射';
   for (const [kind, v] of Object.entries(d.kinds as Record<string, unknown>)) {
@@ -405,9 +400,10 @@ function platformDefIssue(def: unknown): string | null {
   return null;
 }
 
-/** 资产 → 所属平台（首个 match 命中的 platform） */
+/** 资产 → 所属平台（只读资产自声明 platforms；source.platform=none 显式豁免；声明内首个已注册平台生效） */
 export function resolvePlatform(asset: Asset, platforms: PlatformDef[]): PlatformDef | undefined {
-  return platforms.find((p) => (p.match.pathPrefix ?? []).some((prefix) => asset.source.path.startsWith(prefix)));
+  if (asset.source.platform === 'none') return undefined;
+  return platforms.find((p) => asset.platforms.includes(p.id));
 }
 
 export interface ResolvedWrite {
@@ -476,7 +472,6 @@ export interface PlatformKindView {
 export interface PlatformView {
   id: string;
   label?: string;
-  matchPathPrefix: string[];
   totalAssets: number;
   kinds: PlatformKindView[];
 }
@@ -550,7 +545,6 @@ export function buildPlatformsView(assets: Asset[], platforms: PlatformDef[]): P
     return {
       id: p.id,
       ...(p.label ? { label: p.label } : {}),
-      matchPathPrefix: p.match.pathPrefix ?? [],
       totalAssets: bucket.length,
       kinds,
     };

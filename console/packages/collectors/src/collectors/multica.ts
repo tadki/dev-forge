@@ -160,7 +160,9 @@ export const multicaCollector: Collector = {
             summary: (a.description ?? '').slice(0, 120) || `agent · ${a.model ?? ''}`,
             attach: { level: 'user' },
             enforcement: 'enforced',
-            platforms: [],
+            // multica 平台原生对象（multica:// 源即声明）。环境无关原则约束的是 payload 运行态
+            // 字段（归 deployment），平台归属声明与此不冲突
+            platforms: ['multica'],
             enabled: true,
             source: { collector: 'multica', path: 'multica://agents/' + a.id, locator: `$.agents[${a.id}]` },
             payload: {
@@ -239,8 +241,8 @@ export const multicaCollector: Collector = {
       const assignee = ap.assignee_id ? agentById.get(ap.assignee_id) ?? ap.assignee_id : undefined;
       assets.push(
         asset({
-          id: `autopilot:multica-${ap.id.slice(0, 8)}`,
-          kind: 'autopilot',
+          id: `autopilot-registration:${ap.id.slice(0, 8)}`,
+          kind: 'autopilot-registration',
           name: ap.title,
           summary: `${assignee ? `${assignee} · ` : ''}${triggers.map((tr) => tr.cron_expression ?? tr.kind).join(' / ') || '无触发器'}`,
           attach: { level: 'platform', ref: 'multica' },
@@ -266,7 +268,7 @@ export const multicaCollector: Collector = {
       // 与 dev-forge 脚本巡逻关联（标题含脚本名 → derived-from）
       for (const stem of ['agent_watchdog', 'issue_status_check', 'architecture_sweep', 'version_check', 'guard_pending']) {
         if (ap.title.toLowerCase().includes(stem.replace(/_/g, ' ')) || ap.title.toLowerCase().includes(stem) || (ap.description ?? '').includes(stem)) {
-          relations.push({ from: `autopilot:script-${stem}`, to: `autopilot:multica-${ap.id.slice(0, 8)}`, type: 'derived-from' });
+          relations.push({ from: `autopilot-script:${stem}`, to: `autopilot-registration:${ap.id.slice(0, 8)}`, type: 'derived-from' });
           break;
         }
       }

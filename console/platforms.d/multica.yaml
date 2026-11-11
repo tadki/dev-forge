@@ -1,12 +1,12 @@
 # 平台适配 · multica（server @ Mac mini，CLI 经 multica daemon）
 # read = 采集器发现/读取方式：cli（CLI 命令，采集器追加 --output json）/ file（文件扫描）/ derived（派生产出）/ none（无）
 # write = 以库为准的物化通道；{platformId} 由执行端按 platformIdFrom 解析，{content} 为库内内容
-# ── 新增平台指南：复制本文件 → 改 id/label/match.pathPrefix → 逐 kind 声明 read/write；
-#    同步 schema.ts PLATFORM_IDS + platforms.ts DEFAULT_PLATFORMS（锁步单测兜底）+ 采集器发出匹配 pathPrefix 的 source.path
+# ── 平台归属（Owner 2026-11-11）：以资产自声明 platforms 为准，本文件不再承担归属识别；
+#    平台对象（multica:// 源）由采集器声明 multica；dev-forge 巡逻脚本由 registry.d 声明 multica。
+# ── 新增平台指南：复制本文件 → 改 id/label → 逐 kind 声明 read/write；
+#    同步 schema.ts PLATFORM_IDS + platforms.ts DEFAULT_PLATFORMS（锁步单测兜底）+ 采集器给资产声明该平台 id
 id: multica
 label: multica 平台
-match:
-  pathPrefix: ["multica://"]
 kinds:
   skill:
     read:
@@ -41,7 +41,7 @@ kinds:
       paths: ["<task.work_dir>/CLAUDE.md"]
       note: 'agent instructions 随 agent list 采集（存于 agent 资产 payload）；另采样最新完成任务 workdir 的物化 CLAUDE.md（custom:multica-materialized-instructions，≤4 agent）作对账基准'
     write: { type: none, advice: 'multica agent update <AGENT_ID> --instructions "$(cat <资产路径>)"（需指定目标 agent）' }
-  autopilot:
+  autopilot-registration:
     read:
       how: cli
       collector: multica
@@ -49,8 +49,15 @@ kinds:
       detailCmd: [multica, autopilot, trigger-list, "{id}"]
       note: '清单 autopilot list，触发器逐条 trigger-list（取前 20 个）'
     write: { type: none, advice: 'multica autopilot 暂无通用更新命令：请在平台侧修改后重采，或改为「以生产为准」采纳进库' }
+  autopilot-script:
+    read:
+      how: file
+      collector: devforge-autopilots
+      paths: ["<devforge>/autopilots/*.py", "<devforge>/autopilots/*.sh", "<devforge>/autopilots/configs/*.json", "<devforge>/autopilots/review-prompts/*"]
+      note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻（registry.d 声明归属 multica，multica autopilot 引用执行）'
+    write: { type: file-write }
   hook-rule:
-    read: { how: none, note: '规则源文件在 dev-forge 仓库（devforge-hooks 采集，路径归属 claude-code），无 multica 对象' }
+    read: { how: none, note: '规则源文件在 dev-forge 仓库（devforge-hooks 采集，registry.d 声明 claude-code+multica），无 multica 平台对象' }
     write: { type: none, advice: 'hook 规则经全局 ~/.claude hooks 生效于 multica 会话；以库为准时改 dev-forge 源文件即可，无平台对象' }
   hook-script:
     read: { how: none, note: '脚本在 dev-forge 仓库文件系统（devforge-hooks 采集），无 multica 对象' }

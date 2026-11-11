@@ -11,7 +11,11 @@ export const ASSET_KINDS = [
   'hook-rule',
   'hook-script',
   'service',
-  'autopilot',
+  // autopilot 拆二（Owner 2026-11-11，对齐 hook 三分法）：registration = multica 平台注册项
+  // （multica:// 源，CLI 采集），script = dev-forge 本地脚本/配置/评审巡逻（扫描源）。
+  // 单一 autopilot kind 把平台对象与本地脚本混为一谈，是平台页归属错位的根因。
+  'autopilot-registration',
+  'autopilot-script',
   'adapter',
   // 本地补丁：我们对第三方文件的修改（hindsight-local-mods 等）。第三方文件本体仍归
   // 第三方，改动以 patch 资产名义注册为自建；payload 记录应用事实基线 + drift 实测状态
@@ -74,6 +78,8 @@ export const sourceSchema = z.object({
   sha256: z.string().optional(),
   mtime: z.string().optional(),
   git: z.object({ repo: z.string(), rev: z.string() }).optional(),
+  /** 显式声明不属于任何平台（平台归属豁免）：落平台页未适配桶（与 platforms: [] 同义，双保险保留） */
+  platform: z.literal('none').optional(),
 });
 
 /** 平台 id 注册（当前两个运行时；新增平台 = 扩这里 + 对应采集器/投影） */
@@ -223,8 +229,8 @@ const servicePayload = z.looseObject({
   note: z.string().optional(),
 });
 
-const autopilotPayload = z.looseObject({
-  // multica 平台 autopilot
+const autopilotRegistrationPayload = z.looseObject({
+  // multica 平台注册项（autopilot list / trigger-list）
   platformId: z.string().optional(),
   description: z.string().optional(),
   assignee: z.string().optional(),
@@ -242,12 +248,16 @@ const autopilotPayload = z.looseObject({
   lastRunStatus: z.string().optional(),
   nextRunAt: z.string().optional(),
   workspaceId: z.string().optional(),
-  // dev-forge 脚本型 / agent 评审型
+});
+
+const autopilotScriptPayload = z.looseObject({
+  // dev-forge 本地脚本型 / 配置 / agent 评审型
   script: z.boolean().optional(),
   lines: z.number().optional(),
   purpose: z.string().optional(),
   reviewKind: z.string().optional(),
   templates: z.array(z.string()).optional(),
+  content: z.string().optional(),
 });
 
 const adapterPayload = z.looseObject({
@@ -318,7 +328,8 @@ export const payloadSchemas: Record<AssetKind, z.ZodType> = {
   'hook-rule': hookRulePayload,
   'hook-script': hookScriptPayload,
   service: servicePayload,
-  autopilot: autopilotPayload,
+  'autopilot-registration': autopilotRegistrationPayload,
+  'autopilot-script': autopilotScriptPayload,
   adapter: adapterPayload,
   patch: patchPayload,
   'mcp-endpoint': mcpEndpointPayload,

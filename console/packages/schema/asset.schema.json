@@ -226,6 +226,10 @@
                   "rev"
                 ],
                 "additionalProperties": false
+              },
+              "platform": {
+                "type": "string",
+                "const": "none"
               }
             },
             "required": [

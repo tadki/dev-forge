@@ -21,7 +21,7 @@ export interface AssetLite {
     since?: string;
     notes?: string;
   };
-  source: { collector: string; path: string; locator?: string; sha256?: string };
+  source: { collector: string; path: string; locator?: string; sha256?: string; platform?: 'none' };
   // API 边界：payload 结构随 kind 变化，页面侧自行窄化
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload: Record<string, any>;
@@ -152,7 +152,6 @@ export interface PlatformKindContract {
 export interface PlatformView {
   id: string;
   label?: string;
-  matchPathPrefix: string[];
   totalAssets: number;
   kinds: PlatformKindContract[];
 }

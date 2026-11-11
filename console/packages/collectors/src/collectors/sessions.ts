@@ -30,7 +30,9 @@ export const sessionsCollector: Collector = {
         summary: `CC 会话目录 ${projectDirs.length} · multica seeds ${seeds} / tasks ${tasks}`,
         attach: { level: 'user' },
         enforcement: 'derived',
-        source: { collector: 'sessions', path: join(ctx.paths.claude, 'projects') },
+        // 跨平台本地聚合（CC 会话目录 + multica workspaces），不隶属单一平台 → 未适配桶
+        platforms: [],
+        source: { collector: 'sessions', path: join(ctx.paths.claude, 'projects'), platform: 'none' },
         payload: { claudeProjects: projectDirs.length, multicaSeeds: seeds, multicaTasks: tasks },
         tags: ['sessions'],
       })

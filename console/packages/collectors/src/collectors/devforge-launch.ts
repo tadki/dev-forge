@@ -40,9 +40,11 @@ export const devforgeLaunchCollector: Collector = {
           summary: `${String(cfg.repo_path ?? '')} @ ${String(cfg.branch ?? '')}`,
           attach: { level: 'project', ref: String(cfg.repo_path ?? '') },
           enforcement: 'enforced',
+          // repo-sync 守护是自研运行时资产，不隶属任何 agent 平台；pathPrefix 兜底会把它误吞进 claude-code
+          platforms: [],
           enabled: !disabled,
           payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, enabled: !disabled, active, trigger },
-          source: { collector: 'devforge-launch', path: cfgPath },
+          source: { collector: 'devforge-launch', path: cfgPath, platform: 'none' },
           tags: ['repo-sync', 'devforge'],
         })
       );
@@ -60,8 +62,10 @@ export const devforgeLaunchCollector: Collector = {
           summary: env.split('\n').filter((l) => l.includes('=')).map((l) => l.split('=')[0]).join(' · '),
           attach: { level: 'user' },
           enforcement: 'enforced',
+          // 启动链 env 是自研运行时资产，不隶属任何 agent 平台（与 repo-sync 同族）
+          platforms: [],
           payload: { values: Object.fromEntries(env.split('\n').filter((l) => l.includes('=')).map((l) => [l.split('=')[0], l.split('=').slice(1).join('=')])) },
-          source: { collector: 'devforge-launch', path: envFile },
+          source: { collector: 'devforge-launch', path: envFile, platform: 'none' },
           tags: ['launch', 'devforge'],
         })
       );

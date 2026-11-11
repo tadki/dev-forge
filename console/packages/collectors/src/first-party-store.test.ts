@@ -230,9 +230,9 @@ describe('contentFingerprint（按 kind 内容字段，volatile 剔除）', () =
       nextRunAt: next,
       workspaceId: 'ws',
     });
-    const same = contentFingerprint({ ...base, kind: 'autopilot', source: { collector: 't', path: 'multica://autopilots/ap1' }, payload: t('0 9 * * *', '2026-11-07T09:00') } as Asset);
-    const nextChanged = contentFingerprint({ ...base, kind: 'autopilot', source: { collector: 't', path: 'multica://autopilots/ap1' }, payload: t('0 9 * * *', '2026-12-01T09:00') } as Asset);
-    const cronChanged = contentFingerprint({ ...base, kind: 'autopilot', source: { collector: 't', path: 'multica://autopilots/ap1' }, payload: t('0 10 * * *', '2026-11-07T09:00') } as Asset);
+    const same = contentFingerprint({ ...base, kind: 'autopilot-registration', source: { collector: 't', path: 'multica://autopilots/ap1' }, payload: t('0 9 * * *', '2026-11-07T09:00') } as Asset);
+    const nextChanged = contentFingerprint({ ...base, kind: 'autopilot-registration', source: { collector: 't', path: 'multica://autopilots/ap1' }, payload: t('0 9 * * *', '2026-12-01T09:00') } as Asset);
+    const cronChanged = contentFingerprint({ ...base, kind: 'autopilot-registration', source: { collector: 't', path: 'multica://autopilots/ap1' }, payload: t('0 10 * * *', '2026-11-07T09:00') } as Asset);
     expect(same).toBe(nextChanged);
     expect(same).not.toBe(cronChanged);
   });
@@ -253,7 +253,7 @@ afterAll(async () => {
 
 describe('contentFingerprint 审核回归', () => {
   const base = {
-    id: 'x', kind: 'autopilot', name: 'x', summary: '', attach: { level: 'user' as const },
+    id: 'x', kind: 'autopilot-registration', name: 'x', summary: '', attach: { level: 'user' as const },
     enforcement: 'derived' as const, platforms: ['multica'], provenance: 'first-party' as const,
     tags: [], enabled: true, source: { collector: 't', path: 'multica://autopilots/z' },
   };
@@ -271,7 +271,7 @@ describe('contentFingerprint 审核回归', () => {
         payload: content === '' ? { purpose: 'p' } : { purpose: 'p', content },
       } as Asset);
     for (const [kind, path] of [
-      ['autopilot', '/x/a.py'],
+      ['autopilot-script', '/x/a.py'],
       ['hook-script', '/x/b.sh'],
       ['adapter', '/x/c.sh'],
     ] as const) {

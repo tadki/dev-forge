@@ -41,12 +41,8 @@ entries:
     meta: { owner: jerry, category: platform, lifecycle: stable, criticality: medium, runtime: multica }
 
   - id: devforge-autopilots
+    # 含 review-prompts 子树（Owner 2026-11-11 目录归集：评审 prompt 只服务 autopilot，归入 autopilots/）
     match: { pathPrefix: "/home/jerry/tools/dev-forge/autopilots/" }
-    platforms: [multica]
-    meta: { owner: jerry, category: governance, lifecycle: stable, criticality: medium, runtime: multica }
-
-  - id: devforge-review-prompts
-    match: { pathPrefix: "/home/jerry/tools/dev-forge/review-prompts/" }
     platforms: [multica]
     meta: { owner: jerry, category: governance, lifecycle: stable, criticality: medium, runtime: multica }
 

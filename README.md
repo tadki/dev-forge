@@ -46,10 +46,9 @@ Design principles:
 | `claude-hooks/` | The hooks runtime: `hook-wrapper.sh` → `dispatcher.sh` → `unified/` (engine + rules) → `scripts/` (business hooks + libs) |
 | `bootstrap/` | `bootstrap.sh` / `doctor.sh` / `rollback.sh` / `registry-patch.js` + declarative registration manifest |
 | `adapters/` | Small, single-purpose adapters for specific external systems (kept intentionally non-generic) |
-| `autopilots/` | Patrol scripts + shared Python helpers; scan targets configured via `configs/` |
+| `autopilots/` | Patrol scripts + shared Python helpers + review-prompt builders/templates (`review-prompts/`); scan targets configured via `configs/` |
 | `launch/` | `toolchain-start.sh` + `systemd/toolchain-start-all.service` |
 | `toolchain/` | Toolchain daily static checker |
-| `review-prompts/` | Prompt builders + templates for review patrols |
 | `scripts/` | Repo working-branch reconciliation helper |
 | `docs/` | Hooks implementation guide, usage rules, migration notes; `docs/archive/` for historical snapshots |
 | `tests/` | Shell suites + rule validator |

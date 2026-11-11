@@ -642,8 +642,8 @@
       }
     },
     {
-      "id": "autopilot:multica-issue-st",
-      "kind": "autopilot",
+      "id": "autopilot-registration:multica-issue-st",
+      "kind": "autopilot-registration",
       "name": "issue 状态检查",
       "summary": "Refacty · */10 * * * *",
       "attach": {
@@ -694,8 +694,8 @@
       }
     },
     {
-      "id": "autopilot:script-issue_status_check",
-      "kind": "autopilot",
+      "id": "autopilot-script:issue_status_check",
+      "kind": "autopilot-script",
       "name": "issue_status_check",
       "summary": "issue 状态扫描+催促评论",
       "attach": {
@@ -1064,8 +1064,8 @@
   ],
   "relations": [
     {
-      "from": "autopilot:script-issue_status_check",
-      "to": "autopilot:multica-issue-st",
+      "from": "autopilot-script:issue_status_check",
+      "to": "autopilot-registration:multica-issue-st",
       "type": "derived-from"
     }
   ],

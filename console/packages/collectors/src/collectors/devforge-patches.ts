@@ -99,7 +99,8 @@ export const devforgePatchesCollector: Collector = {
           attach: { level: 'user' },
           enforcement: 'enforced',
           provenance: 'first-party',
-          platforms: ['claude-code'],
+          // 补丁本体在 ~/.hindsight（第三方域）；归属由 registry.d 声明（hindsight-integration → claude-code）
+          platforms: [],
           source: { collector: 'devforge-patches', path: applier, sha256: applierSha },
           payload: {
             state: liveState,

@@ -5,7 +5,7 @@
 不再要求 agent 自行阅读模板、识别四主题、手工拼装 §N 章节、猜测期次。
 
 用法（每期运行，一条命令）：
-    python3 dev-forge/review-prompts/toolchain/build_review_prompt.py --output ./review_prompt.md
+    python3 dev-forge/autopilots/review-prompts/toolchain/build_review_prompt.py --output ./review_prompt.md
 
 脚本自动完成：期次递增（本地计数器持久化）、四主题轮换、占位符替换、Kill Switch 预检，
 并在 prompt 末尾附上**报告骨架**（执行 agent 填空即可，无需再回读模板 §3.1）。
@@ -13,10 +13,10 @@
 可选参数（一般不需要）：
     --nth N          强制指定期次（调试用；正常情况省略，由脚本自动管理）
     --date DATE      本期日期（缺省今天 UTC）
-    --repo-root DIR  仓库根目录（缺省取脚本所在位置的 ../..）
+    --repo-root DIR  仓库根目录（缺省向上找 .git）
     --daily-report-dir PATH  占位符 {{daily_report_dir}} 的值（缺省 ~/.multica/toolchain-reports/）
-    --ledger-path PATH       占位符 {{ledger_path}} 的值（缺省 review-prompts/toolchain/ledger/YYYY-MM.md，按 --date 月份）
-    --state-file PATH        期次计数器持久化文件（缺省 review-prompts/toolchain/ledger/review-state.json，随仓落 main）
+    --ledger-path PATH       占位符 {{ledger_path}} 的值（缺省 autopilots/review-prompts/toolchain/ledger/YYYY-MM.md，按 --date 月份）
+    --state-file PATH        期次计数器持久化文件（缺省 autopilots/review-prompts/toolchain/ledger/review-state.json，随仓落 main）
 
 退出码：
     0  拼装成功，prompt 已输出
@@ -33,7 +33,7 @@ import re
 import sys
 from pathlib import Path
 
-TEMPLATE_PATH_REL = Path("review-prompts/toolchain/prompts/toolchain_review_prompt.md")
+TEMPLATE_PATH_REL = Path("autopilots/review-prompts/toolchain/prompts/toolchain_review_prompt.md")
 
 # 期次 -> (主题素材节号, 主题中文名, 主题英文 key)；素材节正文经 theme_body 注入 §1.1
 THEMES = [
@@ -49,7 +49,11 @@ ASSEMBLE_SECTIONS_ORDER = [1, 2, 3]
 
 
 def find_repo_root(script_path: Path) -> Path:
-    return script_path.resolve().parent.parent.parent
+    """向上找 .git 定位仓根（不依赖脚本层级，目录重排不破）。"""
+    for d in script_path.resolve().parents:
+        if (d / ".git").exists():
+            return d
+    raise SystemExit("ERROR: 向上未找到 .git，无法定位仓库根；请用 --repo-root 显式指定")
 
 
 def parse_sections(template_text: str) -> dict[int, str]:
@@ -146,13 +150,13 @@ def resolve_paths(args: argparse.Namespace, date_str: str) -> tuple[Path, Path, 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(script_path)
     template_path = repo_root / TEMPLATE_PATH_REL
     daily_report_dir = Path(args.daily_report_dir or "~/.multica/toolchain-reports/").expanduser()
-    ledger_path = Path(args.ledger_path) if args.ledger_path else Path(f"review-prompts/toolchain/ledger/{date_str[:7]}.md")
+    ledger_path = Path(args.ledger_path) if args.ledger_path else Path(f"autopilots/review-prompts/toolchain/ledger/{date_str[:7]}.md")
     # SEE-1440 / fingerprint 8e0c896702d2：计数器落仓（随台账 PR 落 main），
     # 不再写仓外 ~/.multica/toolchain-reports/——仓外状态与产物零绑定、无评审留痕。
     state_file = (
         Path(args.state_file).expanduser()
         if args.state_file
-        else repo_root / "review-prompts/toolchain/ledger/review-state.json"
+        else repo_root / "autopilots/review-prompts/toolchain/ledger/review-state.json"
     )
     return template_path, daily_report_dir, ledger_path, state_file
 

@@ -17,8 +17,8 @@ describe('devforge-autopilots collector 正文归档', () => {
     await writeFile(join(root, 'autopilots', 'configs', 'kol.json'), JSON.stringify({ target: 'kol', depth: 2 }));
 
     const r = await devforgeAutopilotsCollector.collect(makeContext(defaultConfig({ devforge: root })));
-    const script = r.assets.find((x) => x.id === 'autopilot:script-sweep');
-    const cfg = r.assets.find((x) => x.id === 'autopilot:config-kol');
+    const script = r.assets.find((x) => x.id === 'autopilot-script:sweep');
+    const cfg = r.assets.find((x) => x.id === 'autopilot-script:config-kol');
     expect((script!.payload as { content?: string }).content).toBe(body);
     expect((cfg!.payload as { content?: string }).content).toContain('"target"');
 

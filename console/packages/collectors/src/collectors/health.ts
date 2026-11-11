@@ -55,7 +55,7 @@ export const healthCollector: Collector = {
         })
       );
     } else if (await exists(ctx.config.reports.toolchainLatest)) {
-      assets.push(asset({ id: 'report:toolchain-latest', kind: 'report', name: '工具链日检', summary: '解析失败', attach: { level: 'user' }, enforcement: 'derived', source: { collector: 'health', path: ctx.config.reports.toolchainLatest }, payload: {}, tags: ['health'] }));
+      assets.push(asset({ id: 'report:toolchain-latest', kind: 'report', name: '工具链日检', summary: '解析失败', attach: { level: 'user' }, enforcement: 'derived', platforms: ['claude-code'], source: { collector: 'health', path: ctx.config.reports.toolchainLatest }, payload: {}, tags: ['health'] }));
     }
 
     const arch = await readJson<ArchReport>(ctx.config.reports.archPatrol);

@@ -59,7 +59,9 @@ export function asset(partial: {
   attach: Asset['attach'];
   applies?: Asset['applies'];
   enforcement?: Asset['enforcement'];
-  platforms?: string[];
+  /** 平台归属声明（Owner 2026-11-11）：必填——平台页归桶以声明为准，采集路径不参与归属。
+   *  [] = 显式不归属任何平台（落未适配桶），不设静默默认。 */
+  platforms: string[];
   provenance?: Asset['provenance'];
   tags?: string[];
   enabled?: boolean;
@@ -74,7 +76,7 @@ export function asset(partial: {
     attach: partial.attach,
     applies: partial.applies,
     enforcement: partial.enforcement ?? 'derived',
-    platforms: partial.platforms ?? ['claude-code'],
+    platforms: partial.platforms,
     provenance: partial.provenance ?? 'first-party',
     tags: partial.tags ?? [],
     enabled: partial.enabled ?? true,

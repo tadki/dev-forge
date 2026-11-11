@@ -1,13 +1,12 @@
 # 平台适配 · Claude Code（本地文件系统）
 # read = 采集器扫描方式：file（文件/目录模式，支持 ~ 与 <project>/<devforge> 占位）/ derived（登记派生）/ none（无）
 # write = file-write（路径白名单 + *.forge-bak 备份在执行器代码里，不在 YAML）
-# ── 新增平台指南：复制本文件 → 改 id/label/match.pathPrefix → 逐 kind 声明 read/write；
-#    同步 schema.ts PLATFORM_IDS + platforms.ts DEFAULT_PLATFORMS（锁步单测兜底）+ 采集器发出匹配 pathPrefix 的 source.path
-#    pathPrefix 按 first-match-wins 生效，勿轻易用 "/" 这类兜底前缀（本文件是历史兜底特例）
+# ── 平台归属（Owner 2026-11-11）：以资产自声明 platforms 为准，本文件不再承担归属识别；
+#    采集路径不参与归桶。归桶错了修声明（采集器或 registry.d/owned.yaml），不改这里。
+# ── 新增平台指南：复制本文件 → 改 id/label → 逐 kind 声明 read/write；
+#    同步 schema.ts PLATFORM_IDS + platforms.ts DEFAULT_PLATFORMS（锁步单测兜底）+ 采集器给资产声明该平台 id
 id: claude-code
 label: Claude Code（本地文件系统）
-match:
-  pathPrefix: ["/"]
 kinds:
   instruction:
     read:
@@ -58,13 +57,13 @@ kinds:
       paths: ["~/.hindsight/patches/*.sh", "~/.hindsight/patches/*.state.json"]
       note: '本地补丁程序 + 应用基线 state（devforge-patches 实测漂移：升级覆盖/脚本已改/未记录基线）'
     write: { type: file-write }    # 补丁脚本是本地文件可直接编辑；重放走对账动作（reapply）
-  autopilot:
-    read:
-      how: file
-      collector: devforge-autopilots
-      paths: ["<devforge>/autopilots/*.py", "<devforge>/autopilots/configs/*.json", "<devforge>/review-prompts/*"]
-      note: '脚本型巡逻 + architecture_sweep 配置 + agent 评审巡逻'
-    write: { type: file-write }    # 本地脚本型
+  # Claude Code 无 autopilot 体系：注册项是 multica 平台对象；dev-forge 巡逻脚本由 registry.d 声明归属 multica
+  autopilot-registration:
+    applicable: false
+    note: 'Claude Code 无 autopilot 体系：注册项是 multica 平台对象，由资产声明归属 multica'
+  autopilot-script:
+    applicable: false
+    note: 'Claude Code 无 autopilot 体系：dev-forge 巡逻脚本/评审巡逻由 registry.d 声明归属 multica'
   hook-registration:
     read:
       how: file
@@ -100,18 +99,11 @@ kinds:
       paths: ["~/.multica/toolchain-reports/latest.json", "~/.multica/arch-patrol/last_report.json"]
       note: '外部工具产出的健康报告（只读监控）'
     write: { type: none, advice: '外部工具产出，只读' }
-  service:
-    read:
-      how: file
-      collector: devforge-launch
-      paths: ["<devforge>/repo-sync/repos.d/*.json"]
-      note: 'repo-sync 配置 + systemctl 实值探测；systemd:// 来源无平台归属（见平台页未适配桶）'
-    write: { type: none, advice: '启停走服务动作（systemctl --user / repo-sync launcher），配置在 repos.d 手工编辑' }
   custom:
     read:
       how: derived
       collector: claude-global
-      note: 'settings.json permissions/enabledPlugins、hindsight 配置、firelog 等杂项（各采集器附带产出）'
+      note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志类 custom 无平台声明，落未适配桶'
     write: { type: none, advice: '聚合/观测型资产，无写通道' }
   # deployment 平台页显示「不适用」而非「未适配」：Claude Code 结构上无部署实例对象
   deployment:

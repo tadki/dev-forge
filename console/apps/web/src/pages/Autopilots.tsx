@@ -19,8 +19,8 @@ interface ApPayload {
 
 export function AutopilotsPage({ ctx }: { ctx: PageCtx }) {
   const all = useQuery({
-    queryKey: ['assets', 'autopilot', ctx.workspace],
-    queryFn: () => apiGet<{ assets: AssetLite[] }>(`/api/assets?kind=autopilot${ctx.workspace ? `&workspace=${ctx.workspace}` : ''}`),
+    queryKey: ['assets', 'autopilot-registration,autopilot-script', ctx.workspace],
+    queryFn: () => apiGet<{ assets: AssetLite[] }>(`/api/assets?kind=autopilot-registration,autopilot-script${ctx.workspace ? `&workspace=${ctx.workspace}` : ''}`),
   });
   const [sel, setSel] = useState<string | null>(null);
   const rows = all.data?.assets ?? [];

@@ -76,6 +76,16 @@ describe('devforge-launch repo-sync 判活', () => {
     expect((a.payload as { enabled: boolean }).enabled).toBe(true);
   });
 
+  it('repo-sync 资产声明无平台（source.platform=none）且为自研（first-party）', async () => {
+    await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x' }));
+    const r = await devforgeLaunchCollector.collect(ctx());
+    const a = r.assets.find((x) => x.id === 'service:repo-sync-devforge')!;
+    expect(a.source.platform).toBe('none');
+    expect(a.source.path).toBe(join(root, 'repo-sync', 'repos.d', 'devforge.json'));
+    expect(a.platforms).toEqual([]);
+    expect(a.provenance).toBe('first-party');
+  });
+
   it('enabled=false 且 pid 缺失 → disabled（顶层/payload 同步停用）', async () => {
     await writeRepos(JSON.stringify({ name: 'devforge', repo_path: '/x', enabled: false, pid_file: join(root, 'disabled-gone.pid') }));
     const r = await devforgeLaunchCollector.collect(ctx());

@@ -76,8 +76,10 @@ export const servicesCollector: Collector = {
           summary: `${u.active}/${u.sub} · ${enabled} · 子进程 ${children.length}`,
           attach: { level: 'user' },
           enforcement: 'enforced',
+          // 本机 systemd 运行时探针（伪协议源），不隶属任何 agent 平台 → 未适配桶
+          platforms: [],
           enabled: enabled !== 'disabled',
-          source: { collector: 'services', path: `systemd://${u.scope}/${u.unit}` },
+          source: { collector: 'services', path: `systemd://${u.scope}/${u.unit}`, platform: 'none' },
           payload: {
             scope: u.scope,
             active: u.active,
@@ -106,8 +108,9 @@ export const servicesCollector: Collector = {
           summary: 'systemctl 列表中无活跃单元',
           attach: { level: 'user' },
           enforcement: 'enforced',
+          platforms: [],
           enabled: false,
-          source: { collector: 'services', path: 'systemd://user/grepai-watch.service' },
+          source: { collector: 'services', path: 'systemd://user/grepai-watch.service', platform: 'none' },
           payload: { note: 'not listed' },
           tags: ['systemd'],
         })
@@ -128,9 +131,10 @@ export const servicesCollector: Collector = {
           attach: { level: 'user' },
           provenance: 'third-party',
           enforcement: 'enforced',
+          platforms: [],
           enabled: true,
           payload: { active: daemonAlive ? 'active' : 'dead', trigger: 'toolchain-start-all 驻留监督，daemon 缺失时补拉', process: 'multica daemon start' },
-          source: { collector: 'services', path: 'proc://multica-daemon' },
+          source: { collector: 'services', path: 'proc://multica-daemon', platform: 'none' },
           tags: ['multica', 'process'],
         })
       );
@@ -158,9 +162,10 @@ export const servicesCollector: Collector = {
           attach: { level: 'user' },
           provenance: 'third-party',
           enforcement: 'advisory',
+          platforms: [],
           enabled: false,
           payload: { trigger: 'windows-logon', active: 'dead', stale: true },
-          source: { collector: 'services', path: b.script },
+          source: { collector: 'services', path: b.script, platform: 'none' },
           tags: ['windows-bridge'],
         }));
         continue;
@@ -177,9 +182,10 @@ export const servicesCollector: Collector = {
           attach: { level: 'user' },
           provenance: 'third-party',
           enforcement: 'advisory',
+          platforms: [],
           enabled: statusWord !== 'Disabled',
           payload: { trigger: 'windows-logon', script: script?.slice(0, 500), active: activeMap[statusWord] ?? 'unknown', taskStatus: statusWord, stale: statusWord === 'Disabled' },
-          source: { collector: 'services', path: `schtasks://${b.task}` },
+          source: { collector: 'services', path: `schtasks://${b.task}`, platform: 'none' },
           tags: ['windows-bridge'],
         })
       );

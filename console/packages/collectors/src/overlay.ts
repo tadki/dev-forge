@@ -116,6 +116,8 @@ export async function editRegistryPlatforms(
 
 /**
  * 声明即归属：把 registry.d 的 meta/归属盖到匹配资产上（覆盖采集器推断）；
+ * entry.platforms 声明平台归属时同步盖到 asset.platforms（Owner 2026-11-11：dev-forge 内部文件
+ * 的扫描路径证明不了平台归属，归属由声明层决定；未声明 platforms 的 entry 不动资产声明）。
  * 未匹配声明 → 合成 registry:unmatched-* 资产 + 诊断；自建未声明 → payload.registry.declared=false。
  */
 export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntry[]): RegistryState {
@@ -132,6 +134,7 @@ export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntr
     return {
       ...asset,
       provenance: 'first-party' as const,
+      ...(entry.platforms ? { platforms: entry.platforms } : {}),
       meta: { ...entry.meta, ...asset.meta },
       payload: {
         ...asset.payload,
@@ -152,11 +155,11 @@ export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntr
       summary: `registry.d 声明了但没有资产命中（${JSON.stringify(entry.match)}）`,
       attach: { level: 'user' },
       enforcement: 'advisory',
-      platforms: ['claude-code'],
+      platforms: [],
       provenance: 'first-party',
       tags: ['registry', 'unmatched'],
       enabled: true,
-      source: { collector: 'registry-overlay', path: entry.file },
+      source: { collector: 'registry-overlay', path: entry.file, platform: 'none' },
       payload: { entry },
     });
   }

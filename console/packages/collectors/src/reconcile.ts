@@ -112,9 +112,9 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
   const contentField = (a: Asset): 'content' | 'instructions' | undefined => {
     if (a.kind === 'agent') return 'instructions';
     if (a.kind === 'instruction' || a.kind === 'skill') return 'content';
-    // 文件型 kind（autopilot 脚本/配置、hook-script、adapter）：正文已随 payload 归档（content），
+    // 文件型 kind（autopilot-script 脚本/配置/评审巡逻、hook-script、adapter）：正文已随 payload 归档（content），
     // 生产侧真有正文且是绝对路径文件时走全文 diff / 可执行 push；缺正文 → 内容视图逐字段对照
-    if (a.kind === 'autopilot' || a.kind === 'hook-script' || a.kind === 'adapter') {
+    if (a.kind === 'autopilot-script' || a.kind === 'hook-script' || a.kind === 'adapter') {
       const path = a.source.path;
       if (path.startsWith('/') && typeof (a.payload as { content?: unknown }).content === 'string') return 'content';
     }

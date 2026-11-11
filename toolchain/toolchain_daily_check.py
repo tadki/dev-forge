@@ -86,7 +86,7 @@ LAUNCHER_LOG_SUFFIX = ".log"
 # SEE-1516 §SPEC-001/002 (fingerprint 8e0c896702d2): 台账期次不变量机检。
 # 台账 PR 滞留 open 时 main 的 review-state nth 与台账期号脱节 → 下期拼装
 # 重号（PR #40/#42 事故形态），仅靠 description 人肉条款无机器防线。
-LEDGER_DIR_REL = os.path.join("review-prompts", "toolchain", "ledger")
+LEDGER_DIR_REL = os.path.join("autopilots", "review-prompts", "toolchain", "ledger")
 LEDGER_PERIOD_RE = re.compile(r"第\s*(\d+)\s*期")
 
 # repo 相对路径 (相对脚本所在仓库)
@@ -1584,7 +1584,7 @@ class DailyCheck:
     def _check_kill_switch_single_source(self, dim, issues):
         """F5：规范 paused 文件为单一入口；历史别名仅告警提示收敛。"""
         canonical_paused = os.path.join(REPORT_ROOT, "DISABLED")
-        legacy_paused = os.path.join(self.root, "review-prompts", "toolchain", "ledger", "DISABLED")
+        legacy_paused = os.path.join(self.root, "autopilots", "review-prompts", "toolchain", "ledger", "DISABLED")
         active = [p for p in (canonical_paused, legacy_paused) if os.path.exists(p)]
         if not active:
             self.ok(dim, "f5", "Kill Switch 未激活（单源 %s 不存在）" % canonical_paused)

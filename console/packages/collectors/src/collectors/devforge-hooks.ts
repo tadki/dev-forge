@@ -93,7 +93,8 @@ export const devforgeHooksCollector: Collector = {
           summary: `${(manifest.hook_points as string[] | undefined)?.length ?? 9} 挂载点 · alias ${String(manifest.alias ?? '')} · one-shot 哨兵 ${stateCount}`,
           attach: { level: 'user' },
           enforcement: 'enforced',
-          platforms: ['claude-code', 'multica'],
+          // 自研面工件（非平台对象，钩子页展示）；归属声明由 registry.d 决定
+          platforms: [],
           source: { collector: 'devforge-hooks', path: join(ctx.paths.devforge, 'bootstrap', 'hooks-registration.json'), sha256: sha256(JSON.stringify(manifest)) },
           payload: { ...manifest, stateSentinels: stateCount },
           tags: ['devforge', 'manifest'],
@@ -125,7 +126,8 @@ export const devforgeHooksCollector: Collector = {
                 }
               : undefined,
             enforcement: 'enforced',
-            platforms: ['claude-code', 'multica'],
+            // dev-forge 工具链内部文件：归属由 registry.d 声明（devforge-hooks-engine → claude-code+multica）
+            platforms: [],
             enabled: rule.enabled !== false,
             owner: rule.owner,
             source: { collector: 'devforge-hooks', path: file, locator: `$.rules[?(@.name=="${rule.name}")]`, sha256: undefined },
@@ -171,7 +173,7 @@ export const devforgeHooksCollector: Collector = {
           summary: purpose.slice(0, 100),
           attach: { level: 'user' },
           enforcement: 'enforced',
-          platforms: ['claude-code'],
+          platforms: [],
           source: { collector: 'devforge-hooks', path: p, sha256: sha256(md) },
           payload: { lines: md.split('\n').length, purpose, content: md },
           tags: ['devforge', 'script'],
@@ -190,6 +192,8 @@ export const devforgeHooksCollector: Collector = {
           summary: '共用库（被 scripts 引用）',
           attach: { level: 'user' },
           enforcement: 'derived',
+          // dev-forge 工具链内部文件：归属由 registry.d 声明（devforge-hooks-engine → claude-code+multica）
+          platforms: [],
           source: { collector: 'devforge-hooks', path: join(libDir, f) },
           payload: {},
           tags: ['devforge', 'lib'],
