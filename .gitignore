@@ -4,6 +4,9 @@ __pycache__/
 node_modules/
 
 # grepai: project config is tracked; runtime artifacts (locks, gob caches, logs) are not
+# config.yaml 会被 grepai watch 持续改写 watch.last_index_time。本机对其设了
+# `git update-index --skip-worktree .grepai/config.yaml` 屏蔽该噪声；
+# 真实改配置时先 `--no-skip-worktree` 解除、改完提交后再设回。
 .grepai/*
 !.grepai/config.yaml
 
