@@ -27,12 +27,6 @@ export interface MulticaConfig {
   enabled: boolean;
 }
 
-export interface HindsightConfig {
-  configPath: string;
-  apiBase: string;
-  probe: boolean;
-}
-
 export interface ReportsConfig {
   toolchainLatest: string;
   archPatrol: string;
@@ -43,7 +37,6 @@ export interface ConsoleConfig {
   devforge: string;
   workspaces: WorkspaceDef[];
   multica: MulticaConfig;
-  hindsight: HindsightConfig;
   reports: ReportsConfig;
   enabledCollectors?: string[];
   snapshotPath?: string;
@@ -65,11 +58,6 @@ export function defaultConfig(root?: { home?: string; devforge?: string }): Cons
     devforge,
     workspaces: [],
     multica: { cli: 'multica', timeoutMs: 15000, maxTasksPerAgent: 5, enabled: true },
-    hindsight: {
-      configPath: join(home, '.hindsight', 'coding-agent.json'),
-      apiBase: 'http://192.168.1.210:13581',
-      probe: true,
-    },
     reports: {
       toolchainLatest: join(home, '.multica', 'toolchain-reports', 'latest.json'),
       archPatrol: join(home, '.multica', 'arch-patrol', 'last_report.json'),
@@ -100,14 +88,6 @@ export async function loadConfig(path: string, overrides?: { home?: string; devf
   const home = typeof raw.home === 'string' ? resolveTilde(raw.home, base.home) : base.home;
   const cfg: ConsoleConfig = { ...base, ...raw, home } as ConsoleConfig;
   cfg.multica = { ...base.multica, ...((raw.multica as object) ?? {}) };
-  cfg.hindsight = {
-    ...base.hindsight,
-    ...((raw.hindsight as object) ?? {}),
-    configPath: resolveTilde(
-      (raw.hindsight as { configPath?: string } | undefined)?.configPath ?? base.hindsight.configPath,
-      home
-    ),
-  };
   cfg.reports = {
     ...base.reports,
     ...((raw.reports as object) ?? {}),

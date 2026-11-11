@@ -36,11 +36,6 @@ multica:
   maxTasksPerAgent: 5
   enabled: true
 
-hindsight:
-  configPath: ~/.hindsight/coding-agent.json
-  apiBase: http://192.168.1.210:13581
-  probe: true
-
 reports:
   toolchainLatest: ~/.multica/toolchain-reports/latest.json
   archPatrol: ~/.multica/arch-patrol/last_report.json

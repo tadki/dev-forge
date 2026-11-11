@@ -10,7 +10,6 @@ import { devforgePatchesCollector } from './collectors/devforge-patches.js';
 import { multicaCollector } from './collectors/multica.js';
 import { servicesCollector } from './collectors/services.js';
 import { healthCollector } from './collectors/health.js';
-import { hindsightCollector } from './collectors/hindsight.js';
 import { sessionsCollector } from './collectors/sessions.js';
 
 export const builtinCollectors: Collector[] = [
@@ -25,7 +24,6 @@ export const builtinCollectors: Collector[] = [
   multicaCollector,
   servicesCollector,
   healthCollector,
-  hindsightCollector,
   sessionsCollector,
 ];
 
