@@ -148,25 +148,33 @@ class TestDataPath:
 
 class TestMalformedTolerance:
     def test_non_utf8_payload_ignored_then_text_received(self):
+        # FakeMulticaWS auto-sends an auth_ack before the script, so the first
+        # recv consumes that; the second must skip the invalid-UTF-8 text frame
+        # and return the following valid text (a regression here would decode
+        # the bad frame or stall).
         bad = bytes([0x81, 0x03, 0xFF, 0xFE, 0xFD])  # FIN+text, invalid UTF-8
-        server = FakeMulticaWS(script=[("raw", bad), ("text", '{"type":"auth_ack"}')])
+        server = FakeMulticaWS(script=[("raw", bad), ("text", '{"type":"ok"}')])
         try:
             client = WSClient(server.url)
             client.connect()
             client.send_text("hello")
             assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            assert json.loads(client.recv_message()) == {"type": "ok"}
             client.close()
         finally:
             server.close()
 
     def test_binary_frame_ignored_then_text_received(self):
-        server = FakeMulticaWS(script=[("raw", bytes([0x82, 0x02, 0x01, 0x02])),
-                                      ("text", '{"type":"auth_ack"}')])
+        binary = bytes([0x82, 0x02, 0x01, 0x02])
+        pong = bytes([0x8A, 0x00])  # unsolicited pong, not a text message
+        server = FakeMulticaWS(script=[("raw", binary), ("raw", pong),
+                                       ("text", '{"type":"ok"}')])
         try:
             client = WSClient(server.url)
             client.connect()
             client.send_text("hello")
             assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            assert json.loads(client.recv_message()) == {"type": "ok"}
             client.close()
         finally:
             server.close()
@@ -186,13 +194,34 @@ class TestMalformedTolerance:
             server.close()
 
     def test_orphan_continuation_ignored(self):
+        # A continuation frame with no preceding fragment start is dropped, and
+        # reading continues to the next valid text message.
         orphan = bytes([0x80, 0x02]) + b"ab"
-        server = FakeMulticaWS(script=[("raw", orphan), ("text", '{"type":"auth_ack"}')])
+        server = FakeMulticaWS(script=[("raw", orphan), ("text", '{"type":"ok"}')])
         try:
             client = WSClient(server.url)
             client.connect()
             client.send_text("hello")
             assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            assert json.loads(client.recv_message()) == {"type": "ok"}
+            client.close()
+        finally:
+            server.close()
+
+    def test_masked_server_frame_is_unmasked(self):
+        # RFC6455 servers normally send unmasked frames, but a masked frame
+        # must still be unmasked before decoding.
+        payload = b'{"type":"masked-ok"}'
+        mask = b"\x01\x02\x03\x04"
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        frame = bytes([0x81, 0x80 | len(payload)]) + mask + masked
+        server = FakeMulticaWS(script=[("raw", frame)])
+        try:
+            client = WSClient(server.url)
+            client.connect()
+            client.send_text("hello")
+            assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            assert json.loads(client.recv_message()) == {"type": "masked-ok"}
             client.close()
         finally:
             server.close()
@@ -289,3 +318,189 @@ class TestReadTimeout:
             client.close()
         finally:
             server.close()
+
+
+def _raw_tcp_server(handler):
+    """Start a one-shot raw TCP server; handler(conn) runs per connection.
+    Returns (port, server_socket)."""
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def serve():
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            return
+        try:
+            handler(conn)
+        except OSError:
+            pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=serve, daemon=True).start()
+    return port, srv
+
+
+class _FakeSock:
+    """Minimal socket stand-in for TLS-wiring and teardown branch tests."""
+
+    def __init__(self, send_error=None, close_error=None, recv_error=None):
+        self.send_error = send_error
+        self.close_error = close_error
+        self.recv_error = recv_error
+        self.timeout = None
+        self.sent = []
+
+    def sendall(self, data):
+        if self.send_error is not None:
+            raise self.send_error
+        self.sent.append(data)
+
+    def settimeout(self, value):
+        self.timeout = value
+
+    def close(self):
+        if self.close_error is not None:
+            raise self.close_error
+
+    def recv(self, _count):
+        if self.recv_error is not None:
+            raise self.recv_error
+        return b""
+
+
+class TestUrlAndTls:
+    def test_url_without_host_is_rejected(self):
+        with pytest.raises(WebSocketError):
+            parse_ws_url("ws:///only-path")
+
+    def test_wss_wraps_socket_with_tls(self, monkeypatch):
+        # The wss branch must build a default TLS context and wrap the socket
+        # with the host as SNI; a plain-text connection to a wss URL would
+        # silently fail the handshake otherwise.
+        import multica_telegram_notifier.wsclient as wsclient_mod
+        raw, wrapped = _FakeSock(), _FakeSock()
+        calls = {}
+
+        def fake_create_connection(addr, timeout=None):
+            calls["addr"] = addr
+            calls["timeout"] = timeout
+            return raw
+
+        class _Ctx:
+            def wrap_socket(self, sock, server_hostname=None):
+                calls["wrapped_sock"] = sock
+                calls["server_hostname"] = server_hostname
+                return wrapped
+
+        monkeypatch.setattr(wsclient_mod.socket, "create_connection", fake_create_connection)
+        monkeypatch.setattr(wsclient_mod.ssl, "create_default_context", lambda: _Ctx())
+        monkeypatch.setattr(WSClient, "_handshake", lambda self, host, port, path: None)
+        client = WSClient("wss://secure.example/ws")
+        client.connect()
+        assert calls["server_hostname"] == "secure.example"
+        assert calls["wrapped_sock"] is raw
+        assert client._sock is wrapped
+        assert wrapped.timeout == client.read_timeout
+
+
+class TestCloseFrameAndTeardown:
+    def test_server_close_frame_answered_and_raises(self):
+        # A server CLOSE frame must be answered with our own CLOSE and surface
+        # as WebSocketClosed (not be mistaken for a normal stream end).
+        close_frame = bytes([0x88, 0x00])  # FIN + close, no payload
+        server = FakeMulticaWS(script=[("raw", close_frame)])
+        try:
+            client = WSClient(server.url)
+            client.connect()
+            client.send_text("hello")
+            assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            with pytest.raises(WebSocketClosed):
+                client.recv_message()
+            assert wait_for(lambda: any(op == 0x8 for op, _ in server.received)), \
+                "client did not answer the server CLOSE"
+            client.close()
+        finally:
+            server.close()
+
+    def test_close_swallows_send_error(self):
+        client = WSClient("ws://h.example/ws")
+        client._sock = _FakeSock(send_error=OSError("send fail"))
+        client.close()  # must not raise
+        assert client._sock is None
+
+    def test_close_swallows_socket_close_error(self):
+        client = WSClient("ws://h.example/ws")
+        client._sock = _FakeSock(close_error=OSError("close fail"))
+        client.close()  # must not raise
+        assert client._sock is None
+
+
+class TestHandshakeFailures:
+    def test_connection_closed_during_handshake_is_error(self):
+        port, srv = _raw_tcp_server(lambda conn: (conn.recv(4096), None)[1])
+        try:
+            client = WSClient(f"ws://127.0.0.1:{port}/ws")
+            with pytest.raises(WebSocketError) as exc:
+                client.connect()
+            assert "closed during handshake" in str(exc.value)
+        finally:
+            srv.close()
+
+    def test_oversize_handshake_response_is_error(self):
+        def handler(conn):
+            conn.recv(4096)
+            conn.sendall(b"A" * 70000)  # never terminates with CRLFCRLF
+
+        port, srv = _raw_tcp_server(handler)
+        try:
+            client = WSClient(f"ws://127.0.0.1:{port}/ws")
+            with pytest.raises(WebSocketError) as exc:
+                client.connect()
+            assert "too large" in str(exc.value)
+        finally:
+            srv.close()
+
+
+class TestRecvAndSendErrors:
+    def test_recv_connection_reset_becomes_websocketclosed(self):
+        server = FakeMulticaWS(script=[("sleep", 5)])
+        try:
+            client = WSClient(server.url)
+            client.connect()
+            client.send_text("hello")
+            assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            real = client._sock
+            client._sock = _FakeSock(recv_error=ConnectionResetError("reset"))
+            with pytest.raises(WebSocketClosed):
+                client.recv_message()
+            client._sock = real
+            client.close()
+        finally:
+            server.close()
+
+    def test_send_before_connect_raises(self):
+        client = WSClient("ws://h.example/ws")
+        with pytest.raises(WebSocketError):
+            client.send_text("x")
+
+    def test_send_text_medium_and_large_lengths_reach_server(self, fake_multica):
+        # Frames of 126..65535 bytes use the 16-bit length header and frames of
+        # >=65536 bytes the 64-bit header; both must round-trip to the server.
+        client = WSClient(fake_multica.url)
+        client.connect()
+        client.send_text("m" * 200)
+        client.send_text("l" * 70000)
+        assert wait_for(
+            lambda: any(len(payload) == 70000 for op, payload in fake_multica.received
+                        if op == 0x1), timeout=5)
+        lens = [len(payload) for op, payload in fake_multica.received if op == 0x1]
+        assert 200 in lens and 70000 in lens
+        client.close()

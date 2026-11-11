@@ -74,6 +74,12 @@ class TestInboxNewParsing:
         frame = parse_server_frame('{"type":"inbox:new","payload":{"item":"nope"}}')
         assert parse_inbox_new(frame) is None
 
+    def test_payload_not_dict_returns_none(self):
+        # A non-object payload is a malformed inbox frame and must be ignored,
+        # not treated as an item-bearing event.
+        frame = parse_server_frame('{"type":"inbox:new","payload":"not-an-object"}')
+        assert parse_inbox_new(frame) is None
+
 
 class TestWorkspaceFilter:
     def test_workspace_id_extracted(self):
