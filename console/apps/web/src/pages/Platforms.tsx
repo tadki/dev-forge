@@ -421,7 +421,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     <span className="mono" style={{ fontWeight: 700 }}>
                       {k.kind}
                     </span>
-                    <Badge tone="warn">{k.count}</Badge>
+                    <Badge tone="ok">{k.count}</Badge>
                     {k.firstPartyCount > 0 && (
                       <Badge tone="default" style={{ background: '#cca700' }} title={`自建 ${k.firstPartyCount} / ${k.count} 个资产`}>
                         {k.firstPartyCount}
