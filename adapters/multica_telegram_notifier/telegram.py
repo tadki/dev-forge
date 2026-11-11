@@ -6,6 +6,7 @@ and response description (Telegram's own text, which contains no client
 secret), with the original exception context suppressed.
 """
 
+import http.client
 import json
 import socket
 import time
@@ -45,12 +46,28 @@ def _error_detail(exc) -> tuple:
     """
     try:
         body = json.loads(exc.read().decode("utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError):
+    except (OSError, ValueError, UnicodeDecodeError, http.client.HTTPException):
+        # HTTPException (e.g. IncompleteRead on a truncated body) is neither
+        # an OSError nor a ValueError, yet must never escape TelegramError.
         return None, ""
     if not isinstance(body, dict):
         return None, ""
     raw = body.get("error_code")
     return (raw if isinstance(raw, int) else None), str(body.get("description", ""))
+
+
+def _ok_false_error(method: str, body) -> "TelegramError":
+    """Build the error for an HTTP 200 + ok:false response: classify by the
+    body's error_code so the channel/message split AND the retryable set
+    match the HTTP-status path."""
+    description = body.get("description", "invalid response") if isinstance(body, dict) else "invalid response"
+    raw_code = body.get("error_code") if isinstance(body, dict) else None
+    error_code = raw_code if isinstance(raw_code, int) else None
+    return TelegramError(
+        f"telegram {method} failed: {description}",
+        retryable=error_code in RETRYABLE_HTTP,
+        error_code=error_code,
+        is_channel_error=error_code in CHANNEL_HTTP_CODES)
 
 
 class TelegramError(Exception):
@@ -120,21 +137,20 @@ class TelegramClient:
             raise TelegramError(
                 f"telegram {method} network error: {reason}", retryable=True,
                 is_channel_error=True) from None
+        except http.client.HTTPException as exc:
+            # Truncated/malformed HTTP framing (e.g. IncompleteRead on the
+            # success body): same channel-level retryable treatment.
+            raise TelegramError(
+                f"telegram {method} http framing error: {type(exc).__name__}",
+                retryable=True, is_channel_error=True) from None
         try:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
             raise TelegramError(
                 f"telegram {method} returned invalid JSON", retryable=True) from None
         if not isinstance(body, dict) or body.get("ok") is not True:
-            description = body.get("description", "invalid response") if isinstance(body, dict) else "invalid response"
-            raw_code = body.get("error_code") if isinstance(body, dict) else None
-            error_code = raw_code if isinstance(raw_code, int) else None
             # HTTP 200 + ok:false: classify by the body's error_code so the
             # channel/message split AND the retryable set match the
             # HTTP-status path.
-            raise TelegramError(
-                f"telegram {method} failed: {description}",
-                retryable=error_code in RETRYABLE_HTTP,
-                error_code=error_code,
-                is_channel_error=error_code in CHANNEL_HTTP_CODES)
+            raise _ok_false_error(method, body)
         return body

@@ -307,8 +307,15 @@ def main(argv=None) -> int:
         print(json.dumps({"level": "error", "event": "config_error", "error": str(exc)}),
               file=sys.stderr)
         return EXIT_CONFIG
-    logger = JsonLogger(Redactor([config.multica_pat, config.telegram_bot_token]),
-                        file_path=os.path.expanduser(args.log_json) if args.log_json else None)
+    try:
+        logger = JsonLogger(Redactor([config.multica_pat, config.telegram_bot_token]),
+                            file_path=os.path.expanduser(args.log_json) if args.log_json else None)
+    except OSError as exc:
+        # An unwritable log path is a startup configuration problem: report it
+        # under the config_error contract instead of a raw traceback exit 1.
+        print(json.dumps({"level": "error", "event": "config_error",
+                          "error": f"log file not writable: {exc}"}), file=sys.stderr)
+        return EXIT_CONFIG
     telegram, state, ws_factory = build_components(config)
     notifier = Notifier(config, logger, telegram, state, ws_factory, once=args.once)
     try:
