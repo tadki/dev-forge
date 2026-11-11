@@ -1,10 +1,12 @@
 """§SPEC-003 behaviour at the notifier level: filtering, dedup, reconnect,
-auth rejection, chat-id discovery failure, permanent-failure quarantine,
-stale-chat recovery, once-mode auth bound, read-timeout reconnect.
-Real WS + real Telegram client classes over the local fakes."""
+auth rejection, startup config failure (missing chat id), permanent-failure
+quarantine, stale-chat re-affirm, once-mode auth/channel bounds, and
+read-timeout reconnect. Real WS + real Telegram client classes over the
+local fakes (only the process boundary is faked)."""
 
 import io
 import json
+import os
 import threading
 
 from multica_telegram_notifier.config import load_config
@@ -219,10 +221,14 @@ class TestReconnect:
 
 
 class TestStartupFailures:
-    def test_missing_chat_id_exits_config_error(self, tmp_path, fake_telegram):
+    def test_missing_chat_id_exits_config_error(self, tmp_path, fake_telegram, monkeypatch):
+        # load_config_file falls back to os.environ, so an exported
+        # NOTIFIER_* key on a dev/CI shell would mask this missing-key case;
+        # purge the inherited environment to keep the test discriminative.
+        for key in [k for k in os.environ if k.startswith("NOTIFIER_")]:
+            monkeypatch.delenv(key, raising=False)
         server = FakeMulticaWS()
         try:
-            notifier, _cfg, logger = build(tmp_path, server, fake_telegram)
             env = make_env(server, fake_telegram, tmp_path)
             del env["NOTIFIER_TELEGRAM_CHAT_ID"]
             env_path = tmp_path / "missing.env"
