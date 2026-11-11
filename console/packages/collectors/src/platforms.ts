@@ -207,10 +207,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           mode: 'scan',
           how: 'file',
           collector: 'claude-global',
-          paths: ['~/.claude/settings.json'],
-          note: 'settings.json env（采集脱敏）',
+          paths: ['~/.claude/settings.json', '<project>/.claude/settings.json', '<project>/.claude/settings.local.json'],
+          note: '用户级 settings.json env（claude-global）+ 项目级 .claude/settings(.local).json env（claude-projects）；CC 层级合并中项目可覆盖全局（采集脱敏）',
         },
-        read: { how: 'file', note: 'settings.json env（采集脱敏）' },
+        read: { how: 'file', note: 'settings(.local).json env（采集脱敏）' },
         write: { type: 'none', advice: 'env 含敏感值且采集已脱敏，不支持物化' },
       },
       project: {

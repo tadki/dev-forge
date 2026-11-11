@@ -20,6 +20,11 @@ beforeAll(async () => {
   await writeFile(join(alpha, '.claude', 'skills', 'demo-skill', 'SKILL.md'), '---\ndescription: demo\n---\nbody\n');
   await writeFile(join(alpha, '.claude', 'agents', 'worker.md'), '---\nname: worker\ndescription: does work\n---\nbody\n');
   await writeFile(join(alpha, '.mcp.json'), JSON.stringify({ mcpServers: { grepai: { command: 'npx', args: ['grepai'] } } }));
+  await writeFile(
+    join(alpha, '.claude', 'settings.json'),
+    JSON.stringify({ env: { ANTHROPIC_MODEL: 'claude-sonnet-4-6', MY_API_KEY: 'sk-abcdefghijklmnopqrstuvwx' } })
+  );
+  await writeFile(join(alpha, '.claude', 'settings.local.json'), JSON.stringify({ env: { DEBUG_FLAG: '1' } }));
   const bare = join(root, 'ws-b', 'proj-bare');
   await mkdir(bare, { recursive: true });
   // 未注册目录：即使带完整 harness 痕迹也不应产出资产
@@ -63,6 +68,15 @@ describe('claude-projects collector（注册制 + harness 声明制）', () => {
     expect(r.assets.find((a) => a.id === 'agent:worker')?.provenance).toBe('third-party');
     expect(r.assets.some((a) => a.id === 'hook-script:project-proj-alpha-guard.sh')).toBe(true);
     expect(r.assets.some((a) => a.id === 'mcp-endpoint:project-proj-alpha-grepai')).toBe(true);
+    // 项目级 env：settings.json 与 settings.local.json 分层各出一条，敏感值脱敏
+    const envShared = r.assets.find((a) => a.id === 'env:project-proj-alpha-settings.json');
+    expect(envShared).toBeDefined();
+    expect(envShared!.payload).toMatchObject({ count: 2, values: { ANTHROPIC_MODEL: 'claude-sonnet-4-6', MY_API_KEY: '«redacted»' } });
+    expect(envShared!.attach).toMatchObject({ level: 'project', ref: join(root, 'ws-a', 'proj-alpha') });
+    expect(envShared!.applies?.workspaces).toEqual(['wsa']);
+    const envLocal = r.assets.find((a) => a.id === 'env:project-proj-alpha-settings.local.json');
+    expect(envLocal).toBeDefined();
+    expect(envLocal!.payload).toMatchObject({ count: 1, values: { DEBUG_FLAG: '1' } });
     // 磁盘上存在但未注册的目录不产出任何资产
     expect(r.assets.some((a) => a.source.path.includes('proj-stray'))).toBe(false);
   });

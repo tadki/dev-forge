@@ -2,6 +2,7 @@ import type { Asset, Relation } from '@forge/schema';
 import { join } from 'node:path';
 import { exists, execCapture, guessLang, headings, listDir, readJson, readText, sha256 } from '../util.js';
 import { asset, type CollectContext, type Collector } from '../types.js';
+import { redactObject } from '../redact.js';
 import type { ProjectDef, WorkspaceDef } from '../config.js';
 
 interface RegisteredProject {
@@ -87,6 +88,12 @@ export const claudeProjectsCollector: Collector = {
       const mcpJson = hasHarness
         ? await readJson<{ mcpServers?: Record<string, { command?: string; args?: string[] }> }>(join(dir, '.mcp.json'))
         : null;
+      const projectSettings: Array<[string, { env?: Record<string, string> } | null]> = hasHarness
+        ? [
+            ['settings.json', await readJson<{ env?: Record<string, string> }>(join(dotClaude, 'settings.json'))],
+            ['settings.local.json', await readJson<{ env?: Record<string, string> }>(join(dotClaude, 'settings.local.json'))],
+          ]
+        : [];
 
       assets.push(
         asset({
@@ -230,6 +237,28 @@ export const claudeProjectsCollector: Collector = {
             payload: { transport: 'stdio', command: def.command, args: def.args },
             source: { collector: 'claude-projects', path: join(dir, '.mcp.json'), locator: `$.mcpServers.${mcpName}` },
             tags: ['mcp', ws.id],
+          })
+        );
+      }
+
+      // env（项目层级，settings.json 与 settings.local.json 分层各出一条；CC 层级合并中项目可覆盖全局）
+      for (const [file, parsed] of projectSettings) {
+        const env = parsed?.env ?? {};
+        const envKeys = Object.keys(env);
+        if (envKeys.length === 0) continue;
+        assets.push(
+          asset({
+            id: `env:project-${name}-${file}`,
+            kind: 'env',
+            name: `${name}/${file} env`,
+            summary: `${envKeys.length} 项 · 已脱敏`,
+            attach: { level: 'project', ref: dir },
+            applies: { workspaces: [ws.id], origin: 'native' },
+            enforcement: 'enforced',
+            platforms: ['claude-code'],
+            payload: { values: redactObject(env), count: envKeys.length },
+            source: { collector: 'claude-projects', path: join(dotClaude, file), locator: '$.env' },
+            tags: ['settings', ws.id],
           })
         );
       }
