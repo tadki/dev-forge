@@ -55,18 +55,21 @@ const state: RegistryState = {
     }),
     mk('service:systemd-grepai-watch.service', 'service', {
       name: 'grepai-watch',
-      source: { collector: 'test', path: 'systemd://user/grepai-watch.service' },
+      platforms: [],
+      source: { collector: 'test', path: 'systemd://user/grepai-watch.service', platform: 'none' },
       payload: { scope: 'user', active: 'active' },
     }),
     mk('service:systemd-external-thing.service', 'service', {
       name: 'external-thing',
       provenance: 'third-party',
-      source: { collector: 'test', path: 'systemd://user/external-thing.service' },
+      platforms: [],
+      source: { collector: 'test', path: 'systemd://user/external-thing.service', platform: 'none' },
       payload: { scope: 'user', active: 'active' },
     }),
     mk('service:systemd-toolchain-start-all.service', 'service', {
       name: 'toolchain-start-all',
-      source: { collector: 'test', path: 'systemd://system/toolchain-start-all.service' },
+      platforms: [],
+      source: { collector: 'test', path: 'systemd://system/toolchain-start-all.service', platform: 'none' },
       payload: { scope: 'system', active: 'active' },
     }),
     mk('service:repo-sync-gqt', 'service', {
@@ -238,10 +241,11 @@ describe('api endpoints', () => {
     expect(agentRow.read.cmd).toEqual(['multica', 'agent', 'list']);
     expect(agentRow.write.type).toBe('command');
     const cc = r.body.platforms.find((p: { id: string }) => p.id === 'claude-code');
-    expect(cc.totalAssets).toBe(10); // 13 资产 - 3 个 systemd:// 未适配
+    expect(cc.totalAssets).toBe(9); // 13 资产 - 3 个无平台声明（systemd 运行时探针，platform:none）- 1 个仅声明 multica
     expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').read.paths).toContain('<project>/CLAUDE.md');
     expect(r.body.unadapted.assetCount).toBe(3);
     expect(r.body.unadapted.kinds[0].kind).toBe('service');
+    expect(r.body.declaredCount).toBe(10); // 唯一声明资产：cc 9 + multica 1（跨页共享会重复计入 totalAssets，此处无共享）
     expect(Array.isArray(r.body.diagnostics)).toBe(true);
     expect(typeof r.body.generatedAt).toBe('string');
     for (const p of r.body.platforms as { kinds: { assets: Record<string, unknown>[] }[] }[]) {
