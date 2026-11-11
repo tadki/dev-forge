@@ -123,7 +123,7 @@ class Notifier:
         self.logger.info("stopped")
         return EXIT_STOPPED
 
-    def _session_failure_exit(self, exc) -> int | None:
+    def _session_failure_exit(self, exc: Exception) -> int | None:
         """Counts a session outcome toward the --once bounds; returns the exit
         code when a bound fired, else None (and resets runs it breaks)."""
         if isinstance(exc, TelegramError) and exc.is_channel_error:

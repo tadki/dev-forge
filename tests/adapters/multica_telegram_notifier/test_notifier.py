@@ -493,9 +493,12 @@ class TestOnceChannelBound:
                 server.close()
 
     def test_steady_mode_keeps_retrying_channel_failure(self, tmp_path, fake_telegram):
+        # Supply far exceeds the worst-case send count inside the 0.8 s stop
+        # window (measured ~9 sends here, faster CI more): a scripted-failure
+        # shortage would flip the run into "delivered" and pseudo-fail.
         fake_telegram.responses = [
             (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
-        ] * 20
+        ] * 200
         server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
                                        ("sleep", 0.1)])
         try:
@@ -540,9 +543,13 @@ class TestOnceChannelBound:
             server.close()
 
     def test_steady_mode_keeps_retrying_transient_failure(self, tmp_path, fake_telegram):
+        # Each send burns up to 2 responses (send_retries), so supply far
+        # beyond the measured 0.8 s consumption (~16 sends => 32 responses,
+        # already over the old supply of 20): exhaustion would flip the run
+        # into "delivered" and pseudo-fail on faster machines.
         fake_telegram.responses = [
             (500, {"ok": False, "error_code": 500, "description": "internal error"}),
-        ] * 20
+        ] * 200
         server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
                                        ("sleep", 0.1)])
         try:
