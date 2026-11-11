@@ -1,6 +1,11 @@
 """§SPEC-002: Telegram sendMessage normal/error paths, result validation and
 text limits; the bot token never appears in raised error messages."""
 
+import http.client
+import email.message
+import urllib.error
+import urllib.request
+
 import pytest
 
 from multica_telegram_notifier.telegram import (
@@ -304,3 +309,33 @@ class TestInvalidJsonResponse:
             client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
         assert exc.value.retryable is True
         assert "invalid JSON" in str(exc.value)
+
+
+class TestErrorBodyReadRobustness:
+    def test_error_detail_swallows_incomplete_read(self):
+        # Final-Review MEDIUM: reading a truncated error body raises
+        # http.client.IncompleteRead (an HTTPException, not an OSError), which
+        # must be swallowed into a (None, "") detail instead of escaping the
+        # TelegramError system and crashing the process.
+        def broken_read(*_args, **_kwargs):
+            raise http.client.IncompleteRead(partial=b"ok\":fal")
+
+        fp = type("BrokenFP", (), {"read": staticmethod(broken_read)})()
+        exc = urllib.error.HTTPError(
+            "http://telegram.invalid/botX/sendMessage", 500, "oops",
+            email.message.Message(), fp)
+        assert _error_detail(exc) == (None, "")
+
+    def test_incomplete_read_of_response_body_is_telegram_error(self, monkeypatch):
+        # Same defect class on the success-body read path: a truncated
+        # response must surface as a retryable TelegramError, never as a raw
+        # IncompleteRead traceback.
+        def broken_urlopen(*_args, **_kwargs):
+            raise http.client.IncompleteRead(partial=b'{"ok":true,"res')
+
+        monkeypatch.setattr(urllib.request, "urlopen", broken_urlopen)
+        client = TelegramClient("http://telegram.invalid", BOT, timeout=1.0)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.retryable is True
+        assert BOT not in str(exc.value)

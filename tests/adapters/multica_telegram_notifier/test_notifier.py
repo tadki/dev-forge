@@ -30,7 +30,7 @@ from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.state import DedupState
 from multica_telegram_notifier.wsclient import WSClient
 
-from multica_notifier_fakes import FakeMulticaWS, make_env, make_inbox_frame
+from multica_notifier_fakes import FakeMulticaWS, FakeTelegram, make_env, make_inbox_frame
 
 PAT = "test-pat-value-0123456789"
 BOT = "test-bot-token-value"
@@ -281,6 +281,20 @@ class TestStartupFailures:
             assert not (Path.cwd() / "~").exists()
         finally:
             server.close()
+
+    def test_unwritable_log_file_exits_config_error(self, tmp_path, capsys):
+        # Final-Review LOW: an unwritable --log-json path is a startup config
+        # error (config_error JSON + exit 2), never a raw traceback exit 1.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("i am a file", encoding="utf-8")
+        env = make_env(FakeMulticaWS(), FakeTelegram(), tmp_path)
+        env_path = tmp_path / "log.env"
+        env_path.write_text("\n".join(f"{k}={v}" for k, v in env.items()), encoding="utf-8")
+        from multica_telegram_notifier.notifier import main
+        code = main(["--config", str(env_path),
+                     "--log-json", str(blocker / "probe.jsonl")])
+        assert code == EXIT_CONFIG
+        assert "config_error" in capsys.readouterr().err
 
     def test_non_utf8_config_file_exits_config_error(self, tmp_path, capsys):
         # E-3: invalid config must follow the CLI contract — config_error JSON
