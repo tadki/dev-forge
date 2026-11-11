@@ -20,7 +20,7 @@ from multica_telegram_notifier.notifier import (
 )
 from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.state import DedupState
-from multica_telegram_notifier.wsclient import WSClient, WebSocketError
+from multica_telegram_notifier.wsclient import WSClient
 
 from multica_notifier_fakes import FakeMulticaWS, make_env, make_inbox_frame, private_chat_update
 
@@ -173,7 +173,6 @@ class TestReconnect:
     def test_reconnects_after_session_drop(self, tmp_path, fake_telegram):
         # First session: drops right after auth_ack. Second session: delivers.
         server = FakeMulticaWS(script=[("close",)])
-        delivered_server_started = threading.Event()
         holder = {}
 
         factory_sessions = {"n": 0}
@@ -373,7 +372,6 @@ class TestStaleChatRecovery:
         finally:
             server.close()
 
-
     def test_stale_chat_id_rediscovered_and_retried(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
             (200, {"ok": True, "result": [private_chat_update(1111111)]}),
@@ -402,7 +400,7 @@ class TestOnceAuthBound:
     def test_once_gives_up_after_backoff_cycle_with_exit_4(self, tmp_path, fake_telegram):
         server = FakeMulticaWS(reject_auth_times=10 ** 9)
         try:
-            notifier, cfg, capture = build(
+            notifier, _cfg, _capture = build(
                 tmp_path, server, fake_telegram,
                 env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
             thread, result = run_in_thread(notifier)
@@ -415,7 +413,7 @@ class TestOnceAuthBound:
     def test_steady_mode_keeps_retrying_auth_rejection(self, tmp_path, fake_telegram):
         server = FakeMulticaWS(reject_auth_times=10 ** 9)
         try:
-            notifier, cfg, capture = build(
+            notifier, _cfg, _capture = build(
                 tmp_path, server, fake_telegram,
                 env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
             notifier.once = False
@@ -513,7 +511,7 @@ class TestOnceChannelBound:
         server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
                                        ("sleep", 0.1)])
         try:
-            notifier, cfg, capture = build(
+            notifier, _cfg, _capture = build(
                 tmp_path, server, fake_telegram,
                 env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
             notifier.once = False

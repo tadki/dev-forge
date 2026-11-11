@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from typing import Mapping
 
 DEFAULT_TELEGRAM_API_BASE = "https://api.telegram.org"
-DEFAULT_RECONNECT_BACKOFF = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
-DEFAULT_SEND_RETRIES = (1.0, 2.0, 4.0)
 DEFAULT_CONNECT_TIMEOUT = 10.0
 # Must exceed the Multica server ping interval (~54 s): a longer quiet
 # stretch means the link is dead and the session should be rebuilt.
