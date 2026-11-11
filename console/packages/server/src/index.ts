@@ -58,6 +58,7 @@ const handler = createHandler({
       },
   onAfterAction: () => void engine.collectNow(),
   platforms: () => engine.getPlatforms(),
+  registryEntries: () => engine.getRegistryEntries(),
   getReconcileReport: () =>
     engine.state.reconcile ??
     buildReconcileReport(engine.state, engine.getRegistryEntries(), new Date(), {

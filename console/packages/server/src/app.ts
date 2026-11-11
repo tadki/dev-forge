@@ -22,6 +22,8 @@ export interface AppDeps {
   getReconcileReport: () => ReconcileReport;
   /** 平台适配声明（engine 每轮采集从 platforms.d 加载；缺失回退 DEFAULT_PLATFORMS） */
   platforms: () => PlatformDef[];
+  /** registry.d 条目（engine 每轮采集加载；平台页带出盖章条目的 platforms 声明） */
+  registryEntries: () => Array<{ id: string; platforms?: string[] }>;
   /** 对账动作执行（服务端重算 item 并按 actionId 取步骤；gone=对账项已变化；failed=业务拒绝/中断，仍 200） */
   reconcileAction: (key: string, actionId: string) => Promise<{ status: 'ok' | 'invalid' | 'gone' | 'failed'; ok: boolean; output: string }>;
   /** 技能编辑保存并同步（内容来自编辑器，路径/命令由服务端从 state+platforms.d 推导；file=附带文件相对路径；failed=部分执行后中断，仍 200） */
@@ -133,7 +135,7 @@ export function createHandler(deps: AppDeps) {
       }
 
       if (path === '/api/platforms' && req.method === 'GET') {
-        const view = buildPlatformsView(state.assets, deps.platforms());
+        const view = buildPlatformsView(state.assets, deps.platforms(), deps.registryEntries());
         return json(res, 200, {
           ...view,
           generatedAt: new Date().toISOString(),

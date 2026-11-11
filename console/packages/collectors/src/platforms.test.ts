@@ -265,12 +265,19 @@ describe('buildPlatformsView', () => {
       mkAsset('skill:cc-only', '/home/x/.claude/skills/s/SKILL.md', 'skill', {}, ['claude-code']),
       mkAsset('custom:none-tagged', '/x', 'custom', {}, ['claude-code'], 'none'),
     ];
-    const v = buildPlatformsView(assets, DEFAULT_PLATFORMS);
+    const v = buildPlatformsView(assets, DEFAULT_PLATFORMS, [{ id: 'devforge-hooks-engine', platforms: ['claude-code'] }]);
     const ccRule = v.platforms.find((p) => p.id === 'claude-code')?.kinds.find((k) => k.kind === 'hook-rule');
     const mcRule = v.platforms.find((p) => p.id === 'multica')?.kinds.find((k) => k.kind === 'hook-rule');
     expect(ccRule?.assetCount).toBe(1);
     expect(mcRule?.assetCount).toBe(1);
     expect(mcRule?.assets[0].id).toBe('hook-rule:shared');
+    // 声明式发现带出盖章条目的 platforms 声明（归属链可视化）；无 registry 或条目无 platforms 时不带
+    expect(ccRule?.discovery?.registry).toBe('devforge-hooks-engine');
+    expect(ccRule?.registryPlatforms).toEqual(['claude-code']);
+    expect(mcRule?.registryPlatforms).toBeUndefined();
+    // 自建数：全量计数（不受清单截断影响）
+    expect(ccRule?.firstPartyCount).toBe(1);
+    expect(ccRule?.firstPartyCount).toBeLessThanOrEqual(ccRule?.assetCount ?? 0);
     // declaredCount 唯一计数：shared + cc-only = 2（none-tagged 进未适配）
     expect(v.declaredCount).toBe(2);
     expect(v.unadapted.assetCount).toBe(1);

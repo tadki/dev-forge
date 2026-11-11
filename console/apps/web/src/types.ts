@@ -151,9 +151,13 @@ export interface PlatformKindContract {
   applicable?: false;
   note?: string;
   discovery?: PlatformDiscoveryChannel;
+  /** 声明式发现盖章条目（registry.d）内的 platforms 声明——归属链可视化 */
+  registryPlatforms?: string[];
   read?: PlatformReadChannel;
   write?: PlatformWriteChannel;
   assetCount: number;
+  /** 自建（provenance=first-party）资产数——全量计数，不受清单截断影响 */
+  firstPartyCount: number;
   collectors: string[];
   assets: PlatformAssetLite[];
 }

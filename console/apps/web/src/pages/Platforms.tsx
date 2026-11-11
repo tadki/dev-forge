@@ -62,7 +62,7 @@ function FieldLine({ label, children }: { label: string; children: React.ReactNo
 }
 
 /** 发现通道全字段：怎么确定资产适配本平台（归属判据）。缺失字段显示 — */
-function DiscoveryCell({ discovery, notApplicable }: { discovery?: PlatformDiscoveryChannel; notApplicable?: boolean }) {
+function DiscoveryCell({ discovery, registryPlatforms, notApplicable }: { discovery?: PlatformDiscoveryChannel; registryPlatforms?: string[]; notApplicable?: boolean }) {
   return (
     <div>
       <FieldLine label="方式">
@@ -102,7 +102,18 @@ function DiscoveryCell({ discovery, notApplicable }: { discovery?: PlatformDisco
         )}
       </FieldLine>
       <FieldLine label="注册条目">
-        {discovery?.registry ? <Chip>registry.d: {discovery.registry}</Chip> : <Dash />}
+        {discovery?.registry ? (
+          <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+            <Chip>registry.d: {discovery.registry}</Chip>
+            {registryPlatforms?.length ? (
+              <span className="mono" style={SMALL} title="该 registry.d 条目的 platforms 声明——据此盖章归属">
+                platforms: {registryPlatforms.join(' · ')}
+              </span>
+            ) : null}
+          </span>
+        ) : (
+          <Dash />
+        )}
       </FieldLine>
       <FieldLine label="附带文件">
         {discovery?.files ? <Chip>登记 files[]</Chip> : <Dash />}
@@ -212,9 +223,11 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
       ...(decl?.applicable === false ? { applicable: false as const } : {}),
       ...(decl?.note !== undefined ? { note: decl.note } : {}),
       discovery: decl?.discovery,
+      ...(decl?.registryPlatforms?.length ? { registryPlatforms: decl.registryPlatforms } : {}),
       read: decl?.read,
       write: decl?.write,
       assetCount: decl?.assetCount ?? 0,
+      firstPartyCount: decl?.firstPartyCount ?? 0,
       collectors: decl?.collectors ?? [],
       assets: decl?.assets ?? [],
     };
@@ -334,6 +347,23 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                             {r.assetCount}
                           </Badge>
                         )}
+                        {r.firstPartyCount > 0 && (
+                          <span
+                            className="mono"
+                            title={`自建 ${r.firstPartyCount} / ${r.assetCount} 个资产`}
+                            style={{
+                              background: '#cca700',
+                              color: 'var(--ink)',
+                              border: '1px solid var(--ink)',
+                              borderRadius: 3,
+                              padding: '0 5px',
+                              fontSize: 'var(--fs-label)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {r.firstPartyCount}
+                          </span>
+                        )}
                       </span>
                       <span className="row" style={{ gap: 4 }}>
                         {r.declared ? (
@@ -378,7 +408,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
                       发现通道 DISCOVERY
                     </div>
-                    <DiscoveryCell discovery={sel.discovery} notApplicable={sel.declared && sel.applicable === false} />
+                    <DiscoveryCell discovery={sel.discovery} registryPlatforms={sel.registryPlatforms} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>

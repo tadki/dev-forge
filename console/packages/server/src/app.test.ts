@@ -107,6 +107,12 @@ beforeAll(async () => {
     ],
     pushAssets: (a) => pushed.push(...a),
     platforms: () => DEFAULT_PLATFORMS,
+    registryEntries: () => [
+      { id: 'devforge-hooks-engine', platforms: ['claude-code'] },
+      { id: 'devforge-adapters', platforms: ['claude-code'] },
+      { id: 'hindsight-integration', platforms: ['claude-code'] },
+      { id: 'devforge-autopilots', platforms: ['multica'] },
+    ],
     serviceAction: async (unit, action) => {
       actionLog.push({ unit, action });
       if (unit === 'repo-sync-devforge' && action !== 'stop') {
@@ -245,6 +251,13 @@ describe('api endpoints', () => {
     expect(cc.totalAssets).toBe(9); // 13 资产 - 3 个无平台声明（systemd 运行时探针，platform:none）- 1 个仅声明 multica
     expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').discovery.paths).toContain('<project>/CLAUDE.md');
     expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').read).toEqual({ how: 'file' });
+    // 声明式发现：盖章条目 id 与条目内的 platforms 声明一起带出（页面可追溯归属链）
+    const ccRule = cc.kinds.find((k: { kind: string }) => k.kind === 'hook-rule');
+    expect(ccRule.discovery.registry).toBe('devforge-hooks-engine');
+    expect(ccRule.registryPlatforms).toEqual(['claude-code']);
+    // 自建数：全量计数（不受清单截断影响）
+    expect(ccRule.firstPartyCount).toBeGreaterThan(0);
+    expect(ccRule.firstPartyCount).toBeLessThanOrEqual(ccRule.assetCount);
     expect(r.body.unadapted.assetCount).toBe(3);
     expect(r.body.unadapted.kinds[0].kind).toBe('service');
     expect(r.body.declaredCount).toBe(10); // 唯一声明资产：cc 9 + multica 1（跨页共享会重复计入 totalAssets，此处无共享）

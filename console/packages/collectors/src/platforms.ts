@@ -555,9 +555,13 @@ export interface PlatformKindView {
   applicable?: false;
   note?: string;
   discovery?: PlatformDiscovery;
+  /** declared 发现时盖章条目（discovery.registry）在 registry.d 里的 platforms 声明——展示完整归属链 */
+  registryPlatforms?: string[];
   read?: PlatformRead;
   write?: PlatformWrite;
   assetCount: number;
+  /** 该 kind 归属资产中的自建数（provenance=first-party，全量计数不受清单截断影响） */
+  firstPartyCount: number;
   collectors: string[];
   assets: PlatformAssetLite[];
 }
@@ -612,7 +616,13 @@ function assetLite(a: Asset): PlatformAssetLite {
  * （跨平台共享资产在多个平台页都显示）；无任何声明 → 未适配桶。
  * （resolvePlatform 的 first-match-wins 只用于写通道解析，不用于页面归桶。）
  */
-export function buildPlatformsView(assets: Asset[], platforms: PlatformDef[]): PlatformsView {
+export function buildPlatformsView(
+  assets: Asset[],
+  platforms: PlatformDef[],
+  /** registry.d 条目（仅取 id/platforms）：declared 发现的盖章声明原样带出，供页面展示完整归属链 */
+  registryEntries: Array<{ id: string; platforms?: string[] }> = []
+): PlatformsView {
+  const registryPlatformsById = new Map(registryEntries.map((e) => [e.id, e.platforms]));
   const buckets = new Map<string, Asset[]>();
   const unadapted: Asset[] = [];
   let declaredCount = 0;
@@ -645,9 +655,13 @@ export function buildPlatformsView(assets: Asset[], platforms: PlatformDef[]): P
         ...(d?.applicable === false ? { applicable: false as const } : {}),
         ...(d?.note !== undefined ? { note: d.note } : {}),
         ...(d?.discovery ? { discovery: d.discovery } : {}),
+        ...(d?.discovery?.registry && registryPlatformsById.get(d.discovery.registry)?.length
+          ? { registryPlatforms: registryPlatformsById.get(d.discovery.registry) }
+          : {}),
         ...(d?.read ? { read: d.read } : {}),
         ...(d?.write ? { write: d.write } : {}),
         assetCount: list.length,
+        firstPartyCount: list.filter((a) => a.provenance === 'first-party').length,
         collectors: [...new Set(list.map((a) => a.source.collector))].sort(),
         assets: list.slice(0, ASSETS_PER_KIND_CAP).map(assetLite),
       };
