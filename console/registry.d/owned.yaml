@@ -12,13 +12,13 @@ entries:
 
   - id: devforge-hooks-engine
     match: { pathPrefix: "/home/jerry/tools/dev-forge/claude-hooks" }
-    platforms: [claude-code, multica]
-    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both, notes: "9 挂载点 → 统一引擎，multica 会话同样生效" }
+    platforms: [claude-code]
+    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: claude-code, notes: "9 挂载点 → 统一引擎（settings.json hooks）" }
 
   - id: devforge-hook-registrations
     match: { idPrefix: "hook-registration:" }
-    platforms: [claude-code, multica]
-    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: both }
+    platforms: [claude-code]
+    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: claude-code }
 
   - id: kol-instructions
     match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/CLAUDE.md" }

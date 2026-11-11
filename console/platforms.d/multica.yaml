@@ -56,12 +56,15 @@ kinds:
       paths: ["<devforge>/autopilots/*.py", "<devforge>/autopilots/*.sh", "<devforge>/autopilots/configs/*.json", "<devforge>/autopilots/review-prompts/*"]
       note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻（registry.d 声明归属 multica，multica autopilot 引用执行）'
     write: { type: file-write }
+  hook-registration:
+    applicable: false
+    note: 'multica 平台无 hooks 设置与挂载入口；hook 资产只归属 claude-code（Owner 2026-11-11）'
   hook-rule:
-    read: { how: none, note: '规则源文件在 dev-forge 仓库（devforge-hooks 采集，registry.d 声明 claude-code+multica），无 multica 平台对象' }
-    write: { type: none, advice: 'hook 规则经全局 ~/.claude hooks 生效于 multica 会话；以库为准时改 dev-forge 源文件即可，无平台对象' }
+    applicable: false
+    note: 'multica 平台无 hooks 设置与挂载入口；hook 规则源在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）'
   hook-script:
-    read: { how: none, note: '脚本在 dev-forge 仓库文件系统（devforge-hooks 采集），无 multica 对象' }
-    write: { type: none, advice: '脚本在 dev-forge 仓库，采集自文件系统，无平台对象' }
+    applicable: false
+    note: 'multica 平台无 hooks 设置与挂载入口；hook 脚本在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）'
   adapter:
     read: { how: none, note: 'adapters 为 dev-forge 本地脚本（devforge-adapters 采集），无 multica 对象' }
     write: { type: none, advice: 'adapters 为本地脚本，无平台对象' }
