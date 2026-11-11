@@ -7,7 +7,7 @@ Run modes:
 
 Exit codes: 0 delivered (once) / 2 config or chat-id discovery failure /
 3 stopped without delivering / 4 auth permanently rejected (--once) /
-130 interrupted.
+5 delivery channel permanently down (--once) / 130 interrupted.
 """
 
 import argparse
@@ -44,6 +44,7 @@ EXIT_OK = 0
 EXIT_CONFIG = 2
 EXIT_STOPPED = 3
 EXIT_AUTH_REJECTED = 4
+EXIT_CHANNEL_FAILED = 5
 EXIT_INTERRUPTED = 130
 
 
@@ -83,6 +84,7 @@ class Notifier:
         self.once = once
         self._chat_id = None
         self._auth_failures = 0
+        self._channel_failures = 0
 
     def run(self) -> int:
         try:
@@ -104,12 +106,27 @@ class Notifier:
                     return EXIT_AUTH_REJECTED
             except (SessionError, WebSocketError, TelegramError, OSError) as exc:
                 self.logger.warning("session_ended", error=str(exc))
+                if isinstance(exc, TelegramError) and exc.is_channel_error:
+                    self._channel_failures += 1
+                    if self._channel_bound_reached():
+                        self.logger.error("channel_gave_up", attempts=self._channel_failures)
+                        return EXIT_CHANNEL_FAILED
             if delivered:
+                self._channel_failures = 0
                 return EXIT_OK
             self._wait_backoff(attempt)
             attempt += 1
         self.logger.info("stopped")
         return EXIT_STOPPED
+
+    def _channel_bound_reached(self) -> bool:
+        # --once live probe must terminate deterministically when the delivery
+        # channel (bot token, bot blocked, chat missing) stays broken; one
+        # full backoff cycle of consecutive channel failures is enough.
+        if not self.once:
+            return False
+        limit = len(self.config.reconnect_backoff or (1.0,))
+        return self._channel_failures >= limit
 
     def _auth_bound_reached(self) -> bool:
         # A --once live probe must terminate deterministically on a permanently
@@ -225,8 +242,19 @@ class Notifier:
                 raise
             self.logger.warning("stale_chat_id", error=str(exc))
             self._chat_id = self._rediscover_chat_id()
-            return self.telegram.send_message(
-                self._chat_id, text, retries=self.config.send_retries, sleep=self.sleep)
+            try:
+                return self.telegram.send_message(
+                    self._chat_id, text, retries=self.config.send_retries, sleep=self.sleep)
+            except TelegramError as retry_exc:
+                if not self._is_stale_chat_error(retry_exc):
+                    raise
+                # Fresh id rejected again means the channel hasn't recovered
+                # (e.g. the user hasn't /started the bot yet) — surface it as
+                # channel-level so the item stays pending, never quarantined.
+                raise TelegramError(
+                    str(retry_exc), retryable=retry_exc.retryable,
+                    error_code=retry_exc.error_code,
+                    is_channel_error=True) from retry_exc
 
     @staticmethod
     def _is_stale_chat_error(exc: TelegramError) -> bool:

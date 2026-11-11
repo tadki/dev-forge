@@ -11,6 +11,7 @@ from multica_telegram_notifier.config import load_config
 from multica_telegram_notifier.jsonlog import JsonLogger
 from multica_telegram_notifier.notifier import (
     EXIT_AUTH_REJECTED,
+    EXIT_CHANNEL_FAILED,
     EXIT_CONFIG,
     EXIT_OK,
     EXIT_STOPPED,
@@ -348,6 +349,31 @@ class TestChannelFailureKeepsPending:
 
 
 class TestStaleChatRecovery:
+    def test_repeat_chat_not_found_after_rediscovery_keeps_pending(self, tmp_path, fake_telegram):
+        # Fresh id rejected with "chat not found" again = channel still not
+        # recovered (user hasn't /started yet): keep the item pending, never
+        # quarantine it; it flows once the channel truly recovers.
+        fake_telegram.responses = [
+            (200, {"ok": True, "result": [private_chat_update(1111111)]}),
+            (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
+            (200, {"ok": True, "result": [private_chat_update(987654)]}),
+            (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
+        ]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="still-stale")), ("close",)])
+        try:
+            notifier, cfg, capture = build(tmp_path, server, fake_telegram)
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert len(capture.events("delivery_failed_permanent")) == 0
+            sends = send_calls(fake_telegram)
+            assert [body["chat_id"] for _p, body in sends] == [1111111, 987654, 987654]
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.is_seen("still-stale")
+        finally:
+            server.close()
+
+
     def test_stale_chat_id_rediscovered_and_retried(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
             (200, {"ok": True, "result": [private_chat_update(1111111)]}),
@@ -401,6 +427,53 @@ class TestOnceAuthBound:
             stopper.cancel()
             assert result.get("code") == EXIT_STOPPED, result
             assert server.connect_count > 2, "steady mode must keep retrying beyond the once-bound"
+        finally:
+            server.close()
+
+
+class TestOnceChannelBound:
+    def test_once_gives_up_on_persistent_channel_failure_exit_5(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (200, {"ok": True, "result": [private_chat_update(987654)]}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+        ]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
+                                       ("sleep", 0.1)])
+        try:
+            notifier, cfg, capture = build(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_CHANNEL_FAILED, result
+            assert len(send_calls(fake_telegram)) == 2
+            assert len(capture.events("delivery_failed_permanent")) == 0
+            assert capture.events("channel_gave_up")
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert not state.is_seen("any-item")
+        finally:
+            server.close()
+
+    def test_steady_mode_keeps_retrying_channel_failure(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (200, {"ok": True, "result": [private_chat_update(987654)]}),
+        ] + [(401, {"ok": False, "error_code": 401, "description": "Unauthorized"})] * 20
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
+                                       ("sleep", 0.1)])
+        try:
+            notifier, cfg, capture = build(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
+            notifier.once = False
+            stop = threading.Event()
+            notifier.stop_event = stop
+            stopper = threading.Timer(0.8, stop.set)
+            stopper.start()
+            thread, result = run_in_thread(notifier)
+            stopper.cancel()
+            assert result.get("code") == EXIT_STOPPED, result
+            assert len(send_calls(fake_telegram)) > 2, "steady mode retries beyond the once-bound"
         finally:
             server.close()
 
