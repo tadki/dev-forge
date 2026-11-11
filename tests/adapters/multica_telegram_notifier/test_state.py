@@ -21,6 +21,14 @@ class TestDedupBasics:
         reloaded.load()
         assert reloaded.is_seen("item-1")
 
+    def test_mark_seen_twice_is_idempotent(self, tmp_path):
+        # Re-marking an already-seen id must not duplicate it in the ring.
+        state = DedupState(str(tmp_path / "state.json"))
+        state.load()
+        state.mark_seen("item-1")
+        state.mark_seen("item-1")
+        assert state.delivered == ["item-1"]
+
     def test_save_atomic_no_temp_leftover(self, tmp_path):
         path = str(tmp_path / "state.json")
         state = DedupState(path)

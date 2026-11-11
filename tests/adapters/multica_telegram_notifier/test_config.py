@@ -37,6 +37,11 @@ class TestParseEnvText:
     def test_blank_value_kept_as_empty(self):
         assert parse_env_text("A=") == {"A": ""}
 
+    def test_line_without_equals_is_ignored(self):
+        # A stray non-comment line (no "=") must be skipped, not turned into a
+        # bogus empty key.
+        assert parse_env_text("NOEQUALS\nA=1") == {"A": "1"}
+
 
 class TestLoadConfig:
     def test_minimal_config_with_defaults(self):
@@ -114,6 +119,25 @@ class TestLoadConfig:
         with pytest.raises(ConfigError) as exc:
             load_config(env)
         assert "NOTIFIER_RECONNECT_BACKOFF" in str(exc.value)
+
+    @pytest.mark.parametrize("key", ["NOTIFIER_RECONNECT_BACKOFF", "NOTIFIER_SEND_RETRIES"])
+    def test_empty_delay_list_fails_naming_key(self, key):
+        # ",," is non-blank (so it is not replaced by the default) yet parses
+        # to zero delays — an explicit configuration error, not a silent empty
+        # backoff that would make the once-bound a no-op.
+        env = dict(REQUIRED)
+        env[key] = ",,"
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert key in str(exc.value)
+
+    @pytest.mark.parametrize("key", ["NOTIFIER_RECONNECT_BACKOFF", "NOTIFIER_SEND_RETRIES"])
+    def test_negative_delay_fails_naming_key(self, key):
+        env = dict(REQUIRED)
+        env[key] = "-1"
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert key in str(exc.value)
 
     def test_negative_timeout_fails(self):
         env = dict(REQUIRED)

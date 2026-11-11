@@ -3,7 +3,11 @@ text limits; the bot token never appears in raised error messages."""
 
 import pytest
 
-from multica_telegram_notifier.telegram import TelegramClient, TelegramError
+from multica_telegram_notifier.telegram import (
+    TelegramClient,
+    TelegramError,
+    _error_detail,
+)
 
 from multica_notifier_fakes import FakeTelegram
 
@@ -249,3 +253,54 @@ class TestErrorClassification:
 # D-1: chat-id discovery/selection is gone by design — the adapter only ever
 # writes to the configured NOTIFIER_TELEGRAM_CHAT_ID, so other private chats
 # in the bot's updates can never receive Inbox content.
+
+
+class _BodyExc:
+    """Stands in for an urllib HTTPError with a controllable response body."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def read(self):
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return self.payload
+
+
+class TestErrorDetailTolerance:
+    def test_unreadable_body_yields_no_detail(self):
+        # exc.read() failing must degrade to (None, ""), never raise out of the
+        # error classifier (which would mask the original Telegram failure).
+        assert _error_detail(_BodyExc(OSError("socket gone"))) == (None, "")
+
+    def test_non_object_body_yields_no_detail(self):
+        # A non-object JSON body carries no error_code/description.
+        assert _error_detail(_BodyExc(b"[1, 2, 3]")) == (None, "")
+
+
+class _RawResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class TestInvalidJsonResponse:
+    def test_non_json_body_is_retryable_error(self, monkeypatch):
+        # An intermediary returning a non-JSON 200 body must surface as a
+        # retryable TelegramError, never a raw JSONDecodeError.
+        import multica_telegram_notifier.telegram as telegram_mod
+        monkeypatch.setattr(telegram_mod.urllib.request, "urlopen",
+                            lambda *a, **k: _RawResponse(b"this is not json"))
+        client = TelegramClient("http://127.0.0.1:1", BOT, timeout=1.0)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.retryable is True
+        assert "invalid JSON" in str(exc.value)

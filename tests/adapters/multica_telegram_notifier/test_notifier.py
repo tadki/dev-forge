@@ -10,6 +10,8 @@ import os
 import threading
 from pathlib import Path
 
+import pytest
+
 from multica_telegram_notifier.config import load_config
 from multica_telegram_notifier.jsonlog import JsonLogger
 from multica_telegram_notifier.notifier import (
@@ -17,9 +19,11 @@ from multica_telegram_notifier.notifier import (
     EXIT_CHANNEL_FAILED,
     EXIT_CONFIG,
     EXIT_DELIVERY_FAILED,
+    EXIT_INTERRUPTED,
     EXIT_OK,
     EXIT_STOPPED,
     Notifier,
+    SessionError,
     build_components,
 )
 from multica_telegram_notifier.redact import Redactor
@@ -411,13 +415,18 @@ class TestOnceAuthBound:
     def test_once_gives_up_after_backoff_cycle_with_exit_4(self, tmp_path, fake_telegram):
         server = FakeMulticaWS(reject_auth_times=10 ** 9)
         try:
-            notifier, _cfg, _capture = build(
+            notifier, _cfg, capture = build(
                 tmp_path, server, fake_telegram,
                 env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
             thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_AUTH_REJECTED, result
             assert server.connect_count == 2
             assert len(send_calls(fake_telegram)) == 0
+            # The give-up must be recorded as auth_gave_up (distinct from the
+            # delivery/channel give-up events).
+            assert len(capture.events("auth_gave_up")) == 1
+            assert len(capture.events("delivery_gave_up")) == 0
+            assert len(capture.events("channel_gave_up")) == 0
         finally:
             server.close()
 
@@ -679,3 +688,155 @@ class TestSecretHygiene:
             assert BOT not in state_text
         finally:
             server.close()
+
+
+class TestAuthRejectedResetsFailureRuns:
+    @pytest.mark.parametrize("kind,code", [("transient", 500), ("channel", 401)])
+    def test_auth_rejection_breaks_the_failure_run(self, tmp_path, fake_telegram, kind, code):
+        # Sequence: fail -> auth rejected -> fail -> deliver. AuthRejected must
+        # reset the per-class AND total failure runs; without the reset the
+        # second failure would reach the once-bound and exit 5/6 instead of
+        # delivering. This pins the "AuthRejected 打断失败连击" branch.
+        failure = {"ok": False, "error_code": code,
+                   "description": "internal" if kind == "transient" else "Unauthorized"}
+        if kind == "transient":
+            # send_retries "0.01" => 2 attempts per send, so 2 failures per session.
+            fake_telegram.responses = [(code, failure)] * 4
+        else:
+            # A non-retryable channel error fails fast: 1 attempt per session.
+            fake_telegram.responses = [(code, failure)] * 2
+        item = make_inbox_frame(item_id="auth-reset-item")
+        first = FakeMulticaWS(script=[("text", item), ("close",)])
+        reject = FakeMulticaWS(reject_auth_times=1)
+        third = FakeMulticaWS(script=[("text", item), ("close",)])
+        fourth = FakeMulticaWS(script=[("text", item), ("sleep", 5)])
+        servers = [first, reject, third, fourth]
+        sessions = {"n": 0}
+        try:
+            notifier, cfg, capture = build(
+                tmp_path, first, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05",
+                          "NOTIFIER_SEND_RETRIES": "0.01"})
+            original_factory = notifier.ws_factory
+
+            def factory():
+                idx = sessions["n"]
+                sessions["n"] += 1
+                if idx == 0:
+                    return original_factory()
+                server = servers[min(idx, len(servers) - 1)]
+                return WSClient(f"{server.url}?workspace_id=ws-target",
+                                connect_timeout=cfg.connect_timeout,
+                                read_timeout=cfg.read_timeout)
+
+            notifier.ws_factory = factory
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert len(capture.events("auth_rejected")) >= 1
+            assert len(capture.events("auth_gave_up")) == 0
+            assert len(capture.events("channel_gave_up")) == 0
+            assert len(capture.events("delivery_gave_up")) == 0
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.is_seen("auth-reset-item")
+        finally:
+            for server in servers:
+                server.close()
+
+
+class _StubRecvWS:
+    def __init__(self, message):
+        self._message = message
+
+    def recv_message(self):
+        return self._message
+
+
+class TestAuthProtocolDeviation:
+    def test_auth_response_not_json_object_raises_session_error(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS()
+        try:
+            notifier, _cfg, _capture = build(tmp_path, server, fake_telegram)
+            with pytest.raises(SessionError):
+                notifier._read_auth_response(_StubRecvWS("not json"))
+        finally:
+            server.close()
+
+    def test_auth_first_frame_wrong_type_raises_session_error(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS()
+        try:
+            notifier, _cfg, _capture = build(tmp_path, server, fake_telegram)
+            with pytest.raises(SessionError):
+                notifier._read_auth_response(_StubRecvWS('{"type":"welcome"}'))
+        finally:
+            server.close()
+
+
+class TestStaleChatSecondError:
+    def test_second_send_non_stale_error_quarantines_item(self, tmp_path, fake_telegram):
+        # First "chat not found" re-affirms and retries; a non-stale failure on
+        # the retry must propagate as a message-level error (permanent, so the
+        # poison item is quarantined) rather than be rewritten as channel-level.
+        fake_telegram.responses = [
+            (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
+            (400, {"ok": False, "error_code": 400, "description": "Bad Request: message text is empty"}),
+        ]
+        server = FakeMulticaWS(script=[
+            ("text", make_inbox_frame(item_id="poison-stale")),
+            ("text", make_inbox_frame(item_id="good-after")),
+            ("sleep", 5),
+        ])
+        try:
+            notifier, cfg, capture = build(tmp_path, server, fake_telegram)
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert len(capture.events("delivery_failed_permanent")) == 1
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.is_seen("poison-stale")
+            assert state.is_seen("good-after")
+        finally:
+            server.close()
+
+
+class TestMainKeyboardInterrupt:
+    def test_keyboard_interrupt_returns_130(self, tmp_path, fake_telegram, monkeypatch):
+        import multica_telegram_notifier.notifier as notifier_mod
+        server = FakeMulticaWS()
+        try:
+            env_path = tmp_path / "ki.env"
+            env_path.write_text(
+                "\n".join(f"{k}={v}" for k, v in make_env(server, fake_telegram, tmp_path).items()),
+                encoding="utf-8")
+
+            def _interrupt(_self):
+                raise KeyboardInterrupt()
+
+            monkeypatch.setattr(notifier_mod.Notifier, "run", _interrupt)
+            code = notifier_mod.main(["--config", str(env_path)])
+            assert code == EXIT_INTERRUPTED
+        finally:
+            server.close()
+
+
+class TestDirectScriptBootstrap:
+    def test_direct_script_inserts_package_parent(self, monkeypatch):
+        # When notifier.py is executed directly (not imported), adapters/ is not
+        # on sys.path yet; the __main__ guard must insert it so the package
+        # imports resolve. Under pytest adapters/ is already present, so the
+        # guard body only runs once we simulate a bare script launch.
+        import runpy
+        import sys as _sys
+
+        from multica_telegram_notifier import notifier as notifier_mod
+
+        module_file = notifier_mod.__file__
+        pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(module_file)))
+        monkeypatch.setattr(
+            _sys, "path", [p for p in _sys.path if os.path.abspath(p) != pkg_parent])
+        monkeypatch.setattr(
+            _sys, "argv", ["notifier.py", "--config", "/nonexistent/see1561.env"])
+        with pytest.raises(SystemExit) as exc:
+            runpy.run_path(module_file, run_name="__main__")
+        assert exc.value.code == EXIT_CONFIG
+        assert pkg_parent in _sys.path
