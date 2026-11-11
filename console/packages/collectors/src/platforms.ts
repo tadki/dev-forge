@@ -10,8 +10,9 @@ import { ASSET_KINDS, type Asset, type Diagnostic } from '@forge/schema';
  *   registry.d/owned.yaml 声明、overlay 盖到资产上（扫描路径只证明「是 dev-forge 的什么」，
  *   证明不了平台归属）。空声明 / source.platform='none' = 不归属任何平台，落平台页未适配桶。
  *   平台页若出现归属错误的资产，修的是声明（采集器或 owned.yaml），不是归桶逻辑。
- * - kinds[kind].read：读取方式（cli 命令 / file 扫描路径 / derived 派生 / none），平台页文档化展示
- * - kinds[kind].write：以库为准物化通道——file-write（本地文件）/ command（平台 CLI）/ none+advice（仅建议）
+ * - kinds[kind].discovery：发现通道——怎么确定该 kind 的资产适配本平台（scan 枚举即归属 / declared 声明式发现）
+ * - kinds[kind].read：读通道——怎么读到资产正文（file 本地读文件 / api Endpoint 读 / none），与写通道对应
+ * - kinds[kind].write：写通道（以库为准物化）——file-write（本地文件）/ command（平台 CLI）/ none+advice（仅建议）
  * 安全校验（路径白名单/备份/dry-run）不在 YAML，仍在执行器代码。
  * 新增平台：PLATFORM_IDS 加 id → 复制一份 YAML（DEFAULT_PLATFORMS 同步，锁步单测兜底）→ 采集器给资产声明该平台 id。
  */
@@ -27,26 +28,44 @@ export interface PlatformWriteNone {
 }
 export type PlatformWrite = { type: 'file-write' } | PlatformWriteCommand | PlatformWriteNone;
 
-export interface PlatformRead {
-  how: 'cli' | 'file' | 'derived' | 'none';
+/**
+ * 发现通道（owner 2026-11-11）：怎么确定某个资产适配于这个平台。
+ * 两种模式（归属确认的判据）：
+ * - scan：枚举即归属——枚举源本身就是平台域（本地路径扫描 / 平台清单命令 / 派生采样），命中即归属；
+ * - declared：声明式发现——采集器只发现候选（如 dev-forge 仓库文件），归属由 registry.d 手工注册确认。
+ * how 只是枚举介质（file/cli/derived），不改变模式语义。
+ */
+export interface PlatformDiscovery {
+  mode: 'scan' | 'declared';
+  how: 'file' | 'cli' | 'derived';
   /** 服务该 kind 的采集器名（文档归因；页面实时归因按资产 source.collector 汇总） */
   collector?: string;
-  /** cli：清单/发现命令（采集器追加 --output json） */
+  /** cli：清单/枚举命令（采集器追加 --output json） */
   cmd?: string[];
-  /** cli：逐条取正文的命令（如 multica skill get {id} --with-content） */
-  detailCmd?: string[];
+  /** file：扫描路径模式（支持 ~ 与 <project>/<devforge>/<task.work_dir> 占位） */
+  paths?: string[];
   /** detail 采集是否登记附带文件 files[]（multica 经 skill get --with-content 登记）。
    *  附带文件编辑后实例库记录是否同步重写以此为准：file 型采集只读本体，缺省不登记。 */
   files?: boolean;
-  /** file：扫描路径模式（支持 ~ 与 <project>/<devforge>/<task.work_dir> 占位） */
-  paths?: string[];
+  /** declared：确认归属的 registry.d 条目 id（console/registry.d/*.yaml 的 entries[].id） */
+  registry?: string;
+  note?: string;
+}
+
+/** 读通道（owner 2026-11-11）：怎么读到资产的正文——本地资产读文件，远程资产走 Endpoint API。与写通道对应。 */
+export interface PlatformRead {
+  /** file=本地资产直接读 source.path；api=远程资产经平台 Endpoint/CLI 读取；none=无内容读取 */
+  how: 'file' | 'api' | 'none';
+  /** api：逐条取正文的命令（如 multica skill get {id} --with-content） */
+  cmd?: string[];
   note?: string;
 }
 
 export interface PlatformKindDef {
-  /** false = 平台结构上无此对象类型（不适用，非未适配）；声明后不得再有 read/write，note 必填说明 */
+  /** false = 平台结构上无此对象类型（不适用，非未适配）；声明后不得再有 discovery/read/write，note 必填说明 */
   applicable?: false;
   note?: string;
+  discovery?: PlatformDiscovery;
   read?: PlatformRead;
   /** 适用 kind 必填；applicable=false 时禁止 */
   write?: PlatformWrite;
@@ -73,66 +92,84 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
     label: 'Claude Code（本地文件系统）',
     kinds: {
       instruction: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'file',
           collector: 'claude-projects',
           paths: ['<project>/CLAUDE.md', '~/.claude/rules/*/*.md'],
           note: '项目 CLAUDE.md（claude-projects）+ 全局规则包 rules/*（claude-global，第三方依赖架）',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       skill: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'file',
           collector: 'claude-global',
           paths: ['~/.claude/skills/*/SKILL.md', '~/.claude/.agents/skills/*/SKILL.md', '~/.claude/commands/*.md', '<project>/.claude/skills/*/SKILL.md'],
           note: '用户级技能/命令 + ECC .agents/skills（claude-global）；项目级 .claude/skills（claude-projects）',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       agent: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'file',
           collector: 'claude-projects',
           paths: ['<project>/.claude/agents/*.md'],
           note: 'CC subagent 定义文件（frontmatter name 去重，同名首见优先）',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       'hook-rule': {
-        read: {
+        discovery: {
+          mode: 'declared',
           how: 'file',
           collector: 'devforge-hooks',
           paths: ['<devforge>/claude-hooks/*.json'],
-          note: '规则清单 JSON（devforge-hooks）；settings.json 挂载由 claude-global 读（hook-registration）',
+          registry: 'devforge-hooks-engine',
+          note: '规则清单 JSON（devforge-hooks）；归属由 registry.d 条目盖章；settings.json 挂载由 claude-global 读（hook-registration）',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       'hook-script': {
-        read: {
+        discovery: {
+          mode: 'declared',
           how: 'file',
           collector: 'devforge-hooks',
           paths: ['<devforge>/claude-hooks/scripts/*.sh', '<devforge>/claude-hooks/scripts/lib/*.sh', '<project>/.claude/hooks/*.sh'],
-          note: 'dev-forge 挂载脚本与 lib（devforge-hooks）+ 项目钩子（claude-projects）',
+          registry: 'devforge-hooks-engine',
+          note: 'dev-forge 挂载脚本与 lib 经 registry.d 盖章；项目钩子（claude-projects）扫描直接声明——同 kind 混合',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       adapter: {
-        read: {
+        discovery: {
+          mode: 'declared',
           how: 'file',
           collector: 'devforge-adapters',
           paths: ['<devforge>/adapters/*'],
-          note: '本地适配脚本（.sh/.py/.js，提取 env 契约）',
+          registry: 'devforge-adapters',
+          note: '本地适配脚本（.sh/.py/.js，提取 env 契约）；归属由 registry.d 条目盖章',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       patch: {
-        read: {
+        discovery: {
+          mode: 'declared',
           how: 'file',
           collector: 'devforge-patches',
           paths: ['~/.hindsight/patches/*.sh', '~/.hindsight/patches/*.state.json'],
-          note: '本地补丁程序 + 应用基线 state（devforge-patches 实测漂移：升级覆盖/脚本已改/未记录基线）',
+          registry: 'hindsight-integration',
+          note: '本地补丁程序 + 应用基线 state（devforge-patches 实测漂移：升级覆盖/脚本已改/未记录基线）；归属由 registry.d 条目盖章',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       'autopilot-registration': {
@@ -144,56 +181,68 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         note: 'Claude Code 无 autopilot 体系：dev-forge 巡逻脚本/评审巡逻由 registry.d 声明归属 multica',
       },
       'hook-registration': {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'file',
           collector: 'claude-global',
           paths: ['~/.claude/settings.json'],
-          note: 'settings.json hooks 挂载点实测（claude-global）；dev-forge 注册清单为自研面工件（custom，钩子页展示，非平台对象）',
+          note: 'settings.json hooks 挂载点实测（claude-global 直接声明）；dev-forge 注册清单工件经 registry.d devforge-hook-registrations 盖章——同 kind 混合',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       'mcp-endpoint': {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'file',
           collector: 'claude-global',
           paths: ['~/.claude/.mcp.json', '<project>/.mcp.json'],
           note: '用户级与项目级 MCP 清单（url 脱敏）',
         },
+        read: { how: 'file' },
         write: { type: 'none', advice: '.mcp.json 手工编辑（含密钥字段，采集已脱敏，不做自动物化）' },
       },
       env: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'file',
           collector: 'claude-global',
           paths: ['~/.claude/settings.json'],
           note: 'settings.json env（采集脱敏）',
         },
+        read: { how: 'file', note: 'settings.json env（采集脱敏）' },
         write: { type: 'none', advice: 'env 含敏感值且采集已脱敏，不支持物化' },
       },
       project: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'derived',
           collector: 'claude-projects',
           paths: ['console.config.yaml#workspaces', '<project>/'],
           note: '登记驱动：workspaces.projects 注册路径 → 扫描 .claude/CLAUDE.md/.mcp.json 等（harnesses 声明门控）',
         },
+        read: { how: 'file', note: '项目登记本身无正文，内容读其子资产' },
         write: { type: 'none', advice: '项目登记在 console.config.yaml，不支持物化' },
       },
       report: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'file',
           collector: 'health',
           paths: ['~/.multica/toolchain-reports/latest.json', '~/.multica/arch-patrol/last_report.json'],
           note: '外部工具产出的健康报告（只读监控）',
         },
+        read: { how: 'file' },
         write: { type: 'none', advice: '外部工具产出，只读' },
       },
       custom: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'derived',
           collector: 'claude-global',
           note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志类 custom 无平台声明，落未适配桶',
         },
+        read: { how: 'file', note: '读 settings.json 源文件（采集已脱敏）' },
         write: { type: 'none', advice: '聚合/观测型资产，无写通道' },
       },
       deployment: {
@@ -207,52 +256,61 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
     label: 'multica 平台',
     kinds: {
       skill: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'cli',
           collector: 'multica',
           cmd: ['multica', 'skill', 'list'],
-          detailCmd: ['multica', 'skill', 'get', '{id}', '--with-content'],
           files: true,
-          note: '清单经 skill list（--output json），正文逐条 skill get --with-content（并发限流 5，上限 50 条）',
+          note: '清单经 skill list（--output json），平台清单即平台域，命中即归属',
         },
+        read: { how: 'api', cmd: ['multica', 'skill', 'get', '{id}', '--with-content'], note: '正文逐条 skill get --with-content（并发限流 5，上限 50 条）' },
         write: { type: 'command', cmd: ['multica', 'skill', 'update', '{platformId}', '--content', '{content}'], platformIdFrom: 'self' },
         fileWrite: { type: 'command', cmd: ['multica', 'skill', 'files', 'upsert', '{platformId}', '--path', '{filePath}', '--content', '{content}'], platformIdFrom: 'self' },
       },
       agent: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'cli',
           collector: 'multica',
           cmd: ['multica', 'agent', 'list'],
           note: 'instructions/skills/mcp_config/运行态均在 agent list JSON 单次返回',
         },
+        read: { how: 'api', cmd: ['multica', 'agent', 'list'], note: 'instructions 在 agent list JSON 内，按 agent 取' },
         write: { type: 'command', cmd: ['multica', 'agent', 'update', '{platformId}', '--instructions', '{content}'], platformIdFrom: 'deployment' },
       },
       instruction: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'derived',
           collector: 'multica',
           paths: ['<task.work_dir>/CLAUDE.md'],
           note: 'agent instructions 随 agent list 采集（存于 agent 资产 payload）；另采样最新完成任务 workdir 的物化 CLAUDE.md（custom:multica-materialized-instructions，≤4 agent）作对账基准',
         },
+        read: { how: 'file', note: '物化 CLAUDE.md 直接读 workdir 文件；agent instructions 在 agent list JSON（api）' },
         write: { type: 'none', advice: 'multica agent update <AGENT_ID> --instructions "$(cat <资产路径>)"（需指定目标 agent）' },
       },
       'autopilot-registration': {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'cli',
           collector: 'multica',
           cmd: ['multica', 'autopilot', 'list'],
-          detailCmd: ['multica', 'autopilot', 'trigger-list', '{id}'],
-          note: '清单 autopilot list，触发器逐条 trigger-list（取前 20 个）',
+          note: '清单 autopilot list，平台清单即平台域，命中即归属',
         },
+        read: { how: 'api', cmd: ['multica', 'autopilot', 'trigger-list', '{id}'], note: '触发器逐条 trigger-list（取前 20 个）' },
         write: { type: 'none', advice: 'multica autopilot 暂无通用更新命令：请在平台侧修改后重采，或改为「以生产为准」采纳进库' },
       },
       'autopilot-script': {
-        read: {
+        discovery: {
+          mode: 'declared',
           how: 'file',
           collector: 'devforge-autopilots',
           paths: ['<devforge>/autopilots/*.py', '<devforge>/autopilots/*.sh', '<devforge>/autopilots/configs/*.json', '<devforge>/autopilots/review-prompts/*'],
-          note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻（registry.d 声明归属 multica，multica autopilot 引用执行）',
+          registry: 'devforge-autopilots',
+          note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻，归属由 registry.d 条目确认（multica autopilot 引用执行）',
         },
+        read: { how: 'file' },
         write: { type: 'file-write' },
       },
       'hook-registration': {
@@ -268,44 +326,52 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         note: 'multica 平台无 hooks 设置与挂载入口；hook 脚本在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）',
       },
       adapter: {
-        read: { how: 'none', note: 'adapters 为 dev-forge 本地脚本（devforge-adapters 采集），无 multica 对象' },
-        write: { type: 'none', advice: 'adapters 为本地脚本，无平台对象' },
+        applicable: false,
+        note: 'multica 平台无 adapter 对象：adapters 为 dev-forge 本地脚本，归属 claude-code',
       },
       deployment: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'cli',
           collector: 'multica',
           cmd: ['multica', 'agent', 'list'],
           note: '部署实例与 agent 同一 JSON 产出（platformId/workspaceId/status 等运行态字段只落在 deployment）',
         },
+        read: { how: 'api', cmd: ['multica', 'agent', 'list'], note: '运行态字段随 agent list JSON 返回' },
         write: { type: 'none', advice: '部署绑定由 multica daemon 管理，无物化通道' },
       },
       'mcp-endpoint': {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'cli',
           collector: 'multica',
           cmd: ['multica', 'agent', 'list'],
           note: 'per-agent mcp_config.mcpServers 展开（采集时脱敏）',
         },
+        read: { how: 'api', cmd: ['multica', 'agent', 'list'], note: 'mcp_config 随 agent list JSON 返回（已脱敏）' },
         write: { type: 'none', advice: 'per-agent MCP 配置含密钥（已脱敏），请在平台侧修改' },
       },
       service: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'cli',
           collector: 'multica',
           cmd: ['multica', 'runtime', 'list'],
           note: 'runtime 守护登记（取前 5）',
         },
+        read: { how: 'api', cmd: ['multica', 'runtime', 'list'], note: 'runtime 状态随 runtime list 返回' },
         write: { type: 'none', advice: 'runtime 由平台守护，无写通道' },
       },
       custom: {
-        read: {
+        discovery: {
+          mode: 'scan',
           how: 'derived',
           collector: 'multica',
           cmd: ['multica', 'agent', 'tasks', '{agentId}'],
           paths: ['<task.work_dir>/CLAUDE.md'],
           note: '最近任务（agent tasks，每 agent 限 maxTasksPerAgent）+ 最新完成任务的 workdir CLAUDE.md 物化采样',
         },
+        read: { how: 'file', note: '物化 CLAUDE.md 读 workdir 文件；任务元数据随 agent tasks 返回' },
         write: { type: 'none', advice: '采样/聚合型资产，无写通道' },
       },
     },
@@ -354,9 +420,9 @@ function platformDefIssue(def: unknown): string | null {
     if (kv.applicable !== undefined) {
       if (kv.applicable !== false) return `kinds.${kind}.applicable 只接受 false（缺省即适用）`;
       if (typeof kv.note !== 'string') return `kinds.${kind}.applicable=false 需要 note 说明缘由`;
-      const body = v as { read?: unknown; write?: unknown; fileWrite?: unknown };
-      if (body.read !== undefined || body.write !== undefined || body.fileWrite !== undefined) {
-        return `kinds.${kind}.applicable=false 时不得声明 read/write/fileWrite`;
+      const body = v as { discovery?: unknown; read?: unknown; write?: unknown; fileWrite?: unknown };
+      if (body.discovery !== undefined || body.read !== undefined || body.write !== undefined || body.fileWrite !== undefined) {
+        return `kinds.${kind}.applicable=false 时不得声明 discovery/read/write/fileWrite`;
       }
       continue;
     }
@@ -380,25 +446,43 @@ function platformDefIssue(def: unknown): string | null {
       const fileWriteIssue = writeShapeIssue(fileWrite, 'fileWrite');
       if (fileWriteIssue) return fileWriteIssue;
     }
-    const read = (v as { read?: unknown } | null)?.read as
-      | { how?: unknown; collector?: unknown; cmd?: unknown; detailCmd?: unknown; files?: unknown; paths?: unknown; note?: unknown }
+    const discovery = (v as { discovery?: unknown } | null)?.discovery as
+      | { mode?: unknown; how?: unknown; collector?: unknown; cmd?: unknown; paths?: unknown; files?: unknown; registry?: unknown; note?: unknown }
       | undefined;
+    if (!discovery) return `kinds.${kind}.discovery 缺失（适用 kind 必填发现通道）`;
+    {
+      if (typeof discovery !== 'object') return `kinds.${kind}.discovery 必须是映射`;
+      if (typeof discovery.mode !== 'string' || !['scan', 'declared'].includes(discovery.mode)) {
+        return `kinds.${kind}.discovery.mode 未知：${String(discovery.mode)}`;
+      }
+      if (typeof discovery.how !== 'string' || !['file', 'cli', 'derived'].includes(discovery.how)) {
+        return `kinds.${kind}.discovery.how 未知：${String(discovery.how)}`;
+      }
+      if (discovery.collector !== undefined && typeof discovery.collector !== 'string') return `kinds.${kind}.discovery.collector 必须是字符串`;
+      if (discovery.files !== undefined && typeof discovery.files !== 'boolean') return `kinds.${kind}.discovery.files 必须是布尔值`;
+      if (discovery.note !== undefined && typeof discovery.note !== 'string') return `kinds.${kind}.discovery.note 必须是字符串`;
+      if (discovery.registry !== undefined && typeof discovery.registry !== 'string') return `kinds.${kind}.discovery.registry 必须是字符串`;
+      if (discovery.cmd !== undefined && !isStrArr(discovery.cmd)) return `kinds.${kind}.discovery.cmd 必须是字符串数组`;
+      if (discovery.paths !== undefined && !isStrArr(discovery.paths)) return `kinds.${kind}.discovery.paths 必须是字符串数组`;
+      if (discovery.how === 'cli' && !isStrArr(discovery.cmd)) return `kinds.${kind}.discovery.how=cli 需要 cmd 字符串数组`;
+      if (discovery.how === 'file' && !isStrArr(discovery.paths)) return `kinds.${kind}.discovery.how=file 需要 paths 字符串数组`;
+      if (discovery.mode === 'scan' && discovery.how === 'derived' && typeof discovery.note !== 'string') {
+        return `kinds.${kind}.discovery.mode=scan how=derived 需要 note 说明派生来源`;
+      }
+      if (discovery.mode === 'declared' && typeof discovery.registry !== 'string') {
+        return `kinds.${kind}.discovery.mode=declared 需要 registry 条目 id`;
+      }
+    }
+    const read = (v as { read?: unknown } | null)?.read as { how?: unknown; cmd?: unknown; note?: unknown } | undefined;
     if (read !== undefined) {
       if (!read || typeof read !== 'object') return `kinds.${kind}.read 必须是映射`;
-      if (typeof read.how !== 'string' || !['cli', 'file', 'derived', 'none'].includes(read.how)) {
+      if (typeof read.how !== 'string' || !['file', 'api', 'none'].includes(read.how)) {
         return `kinds.${kind}.read.how 未知：${String(read.how)}`;
       }
-      if (read.collector !== undefined && typeof read.collector !== 'string') return `kinds.${kind}.read.collector 必须是字符串`;
-      if (read.files !== undefined && typeof read.files !== 'boolean') return `kinds.${kind}.read.files 必须是布尔值`;
+      if (read.cmd !== undefined && !isStrArr(read.cmd)) return `kinds.${kind}.read.cmd 必须是字符串数组`;
       if (read.note !== undefined && typeof read.note !== 'string') return `kinds.${kind}.read.note 必须是字符串`;
-      if (read.how === 'cli') {
-        if (!isStrArr(read.cmd)) return `kinds.${kind}.read.how=cli 需要 cmd 字符串数组`;
-        if (read.detailCmd !== undefined && !isStrArr(read.detailCmd)) return `kinds.${kind}.read.detailCmd 必须是字符串数组`;
-      }
-      if (read.how === 'file' && !isStrArr(read.paths)) return `kinds.${kind}.read.how=file 需要 paths 字符串数组`;
-      if ((read.how === 'derived' || read.how === 'none') && typeof read.note !== 'string') {
-        return `kinds.${kind}.read.how=${read.how} 需要 note 说明`;
-      }
+      if (read.how === 'api' && !isStrArr(read.cmd)) return `kinds.${kind}.read.how=api 需要 cmd 字符串数组`;
+      if (read.how === 'none' && typeof read.note !== 'string') return `kinds.${kind}.read.how=none 需要 note 说明`;
     }
   }
   return null;
@@ -466,6 +550,7 @@ export interface PlatformKindView {
   /** true（序列化为 false）= 契约声明平台无此对象类型（不适用） */
   applicable?: false;
   note?: string;
+  discovery?: PlatformDiscovery;
   read?: PlatformRead;
   write?: PlatformWrite;
   assetCount: number;
@@ -555,6 +640,7 @@ export function buildPlatformsView(assets: Asset[], platforms: PlatformDef[]): P
         declared: kind in declared,
         ...(d?.applicable === false ? { applicable: false as const } : {}),
         ...(d?.note !== undefined ? { note: d.note } : {}),
+        ...(d?.discovery ? { discovery: d.discovery } : {}),
         ...(d?.read ? { read: d.read } : {}),
         ...(d?.write ? { write: d.write } : {}),
         assetCount: list.length,

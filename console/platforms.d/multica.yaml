@@ -1,21 +1,28 @@
 # 平台适配 · multica（server @ Mac mini，CLI 经 multica daemon）
-# read = 采集器发现/读取方式：cli（CLI 命令，采集器追加 --output json）/ file（文件扫描）/ derived（派生产出）/ none（无）
+# discovery = 发现通道：怎么确定该 kind 的资产适配本平台。
+#   mode: scan（枚举即归属：清单命令/本地扫描/派生采样命中即归属）| declared（声明式：采集器发现候选 + registry.d 注册确认归属）
+#   how: cli（平台清单命令，采集器追加 --output json）/ file（文件扫描）/ derived（派生产出）
+# read = 读通道：怎么读到资产正文——api（平台 CLI/Endpoint 命令）/ file（本地文件）/ none，与写通道对应
 # write = 以库为准的物化通道；{platformId} 由执行端按 platformIdFrom 解析，{content} 为库内内容
 # ── 平台归属（Owner 2026-11-11）：以资产自声明 platforms 为准，本文件不再承担归属识别；
 #    平台对象（multica:// 源）由采集器声明 multica；dev-forge 巡逻脚本由 registry.d 声明 multica。
-# ── 新增平台指南：复制本文件 → 改 id/label → 逐 kind 声明 read/write；
+# ── 新增平台指南：复制本文件 → 改 id/label → 逐 kind 声明 discovery/read/write；
 #    同步 schema.ts PLATFORM_IDS + platforms.ts DEFAULT_PLATFORMS（锁步单测兜底）+ 采集器给资产声明该平台 id
 id: multica
 label: multica 平台
 kinds:
   skill:
-    read:
+    discovery:
+      mode: scan
       how: cli
       collector: multica
       cmd: [multica, skill, list]
-      detailCmd: [multica, skill, get, "{id}", --with-content]
       files: true                       # detail 登记附带文件 files[]（skill get --with-content）
-      note: '清单经 skill list（--output json），正文逐条 skill get --with-content（并发限流 5，上限 50 条）'
+      note: '清单经 skill list（--output json），平台清单即平台域，命中即归属'
+    read:
+      how: api
+      cmd: [multica, skill, get, "{id}", --with-content]
+      note: '正文逐条 skill get --with-content（并发限流 5，上限 50 条）'
     write:
       type: command
       cmd: [multica, skill, update, "{platformId}", --content, "{content}"]
@@ -25,36 +32,52 @@ kinds:
       cmd: [multica, skill, files, upsert, "{platformId}", --path, "{filePath}", --content, "{content}"]
       platformIdFrom: self
   agent:
-    read:
+    discovery:
+      mode: scan
       how: cli
       collector: multica
       cmd: [multica, agent, list]
       note: 'instructions/skills/mcp_config/运行态均在 agent list JSON 单次返回'
+    read:
+      how: api
+      cmd: [multica, agent, list]
+      note: 'instructions 在 agent list JSON 内，按 agent 取'
     write:
       type: command
       cmd: [multica, agent, update, "{platformId}", --instructions, "{content}"]
       platformIdFrom: deployment      # 该 agent 的 deployment 资产 payload.platformId
   instruction:
-    read:
+    discovery:
+      mode: scan
       how: derived
       collector: multica
       paths: ["<task.work_dir>/CLAUDE.md"]
       note: 'agent instructions 随 agent list 采集（存于 agent 资产 payload）；另采样最新完成任务 workdir 的物化 CLAUDE.md（custom:multica-materialized-instructions，≤4 agent）作对账基准'
+    read:
+      how: file
+      note: '物化 CLAUDE.md 直接读 workdir 文件；agent instructions 在 agent list JSON（api）'
     write: { type: none, advice: 'multica agent update <AGENT_ID> --instructions "$(cat <资产路径>)"（需指定目标 agent）' }
   autopilot-registration:
-    read:
+    discovery:
+      mode: scan
       how: cli
       collector: multica
       cmd: [multica, autopilot, list]
-      detailCmd: [multica, autopilot, trigger-list, "{id}"]
-      note: '清单 autopilot list，触发器逐条 trigger-list（取前 20 个）'
+      note: '清单 autopilot list，平台清单即平台域，命中即归属'
+    read:
+      how: api
+      cmd: [multica, autopilot, trigger-list, "{id}"]
+      note: '触发器逐条 trigger-list（取前 20 个）'
     write: { type: none, advice: 'multica autopilot 暂无通用更新命令：请在平台侧修改后重采，或改为「以生产为准」采纳进库' }
   autopilot-script:
-    read:
+    discovery:
+      mode: declared
       how: file
       collector: devforge-autopilots
       paths: ["<devforge>/autopilots/*.py", "<devforge>/autopilots/*.sh", "<devforge>/autopilots/configs/*.json", "<devforge>/autopilots/review-prompts/*"]
-      note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻（registry.d 声明归属 multica，multica autopilot 引用执行）'
+      registry: devforge-autopilots
+      note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻，归属由 registry.d 条目确认（multica autopilot 引用执行）'
+    read: { how: file }
     write: { type: file-write }
   hook-registration:
     applicable: false
@@ -66,34 +89,53 @@ kinds:
     applicable: false
     note: 'multica 平台无 hooks 设置与挂载入口；hook 脚本在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）'
   adapter:
-    read: { how: none, note: 'adapters 为 dev-forge 本地脚本（devforge-adapters 采集），无 multica 对象' }
-    write: { type: none, advice: 'adapters 为本地脚本，无平台对象' }
+    applicable: false
+    note: 'multica 平台无 adapter 对象：adapters 为 dev-forge 本地脚本，归属 claude-code'
   deployment:
-    read:
+    discovery:
+      mode: scan
       how: cli
       collector: multica
       cmd: [multica, agent, list]
       note: '部署实例与 agent 同一 JSON 产出（platformId/workspaceId/status 等运行态字段只落在 deployment）'
+    read:
+      how: api
+      cmd: [multica, agent, list]
+      note: '运行态字段随 agent list JSON 返回'
     write: { type: none, advice: '部署绑定由 multica daemon 管理，无物化通道' }
   mcp-endpoint:
-    read:
+    discovery:
+      mode: scan
       how: cli
       collector: multica
       cmd: [multica, agent, list]
       note: 'per-agent mcp_config.mcpServers 展开（采集时脱敏）'
+    read:
+      how: api
+      cmd: [multica, agent, list]
+      note: 'mcp_config 随 agent list JSON 返回（已脱敏）'
     write: { type: none, advice: 'per-agent MCP 配置含密钥（已脱敏），请在平台侧修改' }
   service:
-    read:
+    discovery:
+      mode: scan
       how: cli
       collector: multica
       cmd: [multica, runtime, list]
       note: 'runtime 守护登记（取前 5）'
+    read:
+      how: api
+      cmd: [multica, runtime, list]
+      note: 'runtime 状态随 runtime list 返回'
     write: { type: none, advice: 'runtime 由平台守护，无写通道' }
   custom:
-    read:
+    discovery:
+      mode: scan
       how: derived
       collector: multica
       cmd: [multica, agent, tasks, "{agentId}"]
       paths: ["<task.work_dir>/CLAUDE.md"]
       note: '最近任务（agent tasks，每 agent 限 maxTasksPerAgent）+ 最新完成任务的 workdir CLAUDE.md 物化采样'
+    read:
+      how: file
+      note: '物化 CLAUDE.md 读 workdir 文件；任务元数据随 agent tasks 返回'
     write: { type: none, advice: '采样/聚合型资产，无写通道' }

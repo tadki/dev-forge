@@ -66,8 +66,8 @@ export const claudeGlobalCollector: Collector = {
               summary: command.length > 120 ? command.slice(0, 120) + '…' : command,
               attach: { level: 'user' },
               enforcement: 'enforced',
-              // user 级挂载对机器上所有 claude-code 会话生效，multica agent 会话同样经过这些钩子
-              platforms: ['claude-code', 'multica'],
+              // user 级挂载对机器上所有 claude-code 会话生效；multica 平台无 hooks 入口，钩子资产只归属 claude-code（Owner 2026-11-11）
+              platforms: ['claude-code'],
               provenance: isDevforge || isHindsight ? 'first-party' : 'third-party',
               tags: [event, isDevforge ? 'devforge' : isHindsight ? 'hindsight' : 'custom'],
               source: { collector: 'claude-global', path: join(claude, 'settings.json'), locator: `$.hooks.${event}[${i}][${j}]` },

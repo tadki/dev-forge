@@ -38,7 +38,7 @@ describe('平台适配层（platforms.d）', () => {
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'p1.yaml'),
-      `id: test-platform\nlabel: 测试平台\nkinds:\n  skill:\n    write:\n      type: command\n      cmd: [t, update, "{platformId}", --content, "{content}"]\n      platformIdFrom: self\n`
+      `id: test-platform\nlabel: 测试平台\nkinds:\n  skill:\n    discovery: { mode: scan, how: cli, cmd: [t, list], note: 清单即归属 }\n    read: { how: api, cmd: [t, get, "{id}"], note: 逐条取正文 }\n    write:\n      type: command\n      cmd: [t, update, "{platformId}", --content, "{content}"]\n      platformIdFrom: self\n`
     );
     const { platforms } = await loadPlatforms(dir);
     expect(platforms.find((p) => p.id === 'test-platform')?.kinds?.skill?.write).toMatchObject({ type: 'command' });
@@ -113,29 +113,35 @@ describe('platforms.d 结构校验（坏文件出诊断并跳过）', () => {
     expect(diagnostics.every((d) => d.level === 'error' && d.message.includes('结构违规'))).toBe(true);
   });
 
-  it('read 校验矩阵：how 未知 / cli 缺 cmd / file 缺 paths / none 缺 note → 跳过；合法 read 通过', async () => {
-    const badDir = join(dir, 'bad-read');
+  it('契约校验矩阵：discovery 缺失/坏 mode/坏 how/cli 缺 cmd/file 缺 paths/declared 缺 registry + read 坏 how/api 缺 cmd/none 缺 note → 跳过；合法契约通过', async () => {
+    const badDir = join(dir, 'bad-contract');
     await mkdir(badDir, { recursive: true });
-    await writeFile(join(badDir, 'a.yaml'), 'id: bad-how\nkinds: { skill: { read: { how: magic }, write: { type: file-write } } }\n');
-    await writeFile(join(badDir, 'b.yaml'), 'id: bad-cli\nkinds: { skill: { read: { how: cli }, write: { type: file-write } } }\n');
-    await writeFile(join(badDir, 'c.yaml'), 'id: bad-file\nkinds: { skill: { read: { how: file }, write: { type: file-write } } }\n');
-    await writeFile(join(badDir, 'd.yaml'), 'id: bad-none\nkinds: { skill: { read: { how: none }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'a.yaml'), 'id: bad-no-discovery\nkinds: { skill: { read: { how: file }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'b.yaml'), 'id: bad-mode\nkinds: { skill: { discovery: { mode: magic, how: file, paths: [x] }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'c.yaml'), 'id: bad-cli\nkinds: { skill: { discovery: { mode: scan, how: cli }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'd.yaml'), 'id: bad-file\nkinds: { skill: { discovery: { mode: scan, how: file }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'e.yaml'), 'id: bad-registry\nkinds: { skill: { discovery: { mode: declared, how: file, paths: [x] }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'f.yaml'), 'id: bad-read-how\nkinds: { skill: { discovery: { mode: scan, how: file, paths: [x] }, read: { how: magic }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'g.yaml'), 'id: bad-read-api\nkinds: { skill: { discovery: { mode: scan, how: file, paths: [x] }, read: { how: api }, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'h.yaml'), 'id: bad-read-none\nkinds: { skill: { discovery: { mode: scan, how: file, paths: [x] }, read: { how: none }, write: { type: file-write } } }\n');
     await writeFile(
-      join(badDir, 'e.yaml'),
-      'id: good-read\nkinds:\n  skill:\n    read:\n      how: cli\n      collector: test\n      cmd: [t, list]\n      detailCmd: [t, get, "{id}"]\n      note: 测试\n    write: { type: file-write }\n  instruction:\n    read: { how: derived, note: 派生, paths: ["<project>/CLAUDE.md"] }\n    write: { type: file-write }\n'
+      join(badDir, 'i.yaml'),
+      'id: good-contract\nkinds:\n  skill:\n    discovery: { mode: scan, how: cli, collector: test, cmd: [t, list], files: true, note: 清单即归属 }\n    read: { how: api, cmd: [t, get, "{id}"], note: 逐条取正文 }\n    write: { type: file-write }\n  instruction:\n    discovery: { mode: scan, how: file, paths: ["<project>/CLAUDE.md"] }\n    read: { how: file }\n    write: { type: file-write }\n  hook-rule:\n    discovery: { mode: declared, how: file, paths: ["/repo/*.json"], registry: devforge-hooks-engine, note: 盖章归属 }\n    read: { how: file }\n    write: { type: file-write }\n  report:\n    discovery: { mode: scan, how: derived, collector: test, note: 派生采样 }\n    read: { how: none, note: 无正文可读 }\n    write: { type: none, advice: 只读 }\n'
     );
     const { platforms, diagnostics } = await loadPlatforms(badDir);
-    expect(platforms.map((p) => p.id)).toEqual(['good-read']);
-    expect(diagnostics).toHaveLength(4);
+    expect(platforms.map((p) => p.id)).toEqual(['good-contract']);
+    expect(platforms[0].kinds?.skill?.discovery).toMatchObject({ mode: 'scan', how: 'cli', files: true });
+    expect(platforms[0].kinds?.['hook-rule']?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-hooks-engine' });
+    expect(diagnostics).toHaveLength(8);
     expect(diagnostics.every((d) => d.message.includes('结构违规'))).toBe(true);
   });
 
-  it('applicable 校验：只接受 false + note 必填 + 不得带 read/write；合法声明通过', async () => {
+  it('applicable 校验：只接受 false + note 必填 + 不得带 discovery/read/write；合法声明通过', async () => {
     const badDir = join(dir, 'bad-na');
     await mkdir(badDir, { recursive: true });
     await writeFile(join(badDir, 'a.yaml'), 'id: bad-true\nkinds: { skill: { applicable: true, write: { type: file-write } } }\n');
     await writeFile(join(badDir, 'b.yaml'), 'id: bad-nonote\nkinds: { skill: { applicable: false, write: { type: file-write } } }\n');
-    await writeFile(join(badDir, 'c.yaml'), 'id: bad-with-rw\nkinds: { skill: { applicable: false, note: 无对象, write: { type: file-write } } }\n');
+    await writeFile(join(badDir, 'c.yaml'), 'id: bad-with-rw\nkinds: { skill: { applicable: false, note: 无对象, discovery: { mode: scan, how: file, paths: [x] }, read: { how: file }, write: { type: file-write } } }\n');
     await writeFile(join(badDir, 'd.yaml'), 'id: good-na\nkinds: { skill: { applicable: false, note: 无对象 } }\n');
     const { platforms, diagnostics } = await loadPlatforms(badDir);
     expect(platforms.map((p) => p.id)).toEqual(['good-na']);
@@ -162,27 +168,43 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     }
   });
 
-  it('真实 YAML 的 read 声明：multica 命令 / claude-code 路径 / truth kind 全覆盖', async () => {
+  it('真实 YAML 的发现/读通道契约：multica 命令 / claude-code 路径 / 声明式发现 / truth kind 全覆盖', async () => {
     const { platforms } = await loadPlatforms(repoDir);
     const multica = platforms.find((p) => p.id === 'multica');
-    expect(multica?.kinds?.skill?.read).toMatchObject({
+    // multica skill：scan 清单命令发现 + api 读正文（files 登记在 discovery）
+    expect(multica?.kinds?.skill?.discovery).toMatchObject({
+      mode: 'scan',
       how: 'cli',
       cmd: ['multica', 'skill', 'list'],
-      detailCmd: ['multica', 'skill', 'get', '{id}', '--with-content'],
+      files: true,
     });
-    expect(multica?.kinds?.agent?.read?.collector).toBe('multica');
-    expect(multica?.kinds?.instruction?.read?.how).toBe('derived');
-    expect(multica?.kinds?.instruction?.read?.note).toContain('workdir');
+    expect(multica?.kinds?.skill?.read).toMatchObject({
+      how: 'api',
+      cmd: ['multica', 'skill', 'get', '{id}', '--with-content'],
+    });
+    expect(multica?.kinds?.agent?.discovery?.collector).toBe('multica');
+    expect(multica?.kinds?.instruction?.discovery?.how).toBe('derived');
+    expect(multica?.kinds?.instruction?.discovery?.note).toContain('workdir');
+    expect(multica?.kinds?.instruction?.read?.how).toBe('file');
+    // multica 平台无 hooks 设置与挂载入口：三类 hook kind 均显式不适用（Owner 2026-11-11）
+    expect(multica?.kinds?.['hook-rule']?.applicable).toBe(false);
+    expect(multica?.kinds?.['hook-script']?.applicable).toBe(false);
+    expect(multica?.kinds?.['hook-registration']?.applicable).toBe(false);
     const cc = platforms.find((p) => p.id === 'claude-code');
-    expect(cc?.kinds?.instruction?.read?.paths).toContain('<project>/CLAUDE.md');
+    expect(cc?.kinds?.instruction?.discovery?.paths).toContain('<project>/CLAUDE.md');
+    expect(cc?.kinds?.instruction?.read).toEqual({ how: 'file' });
     // deployment 对 claude-code 是「不适用」（平台无此对象），非「未适配」
     expect(cc?.kinds?.deployment).toEqual({
       applicable: false,
       note: expect.stringContaining('deployment'),
     });
-    // hook-registration 只认平台实测挂载点（settings.json）；dev-forge 注册清单是自研面工件（custom），不进平台契约
-    expect(cc?.kinds?.['hook-registration']?.read?.paths).toEqual(['~/.claude/settings.json']);
+    // hook-registration：settings.json 挂载点实测（scan）；dev-forge 注册清单工件经 registry.d 盖章（同 kind 混合，note 说明）
+    expect(cc?.kinds?.['hook-registration']?.discovery?.paths).toEqual(['~/.claude/settings.json']);
     expect(cc?.kinds?.['hook-registration']?.write).toEqual({ type: 'file-write' });
+    // hook-rule / adapter / patch：声明式发现——registry.d 条目盖章归属
+    expect(cc?.kinds?.['hook-rule']?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-hooks-engine' });
+    expect(cc?.kinds?.adapter?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-adapters' });
+    expect(cc?.kinds?.patch?.discovery).toMatchObject({ mode: 'declared', registry: 'hindsight-integration' });
     // Claude Code 无 autopilot 体系：两类 autopilot kind 均「不适用」
     expect(cc?.kinds?.['autopilot-registration']?.applicable).toBe(false);
     expect(cc?.kinds?.['autopilot-script']?.applicable).toBe(false);
@@ -190,7 +212,7 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     for (const p of platforms) {
       for (const k of TRUTH) {
         const def = p.kinds?.[k];
-        expect(def?.read ?? def?.applicable === false, `${p.id}.${k} 应有 read 声明或显式不适用`).toBeTruthy();
+        expect(def?.discovery ?? def?.applicable === false, `${p.id}.${k} 应有发现通道声明或显式不适用`).toBeTruthy();
       }
     }
   });
@@ -211,7 +233,8 @@ describe('buildPlatformsView', () => {
     expect(skillRow).toMatchObject({ assetCount: 1, declared: true, collectors: ['test'] });
     expect(skillRow?.assets[0].platformId).toBe('sk-1');
     expect(skillRow?.assets[0]).not.toHaveProperty('payload');
-    expect(skillRow?.read?.how).toBe('cli');
+    expect(skillRow?.discovery).toMatchObject({ mode: 'scan', how: 'cli' });
+    expect(skillRow?.read?.how).toBe('api');
     const agentRow = multica?.kinds.find((k) => k.kind === 'agent');
     expect(agentRow?.assets[0]).not.toHaveProperty('instructions');
     const cc = v.platforms.find((p) => p.id === 'claude-code');

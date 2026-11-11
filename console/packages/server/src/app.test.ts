@@ -238,11 +238,13 @@ describe('api endpoints', () => {
     expect(ids).toContain('multica');
     const multica = r.body.platforms.find((p: { id: string }) => p.id === 'multica');
     const agentRow = multica.kinds.find((k: { kind: string }) => k.kind === 'agent');
-    expect(agentRow.read.cmd).toEqual(['multica', 'agent', 'list']);
+    expect(agentRow.discovery).toMatchObject({ mode: 'scan', how: 'cli', cmd: ['multica', 'agent', 'list'] });
+    expect(agentRow.read).toMatchObject({ how: 'api', cmd: ['multica', 'agent', 'list'] });
     expect(agentRow.write.type).toBe('command');
     const cc = r.body.platforms.find((p: { id: string }) => p.id === 'claude-code');
     expect(cc.totalAssets).toBe(9); // 13 资产 - 3 个无平台声明（systemd 运行时探针，platform:none）- 1 个仅声明 multica
-    expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').read.paths).toContain('<project>/CLAUDE.md');
+    expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').discovery.paths).toContain('<project>/CLAUDE.md');
+    expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').read).toEqual({ how: 'file' });
     expect(r.body.unadapted.assetCount).toBe(3);
     expect(r.body.unadapted.kinds[0].kind).toBe('service');
     expect(r.body.declaredCount).toBe(10); // 唯一声明资产：cc 9 + multica 1（跨页共享会重复计入 totalAssets，此处无共享）

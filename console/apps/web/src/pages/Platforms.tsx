@@ -1,15 +1,23 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../api';
-import type { PlatformKindContract, PlatformReadChannel, PlatformsView, PlatformWriteChannel } from '../types';
+import type { PlatformDiscoveryChannel, PlatformKindContract, PlatformReadChannel, PlatformsView, PlatformWriteChannel } from '../types';
 import { Badge, Chip, Panel } from '../components/ui';
 import { KIND_ORDER } from '../kinds';
 import type { PageCtx } from './ctx';
 
+const DISCOVERY_MODE_LABEL: Record<PlatformDiscoveryChannel['mode'], string> = {
+  scan: '扫描发现',
+  declared: '声明式',
+};
+const DISCOVERY_HOW_LABEL: Record<PlatformDiscoveryChannel['how'], string> = {
+  file: '路径扫描',
+  cli: '清单命令',
+  derived: '派生采样',
+};
 const READ_HOW_LABEL: Record<PlatformReadChannel['how'], string> = {
-  cli: 'CLI 命令',
-  file: '文件扫描',
-  derived: '派生采集',
+  file: '读文件',
+  api: 'Endpoint 读',
   none: '无读取',
 };
 const WRITE_TYPE_LABEL: Record<PlatformWriteChannel['type'], string> = {
@@ -23,9 +31,14 @@ const LABEL = { fontSize: 'var(--fs-label)' } as const;
 const PANEL_FILL = { display: 'flex', flexDirection: 'column', minHeight: 0 } as const;
 const SCROLL = { flex: 1, minHeight: 0, overflowY: 'auto' } as const;
 
+function discoveryTone(d?: PlatformDiscoveryChannel) {
+  if (!d) return 'off' as const;
+  return d.mode === 'scan' ? ('ok' as const) : ('plain' as const);
+}
+
 function readTone(read?: PlatformReadChannel) {
   if (!read) return 'off' as const;
-  return read.how === 'cli' ? ('ok' as const) : read.how === 'none' ? ('off' as const) : ('plain' as const);
+  return read.how === 'api' ? ('ok' as const) : read.how === 'none' ? ('off' as const) : ('plain' as const);
 }
 
 function writeTone(write?: PlatformWriteChannel) {
@@ -48,7 +61,66 @@ function FieldLine({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-/** 读通道全字段：缺失字段显示 —，与未适配一眼可辨 */
+/** 发现通道全字段：怎么确定资产适配本平台（归属判据）。缺失字段显示 — */
+function DiscoveryCell({ discovery, notApplicable }: { discovery?: PlatformDiscoveryChannel; notApplicable?: boolean }) {
+  return (
+    <div>
+      <FieldLine label="方式">
+        {discovery ? (
+          <Badge tone={discoveryTone(discovery)}>
+            {DISCOVERY_MODE_LABEL[discovery.mode]} · {DISCOVERY_HOW_LABEL[discovery.how]}
+          </Badge>
+        ) : (
+          <Badge tone="off">{notApplicable ? '不适用' : '未适配'}</Badge>
+        )}
+      </FieldLine>
+      <FieldLine label="采集器">
+        {discovery?.collector ? (
+          <span className="mono" style={SMALL}>
+            {discovery.collector}
+          </span>
+        ) : (
+          <Dash />
+        )}
+      </FieldLine>
+      <FieldLine label="发现命令">
+        {discovery?.cmd ? (
+          <span className="mono" style={SMALL}>
+            {discovery.cmd.join(' ')}
+          </span>
+        ) : (
+          <Dash />
+        )}
+      </FieldLine>
+      <FieldLine label="扫描路径">
+        {discovery?.paths?.length ? (
+          <span className="mono dim" style={SMALL}>
+            {discovery.paths.join(' · ')}
+          </span>
+        ) : (
+          <Dash />
+        )}
+      </FieldLine>
+      <FieldLine label="注册条目">
+        {discovery?.registry ? <Chip>registry.d: {discovery.registry}</Chip> : <Dash />}
+      </FieldLine>
+      <FieldLine label="附带文件">
+        {discovery?.files ? <Chip>登记 files[]</Chip> : <Dash />}
+      </FieldLine>
+      <FieldLine label="说明">
+        {discovery?.note ? (
+          <span className="dim" style={SMALL}>
+            {discovery.note}
+          </span>
+        ) : (
+          <Dash />
+        )}
+      </FieldLine>
+    </div>
+  );
+}
+
+/** 读通道全字段：怎么读到资产正文（本地读文件 / 远程 Endpoint 读）。缺失字段显示 — */
 function ReadCell({ read, notApplicable }: { read?: PlatformReadChannel; notApplicable?: boolean }) {
   return (
     <div>
@@ -59,37 +131,10 @@ function ReadCell({ read, notApplicable }: { read?: PlatformReadChannel; notAppl
           <Badge tone="off">{notApplicable ? '不适用' : '未适配'}</Badge>
         )}
       </FieldLine>
-      <FieldLine label="采集器">
-        {read?.collector ? (
-          <span className="mono" style={SMALL}>
-            {read.collector}
-          </span>
-        ) : (
-          <Dash />
-        )}
-      </FieldLine>
-      <FieldLine label="发现命令">
+      <FieldLine label="读取命令">
         {read?.cmd ? (
           <span className="mono" style={SMALL}>
             {read.cmd.join(' ')}
-          </span>
-        ) : (
-          <Dash />
-        )}
-      </FieldLine>
-      <FieldLine label="详情命令">
-        {read?.detailCmd ? (
-          <span className="mono dim" style={SMALL}>
-            {read.detailCmd.join(' ')}
-          </span>
-        ) : (
-          <Dash />
-        )}
-      </FieldLine>
-      <FieldLine label="路径">
-        {read?.paths?.length ? (
-          <span className="mono dim" style={SMALL}>
-            {read.paths.join(' · ')}
           </span>
         ) : (
           <Dash />
@@ -166,6 +211,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
       declared: !!decl,
       ...(decl?.applicable === false ? { applicable: false as const } : {}),
       ...(decl?.note !== undefined ? { note: decl.note } : {}),
+      discovery: decl?.discovery,
       read: decl?.read,
       write: decl?.write,
       assetCount: decl?.assetCount ?? 0,
@@ -254,7 +300,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
               <span className="no">02</span>
               <span className="title">{p.label ?? p.id}</span>
               <span className="en">
-                READ / WRITE CONTRACT · {p.id} · {p.totalAssets} ASSETS · 声明即归属（asset.platforms）
+                PLATFORM CONTRACT · {p.id} · {p.totalAssets} ASSETS · 声明即归属（asset.platforms）
               </span>
             </div>
             <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(220px, 28%) minmax(0, 1fr)', gap: 'var(--sp-3)', overflow: 'hidden' }}>
@@ -295,6 +341,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                             <Badge tone="off">不适用</Badge>
                           ) : (
                             <>
+                              <Badge tone={discoveryTone(r.discovery)}>{r.discovery ? DISCOVERY_MODE_LABEL[r.discovery.mode] : '发现未声明'}</Badge>
                               <Badge tone={readTone(r.read)}>{r.read ? READ_HOW_LABEL[r.read.how] : '读未声明'}</Badge>
                               <Badge tone={writeTone(r.write)}>{r.write ? WRITE_TYPE_LABEL[r.write.type] : '写未声明'}</Badge>
                             </>
@@ -326,16 +373,22 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     {sel.note}
                   </div>
                 )}
-                <div className="grid grid-2" style={{ alignItems: 'start' }}>
+                <div>
+                  <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
+                    发现通道 DISCOVERY · 怎么确定资产适配本平台
+                  </div>
+                  <DiscoveryCell discovery={sel.discovery} notApplicable={sel.declared && sel.applicable === false} />
+                </div>
+                <div className="grid grid-2" style={{ alignItems: 'start', marginTop: 'var(--sp-3)' }}>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
-                      读通道 READ
+                      读通道 READ · 怎么读到正文
                     </div>
                     <ReadCell read={sel.read} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
-                      写通道 WRITE
+                      写通道 WRITE · 怎么物化
                     </div>
                     <WriteCell write={sel.write} notApplicable={sel.declared && sel.applicable === false} />
                   </div>

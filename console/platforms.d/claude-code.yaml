@@ -1,61 +1,82 @@
 # 平台适配 · Claude Code（本地文件系统）
-# read = 采集器扫描方式：file（文件/目录模式，支持 ~ 与 <project>/<devforge> 占位）/ derived（登记派生）/ none（无）
-# write = file-write（路径白名单 + *.forge-bak 备份在执行器代码里，不在 YAML）
+# discovery = 发现通道：怎么确定该 kind 的资产适配本平台。
+#   mode: scan（枚举即归属：本地路径扫描/派生采样命中即归属）| declared（声明式：采集器发现候选 + registry.d 注册确认归属）
+#   how: file（文件扫描）/ derived（登记派生）
+# read = 读通道：怎么读到资产正文（本地资产读 source.path 文件），与写通道对应
+# write = 以库为准的物化通道——file-write（路径白名单 + *.forge-bak 备份在执行器代码里，不在 YAML）/ none+advice
 # ── 平台归属（Owner 2026-11-11）：以资产自声明 platforms 为准，本文件不再承担归属识别；
 #    采集路径不参与归桶。归桶错了修声明（采集器或 registry.d/owned.yaml），不改这里。
-# ── 新增平台指南：复制本文件 → 改 id/label → 逐 kind 声明 read/write；
+# ── 新增平台指南：复制本文件 → 改 id/label → 逐 kind 声明 discovery/read/write；
 #    同步 schema.ts PLATFORM_IDS + platforms.ts DEFAULT_PLATFORMS（锁步单测兜底）+ 采集器给资产声明该平台 id
 id: claude-code
 label: Claude Code（本地文件系统）
 kinds:
   instruction:
-    read:
+    discovery:
+      mode: scan
       how: file
       collector: claude-projects
       paths: ["<project>/CLAUDE.md", "~/.claude/rules/*/*.md"]
       note: '项目 CLAUDE.md（claude-projects）+ 全局规则包 rules/*（claude-global，第三方依赖架）'
+    read: { how: file }
     write: { type: file-write }
   skill:
-    read:
+    discovery:
+      mode: scan
       how: file
       collector: claude-global
       paths: ["~/.claude/skills/*/SKILL.md", "~/.claude/.agents/skills/*/SKILL.md", "~/.claude/commands/*.md", "<project>/.claude/skills/*/SKILL.md"]
       note: '用户级技能/命令 + ECC .agents/skills（claude-global）；项目级 .claude/skills（claude-projects）'
+    read: { how: file }
     write: { type: file-write }
   agent:
-    read:
+    discovery:
+      mode: scan
       how: file
       collector: claude-projects
       paths: ["<project>/.claude/agents/*.md"]
       note: 'CC subagent 定义文件（frontmatter name 去重，同名首见优先）'
+    read: { how: file }
     write: { type: file-write }        # CC subagent（.claude/agents/*.md）
   hook-rule:
-    read:
+    discovery:
+      mode: declared
       how: file
       collector: devforge-hooks
       paths: ["<devforge>/claude-hooks/*.json"]
-      note: '规则清单 JSON（devforge-hooks）；settings.json 挂载由 claude-global 读（hook-registration）'
+      registry: devforge-hooks-engine
+      note: '规则清单 JSON（devforge-hooks）；归属由 registry.d 条目盖章；settings.json 挂载由 claude-global 读（hook-registration）'
+    read: { how: file }
     write: { type: file-write }
   hook-script:
-    read:
+    discovery:
+      mode: declared
       how: file
       collector: devforge-hooks
       paths: ["<devforge>/claude-hooks/scripts/*.sh", "<devforge>/claude-hooks/scripts/lib/*.sh", "<project>/.claude/hooks/*.sh"]
-      note: 'dev-forge 挂载脚本与 lib（devforge-hooks）+ 项目钩子（claude-projects）'
+      registry: devforge-hooks-engine
+      note: 'dev-forge 挂载脚本与 lib 经 registry.d 盖章；项目钩子（claude-projects）扫描直接声明——同 kind 混合'
+    read: { how: file }
     write: { type: file-write }
   adapter:
-    read:
+    discovery:
+      mode: declared
       how: file
       collector: devforge-adapters
       paths: ["<devforge>/adapters/*"]
-      note: '本地适配脚本（.sh/.py/.js，提取 env 契约）'
+      registry: devforge-adapters
+      note: '本地适配脚本（.sh/.py/.js，提取 env 契约）；归属由 registry.d 条目盖章'
+    read: { how: file }
     write: { type: file-write }
   patch:
-    read:
+    discovery:
+      mode: declared
       how: file
       collector: devforge-patches
       paths: ["~/.hindsight/patches/*.sh", "~/.hindsight/patches/*.state.json"]
-      note: '本地补丁程序 + 应用基线 state（devforge-patches 实测漂移：升级覆盖/脚本已改/未记录基线）'
+      registry: hindsight-integration
+      note: '本地补丁程序 + 应用基线 state（devforge-patches 实测漂移：升级覆盖/脚本已改/未记录基线）；归属由 registry.d 条目盖章'
+    read: { how: file }
     write: { type: file-write }    # 补丁脚本是本地文件可直接编辑；重放走对账动作（reapply）
   # Claude Code 无 autopilot 体系：注册项是 multica 平台对象；dev-forge 巡逻脚本由 registry.d 声明归属 multica
   autopilot-registration:
@@ -65,45 +86,57 @@ kinds:
     applicable: false
     note: 'Claude Code 无 autopilot 体系：dev-forge 巡逻脚本/评审巡逻由 registry.d 声明归属 multica'
   hook-registration:
-    read:
+    discovery:
+      mode: scan
       how: file
       collector: claude-global
       paths: ["~/.claude/settings.json"]
-      note: 'settings.json hooks 挂载点实测（claude-global）；dev-forge 注册清单为自研面工件（custom，钩子页展示，非平台对象）'
+      note: 'settings.json hooks 挂载点实测（claude-global 直接声明）；dev-forge 注册清单工件经 registry.d devforge-hook-registrations 盖章——同 kind 混合'
+    read: { how: file }
     write: { type: file-write }    # hooks 块在 settings.json，本地文件直接编辑（执行器白名单 + 备份）
   mcp-endpoint:
-    read:
+    discovery:
+      mode: scan
       how: file
       collector: claude-global
       paths: ["~/.claude/.mcp.json", "<project>/.mcp.json"]
       note: '用户级与项目级 MCP 清单（url 脱敏）'
+    read: { how: file }
     write: { type: none, advice: '.mcp.json 手工编辑（含密钥字段，采集已脱敏，不做自动物化）' }
   env:
-    read:
+    discovery:
+      mode: scan
       how: file
       collector: claude-global
       paths: ["~/.claude/settings.json"]
       note: 'settings.json env（采集脱敏）'
+    read: { how: file, note: 'settings.json env（采集脱敏）' }
     write: { type: none, advice: 'env 含敏感值且采集已脱敏，不支持物化' }
   project:
-    read:
+    discovery:
+      mode: scan
       how: derived
       collector: claude-projects
       paths: ["console.config.yaml#workspaces", "<project>/"]
       note: '登记驱动：workspaces.projects 注册路径 → 扫描 .claude/CLAUDE.md/.mcp.json 等（harnesses 声明门控）'
+    read: { how: file, note: '项目登记本身无正文，内容读其子资产' }
     write: { type: none, advice: '项目登记在 console.config.yaml，不支持物化' }
   report:
-    read:
+    discovery:
+      mode: scan
       how: file
       collector: health
       paths: ["~/.multica/toolchain-reports/latest.json", "~/.multica/arch-patrol/last_report.json"]
       note: '外部工具产出的健康报告（只读监控）'
+    read: { how: file }
     write: { type: none, advice: '外部工具产出，只读' }
   custom:
-    read:
+    discovery:
+      mode: scan
       how: derived
       collector: claude-global
       note: 'settings.json permissions/enabledPlugins 等杂项（各采集器附带产出）；跨平台聚合/运行时日志类 custom 无平台声明，落未适配桶'
+    read: { how: file, note: '读 settings.json 源文件（采集已脱敏）' }
     write: { type: none, advice: '聚合/观测型资产，无写通道' }
   # deployment 平台页显示「不适用」而非「未适配」：Claude Code 结构上无部署实例对象
   deployment:

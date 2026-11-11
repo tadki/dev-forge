@@ -164,13 +164,13 @@ export function relatedSkillInstances(asset: Asset, state: RegistryState): Asset
 }
 
 /**
- * 实例采集端是否登记附带文件（platforms.d read.files 声明）：
+ * 实例采集端是否登记附带文件（platforms.d discovery.files 声明）：
  * 附带文件编辑后实例库记录是否同步重写以采集可见性为准。本地 file 型采集只读 SKILL.md，
  * 若把 files 硬写进其实例库记录，下轮采集立即产生无法自愈的 store-drift（库记录 create-only）。
  * 编辑资产自身不受此限：file 必已在其 payload.files 登记，其采集端必然回读 files。
  */
 function instanceTracksFiles(inst: Asset, platforms: PlatformDef[]): boolean {
-  return resolvePlatform(inst, platforms)?.kinds?.[inst.kind]?.read?.files === true;
+  return resolvePlatform(inst, platforms)?.kinds?.[inst.kind]?.discovery?.files === true;
 }
 
 function channelTarget(asset: Asset, state: RegistryState, platforms: PlatformDef[], file?: string): AssetContentSyncTarget {

@@ -115,12 +115,19 @@ export interface EffectiveHarness {
   sections: EffectiveSection[];
 }
 
-export interface PlatformReadChannel {
-  how: 'cli' | 'file' | 'derived' | 'none';
+export interface PlatformDiscoveryChannel {
+  mode: 'scan' | 'declared';
+  how: 'file' | 'cli' | 'derived';
   collector?: string;
   cmd?: string[];
-  detailCmd?: string[];
   paths?: string[];
+  files?: boolean;
+  registry?: string;
+  note?: string;
+}
+export interface PlatformReadChannel {
+  how: 'file' | 'api' | 'none';
+  cmd?: string[];
   note?: string;
 }
 export interface PlatformWriteChannel {
@@ -143,6 +150,7 @@ export interface PlatformKindContract {
   declared: boolean;
   applicable?: false;
   note?: string;
+  discovery?: PlatformDiscoveryChannel;
   read?: PlatformReadChannel;
   write?: PlatformWriteChannel;
   assetCount: number;
