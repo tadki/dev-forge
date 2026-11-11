@@ -152,7 +152,8 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
   const [selKey, setSelKey] = useState<string | null>(null);
   if (!q.data) return <div className="dim">加载中…</div>;
   const v = q.data;
-  const adapted = v.platforms.reduce((n, p) => n + p.totalAssets, 0);
+  // 平台可能共享同一资产（多平台声明），页头唯一计数以 declaredCount + unadapted 为准
+  const adapted = v.declaredCount;
   const grandTotal = adapted + v.unadapted.assetCount;
   const p = v.platforms.find((x) => x.id === selPlatformId) ?? v.platforms[0];
   if (!p) return <div className="dim">无已适配平台（console/platforms.d 为空）</div>;

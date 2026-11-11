@@ -157,6 +157,7 @@ export interface PlatformView {
 }
 export interface PlatformsView {
   platforms: PlatformView[];
+  declaredCount: number;
   unadapted: { assetCount: number; kinds: Array<{ kind: string; count: number; paths: string[] }> };
   generatedAt: string;
   diagnostics: Array<{ level: string; message: string; path?: string }>;

@@ -483,6 +483,8 @@ export interface PlatformsUnadapted {
 
 export interface PlatformsView {
   platforms: PlatformView[];
+  /** 至少声明了一个已注册平台的唯一资产数（跨平台共享资产只计一次，供页头汇总） */
+  declaredCount: number;
   unadapted: PlatformsUnadapted;
 }
 
@@ -511,14 +513,28 @@ function assetLite(a: Asset): PlatformAssetLite {
   };
 }
 
-/** 平台页视图：平台契约（platforms.d）× 实时资产（resolvePlatform 归桶）。payload 不进视图。 */
+/**
+ * 平台页视图：平台契约（platforms.d）× 实时资产。payload 不进视图。
+ * 归桶只读资产自声明 platforms：声明了哪个已注册平台，就出现在那个平台的页面
+ * （跨平台共享资产在多个平台页都显示）；无任何声明 → 未适配桶。
+ * （resolvePlatform 的 first-match-wins 只用于写通道解析，不用于页面归桶。）
+ */
 export function buildPlatformsView(assets: Asset[], platforms: PlatformDef[]): PlatformsView {
   const buckets = new Map<string, Asset[]>();
   const unadapted: Asset[] = [];
+  let declaredCount = 0;
   for (const a of assets) {
-    const p = resolvePlatform(a, platforms);
-    if (!p) unadapted.push(a);
-    else buckets.set(p.id, [...(buckets.get(p.id) ?? []), a]);
+    if (a.source.platform === 'none') {
+      unadapted.push(a);
+      continue;
+    }
+    const hit = platforms.filter((p) => a.platforms.includes(p.id));
+    if (hit.length === 0) {
+      unadapted.push(a);
+    } else {
+      declaredCount += 1;
+      for (const p of hit) buckets.set(p.id, [...(buckets.get(p.id) ?? []), a]);
+    }
   }
 
   const views: PlatformView[] = platforms.map((p) => {
@@ -554,6 +570,7 @@ export function buildPlatformsView(assets: Asset[], platforms: PlatformDef[]): P
   for (const a of unadapted) unadaptedByKind.set(a.kind, [...(unadaptedByKind.get(a.kind) ?? []), a]);
   return {
     platforms: views,
+    declaredCount,
     unadapted: {
       assetCount: unadapted.length,
       kinds: [...unadaptedByKind.keys()].sort(sortKinds).map((kind) => {

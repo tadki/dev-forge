@@ -235,4 +235,21 @@ describe('buildPlatformsView', () => {
     expect(v.platforms[0].kinds.find((k) => k.kind === 'custom')?.declared).toBe(false);
     expect(v.platforms[0].kinds.find((k) => k.kind === 'skill')?.declared).toBe(true);
   });
+
+  it('多平台声明：资产在每个声明过的已注册平台页都显示；declaredCount 唯一计数', () => {
+    const assets = [
+      mkAsset('hook-rule:shared', '/dev-forge/claude-hooks/rules.d/x.json', 'hook-rule', {}, ['claude-code', 'multica']),
+      mkAsset('skill:cc-only', '/home/x/.claude/skills/s/SKILL.md', 'skill', {}, ['claude-code']),
+      mkAsset('custom:none-tagged', '/x', 'custom', {}, ['claude-code'], 'none'),
+    ];
+    const v = buildPlatformsView(assets, DEFAULT_PLATFORMS);
+    const ccRule = v.platforms.find((p) => p.id === 'claude-code')?.kinds.find((k) => k.kind === 'hook-rule');
+    const mcRule = v.platforms.find((p) => p.id === 'multica')?.kinds.find((k) => k.kind === 'hook-rule');
+    expect(ccRule?.assetCount).toBe(1);
+    expect(mcRule?.assetCount).toBe(1);
+    expect(mcRule?.assets[0].id).toBe('hook-rule:shared');
+    // declaredCount 唯一计数：shared + cc-only = 2（none-tagged 进未适配）
+    expect(v.declaredCount).toBe(2);
+    expect(v.unadapted.assetCount).toBe(1);
+  });
 });
