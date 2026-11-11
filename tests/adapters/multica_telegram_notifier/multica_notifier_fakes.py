@@ -217,9 +217,6 @@ class FakeTelegram:
     def _next_response(self, path):
         if self.responses:
             return self.responses.pop(0)
-        if path.endswith("/getUpdates"):
-            # Default discovery answer: one private chat, as after a /start.
-            return 200, {"ok": True, "result": [private_chat_update(987654)]}
         return 200, {"ok": True, "result": {"message_id": 4242}}
 
     @property
@@ -238,10 +235,6 @@ def wait_for(condition, timeout=5.0, interval=0.01):
             return True
         time.sleep(interval)
     return False
-
-
-def private_chat_update(chat_id):
-    return {"update_id": 1, "message": {"chat": {"id": chat_id, "type": "private"}, "text": "/start"}}
 
 
 def make_inbox_frame(item_overrides=None, workspace_id="ws-target", item_id="item-1",
@@ -273,6 +266,7 @@ def make_env(multica, telegram, tmp_path, **overrides):
     env = {
         "NOTIFIER_MULTICA_PAT": "test-pat-value-0123456789",
         "NOTIFIER_TELEGRAM_BOT_TOKEN": "test-bot-token-value",
+        "NOTIFIER_TELEGRAM_CHAT_ID": "987654",
         "NOTIFIER_MULTICA_SERVER_URL": multica.url.replace("ws://", "http://").rsplit("/ws", 1)[0],
         "NOTIFIER_WORKSPACE_ID": "ws-target",
         "NOTIFIER_TELEGRAM_API_BASE": telegram.base_url,
@@ -283,3 +277,18 @@ def make_env(multica, telegram, tmp_path, **overrides):
     }
     env.update(overrides)
     return env
+
+
+def text_frame_bytes(payload: bytes, fin=True, opcode=0x1):
+    """Build a raw (unmasked, server-side) frame with an arbitrary byte
+    payload, so tests can split one logical message mid-UTF-8-sequence.
+    Use opcode=0x0 for continuation fragments."""
+    b1 = (0x80 if fin else 0) | opcode
+    n = len(payload)
+    if n < 126:
+        header = struct.pack("!BB", b1, n)
+    elif n < 65536:
+        header = struct.pack("!BBH", b1, 126, n)
+    else:
+        header = struct.pack("!BBQ", b1, 127, n)
+    return header + payload

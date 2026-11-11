@@ -16,7 +16,7 @@ from multica_telegram_notifier.wsclient import (
     parse_ws_url,
 )
 
-from multica_notifier_fakes import FakeMulticaWS, wait_for
+from multica_notifier_fakes import FakeMulticaWS, text_frame_bytes, wait_for
 
 
 def _refusing_port_server():
@@ -193,6 +193,63 @@ class TestMalformedTolerance:
             client.connect()
             client.send_text("hello")
             assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            client.close()
+        finally:
+            server.close()
+
+    def test_fragmented_emoji_split_mid_codepoint_reassembled(self):
+        # A legitimate multi-byte character split ACROSS fragments must be
+        # reassembled as raw bytes before UTF-8 decoding.
+        message = '{"type":"ok","note":"🚀"}'
+        raw = message.encode("utf-8")
+        cut = raw.index("🚀".encode("utf-8")) + 2  # inside the 4-byte emoji
+        server = FakeMulticaWS(script=[
+            ("raw", text_frame_bytes(raw[:cut], fin=False)),
+            ("raw", text_frame_bytes(raw[cut:], fin=True, opcode=0x0)),
+        ])
+        try:
+            client = WSClient(server.url, read_timeout=2)
+            client.connect()
+            client.send_text("hello")
+            assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            assert json.loads(client.recv_message()) == {"type": "ok", "note": "🚀"}
+            client.close()
+        finally:
+            server.close()
+
+    def test_fragmented_chinese_split_mid_codepoint_reassembled(self):
+        message = '{"type":"ok","note":"中文通知"}'
+        raw = message.encode("utf-8")
+        cut = raw.index("中".encode("utf-8")) + 1  # inside the 3-byte 中
+        server = FakeMulticaWS(script=[
+            ("raw", text_frame_bytes(raw[:cut], fin=False)),
+            ("raw", text_frame_bytes(raw[cut:], fin=True, opcode=0x0)),
+        ])
+        try:
+            client = WSClient(server.url, read_timeout=2)
+            client.connect()
+            client.send_text("hello")
+            assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            assert json.loads(client.recv_message()) == {"type": "ok", "note": "中文通知"}
+            client.close()
+        finally:
+            server.close()
+
+    def test_fragmented_three_way_split_reassembled(self):
+        message = '{"type":"ok","note":"🚀中文"}'
+        raw = message.encode("utf-8")
+        cuts = [raw.index("🚀".encode("utf-8")) + 3, raw.index("文".encode("utf-8")) + 1]
+        server = FakeMulticaWS(script=[
+            ("raw", text_frame_bytes(raw[:cuts[0]], fin=False)),
+            ("raw", text_frame_bytes(raw[cuts[0]:cuts[1]], fin=False, opcode=0x0)),
+            ("raw", text_frame_bytes(raw[cuts[1]:], fin=True, opcode=0x0)),
+        ])
+        try:
+            client = WSClient(server.url, read_timeout=2)
+            client.connect()
+            client.send_text("hello")
+            assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            assert json.loads(client.recv_message()) == {"type": "ok", "note": "🚀中文"}
             client.close()
         finally:
             server.close()

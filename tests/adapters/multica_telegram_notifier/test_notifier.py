@@ -22,7 +22,7 @@ from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.state import DedupState
 from multica_telegram_notifier.wsclient import WSClient
 
-from multica_notifier_fakes import FakeMulticaWS, make_env, make_inbox_frame, private_chat_update
+from multica_notifier_fakes import FakeMulticaWS, make_env, make_inbox_frame
 
 PAT = "test-pat-value-0123456789"
 BOT = "test-bot-token-value"
@@ -96,20 +96,20 @@ class TestHappyPath:
             state = DedupState(cfg.state_file)
             state.load()
             assert state.is_seen("item-1")
-            assert state.chat_id == 987654
         finally:
             server.close()
 
-    def test_chat_id_discovered_from_getupdates(self, tmp_path, fake_telegram):
-        fake_telegram.responses = [(200, {"ok": True, "result": [private_chat_update(987654)]})]
+    def test_configured_chat_id_used_and_no_getupdates_ever_called(self, tmp_path, fake_telegram):
+        # D-1: the configured chat id is the ONLY delivery target; discovery
+        # via getUpdates is gone, so a stranger's private chat can never win.
         server = FakeMulticaWS(script=[("text", make_inbox_frame())])
         try:
             notifier, _cfg, _logger = build(tmp_path, server, fake_telegram)
             thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
-            # Discovery consumed the scripted response; the delivery used the default ok.
-            assert fake_telegram.requests[0][0].endswith("/getUpdates")
-            assert fake_telegram.requests[1][0].endswith("/sendMessage")
+            paths = [p for p, _ in fake_telegram.requests]
+            assert paths == [f"/bot{BOT}/sendMessage"]
+            assert fake_telegram.requests[0][1]["chat_id"] == 987654
         finally:
             server.close()
 
@@ -219,31 +219,34 @@ class TestReconnect:
 
 
 class TestStartupFailures:
-    def test_discovery_failure_exits_config_error(self, tmp_path, fake_telegram):
-        fake_telegram.responses = [(200, {"ok": True, "result": []})]
+    def test_missing_chat_id_exits_config_error(self, tmp_path, fake_telegram):
         server = FakeMulticaWS()
         try:
             notifier, _cfg, logger = build(tmp_path, server, fake_telegram)
-            code = notifier.run()
+            env = make_env(server, fake_telegram, tmp_path)
+            del env["NOTIFIER_TELEGRAM_CHAT_ID"]
+            env_path = tmp_path / "missing.env"
+            env_path.write_text("\n".join(f"{k}={v}" for k, v in env.items()), encoding="utf-8")
+            from multica_telegram_notifier.notifier import main
+            code = main(["--config", str(env_path)])
             assert code == EXIT_CONFIG
-            assert len(fake_telegram.requests) == 1  # only the discovery call
+            assert fake_telegram.requests == []
         finally:
             server.close()
 
-    def test_cached_chat_id_skips_discovery(self, tmp_path, fake_telegram):
+    def test_legacy_state_chat_id_ignored_config_wins(self, tmp_path, fake_telegram):
+        # Old state files carried a chat_id cache; it must never override the
+        # configured id (the config value is the single authority).
         server = FakeMulticaWS(script=[("text", make_inbox_frame())])
         try:
-            state_path = tmp_path / "state.json"
-            pre = DedupState(str(state_path))
-            pre.load()
-            pre.chat_id = 555000
-            pre.save()
+            (tmp_path / "state.json").write_text(
+                '{"chat_id": 555000, "delivered": []}', encoding="utf-8")
             notifier, _cfg, _logger = build(tmp_path, server, fake_telegram)
             thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             paths = [p for p, _ in fake_telegram.requests]
             assert paths == [f"/bot{BOT}/sendMessage"]
-            assert fake_telegram.requests[0][1]["chat_id"] == 555000
+            assert fake_telegram.requests[0][1]["chat_id"] == 987654
         finally:
             server.close()
 
@@ -251,7 +254,6 @@ class TestStartupFailures:
 class TestPermanentSendFailure:
     def test_non_retryable_failure_quarantines_item_then_delivers_next(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
             (400, {"ok": False, "error_code": 400, "description": "Bad Request: rejected item"}),
         ]
         server = FakeMulticaWS(script=[
@@ -274,7 +276,6 @@ class TestPermanentSendFailure:
 
     def test_quarantined_item_not_redispatched_after_reconnect(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
             (400, {"ok": False, "error_code": 400, "description": "Bad Request: rejected item"}),
         ]
         server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="poison")), ("close",)])
@@ -302,7 +303,6 @@ class TestPermanentSendFailure:
 class TestChannelFailureKeepsPending:
     def test_401_keeps_item_pending_and_delivers_after_recovery(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
             (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
         ]
         server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="during-outage")), ("close",)])
@@ -317,45 +317,40 @@ class TestChannelFailureKeepsPending:
             sends = send_calls(fake_telegram)
             assert len(sends) == 2
             assert sends[0][1]["text"] == sends[1][1]["text"]
+            assert {body["chat_id"] for _p, body in sends} == {987654}
             state = DedupState(cfg.state_file)
             state.load()
             assert state.is_seen("during-outage")
         finally:
             server.close()
 
-    def test_stale_chat_rediscovery_failure_keeps_item_pending(self, tmp_path, fake_telegram):
-        # Channel dead AND chat gone: rediscovery fails (no /start yet) — the
-        # notification must survive and flow once the channel recovers.
+
+class TestStaleChatRecovery:
+    def test_stale_chat_id_reaffirmed_and_retried(self, tmp_path, fake_telegram):
+        # "chat not found" re-affirms the configured id and retries once; the
+        # adapter never falls back to scanning other private chats (D-1).
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(1111111)]}),
             (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
-            (200, {"ok": True, "result": []}),
         ]
-        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="orphaned")), ("close",)])
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
         try:
             notifier, cfg, capture = build(tmp_path, server, fake_telegram)
             thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
-            assert len(capture.events("delivery_failed_permanent")) == 0
             sends = send_calls(fake_telegram)
-            assert [body["chat_id"] for _p, body in sends] == [1111111, 987654]
-            state = DedupState(cfg.state_file)
-            state.load()
-            assert state.is_seen("orphaned")
-            assert state.chat_id == 987654
+            assert len(sends) == 2
+            assert {body["chat_id"] for _p, body in sends} == {987654}
+            assert capture.events("stale_chat_id")
+            assert capture.events("chat_id_reaffirmed")
         finally:
             server.close()
 
-
-class TestStaleChatRecovery:
-    def test_repeat_chat_not_found_after_rediscovery_keeps_pending(self, tmp_path, fake_telegram):
-        # Fresh id rejected with "chat not found" again = channel still not
-        # recovered (user hasn't /started yet): keep the item pending, never
-        # quarantine it; it flows once the channel truly recovers.
+    def test_repeat_chat_not_found_keeps_pending(self, tmp_path, fake_telegram):
+        # A second "chat not found" after the re-affirm still means the
+        # channel has not recovered: the item stays pending, never quarantined,
+        # and lands once Telegram accepts again.
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(1111111)]}),
             (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
             (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
         ]
         server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="still-stale")), ("close",)])
@@ -365,33 +360,10 @@ class TestStaleChatRecovery:
             assert result.get("code") == EXIT_OK, result
             assert len(capture.events("delivery_failed_permanent")) == 0
             sends = send_calls(fake_telegram)
-            assert [body["chat_id"] for _p, body in sends] == [1111111, 987654, 987654]
+            assert [body["chat_id"] for _p, body in sends] == [987654, 987654, 987654]
             state = DedupState(cfg.state_file)
             state.load()
             assert state.is_seen("still-stale")
-        finally:
-            server.close()
-
-    def test_stale_chat_id_rediscovered_and_retried(self, tmp_path, fake_telegram):
-        fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(1111111)]}),
-            (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
-        ]
-        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
-        try:
-            notifier, cfg, capture = build(tmp_path, server, fake_telegram)
-            thread, result = run_in_thread(notifier)
-            assert result.get("code") == EXIT_OK, result
-            sends = send_calls(fake_telegram)
-            assert len(sends) == 2
-            assert sends[0][1]["chat_id"] == 1111111
-            assert sends[1][1]["chat_id"] == 987654
-            assert capture.events("stale_chat_id")
-            assert capture.events("chat_id_rediscovered")
-            state = DedupState(cfg.state_file)
-            state.load()
-            assert state.chat_id == 987654
         finally:
             server.close()
 
@@ -432,7 +404,6 @@ class TestOnceAuthBound:
 class TestOnceChannelBound:
     def test_once_gives_up_on_persistent_channel_failure_exit_5(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
             (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
             (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
         ]
@@ -460,7 +431,6 @@ class TestOnceChannelBound:
         # channel failures and must not fire; delivery lands normally once
         # the scripted failures are exhausted.
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
             (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
             (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
         ]
@@ -506,8 +476,8 @@ class TestOnceChannelBound:
 
     def test_steady_mode_keeps_retrying_channel_failure(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
-            (200, {"ok": True, "result": [private_chat_update(987654)]}),
-        ] + [(401, {"ok": False, "error_code": 401, "description": "Unauthorized"})] * 20
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+        ] * 20
         server = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="probe-item")),
                                        ("sleep", 0.1)])
         try:

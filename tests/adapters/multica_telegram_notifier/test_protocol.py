@@ -98,6 +98,14 @@ class TestInboxItemId:
     def test_fallback_differs_for_distinct_items(self):
         assert inbox_item_id({"title": "a"}) != inbox_item_id({"title": "b"})
 
+    def test_fallback_survives_lone_surrogate(self):
+        # A lone surrogate in an id-less item must not raise
+        # UnicodeEncodeError out of the hash fallback.
+        item = {"title": "\ud800bad item", "created_at": "2026-11-11T00:00:00Z"}
+        fallback = inbox_item_id(item)
+        assert isinstance(fallback, str) and len(fallback) == 16
+        assert inbox_item_id(item) == fallback
+
 
 class TestFormatNotification:
     def test_full_item_deterministic_output(self):

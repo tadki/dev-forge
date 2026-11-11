@@ -76,32 +76,20 @@ class TelegramClient:
         for attempt in range(attempts):
             try:
                 body = self._call("sendMessage", {"chat_id": chat_id, "text": text})
-                return body.get("result", {})
+                result = body.get("result")
+                if not isinstance(result, dict):
+                    # A broken/malicious proxy answer must not crash callers
+                    # that read message_id off the result.
+                    raise TelegramError(
+                        "telegram sendMessage returned a non-object result: "
+                        f"{type(result).__name__}",
+                        retryable=True, is_channel_error=True)
+                return result
             except TelegramError as exc:
                 if not exc.retryable or attempt == attempts - 1:
                     raise
                 sleep(retries[attempt])
         raise TelegramError("sendMessage: retries exhausted", retryable=True)
-
-    def get_updates(self) -> list:
-        body = self._call("getUpdates", {})
-        result = body.get("result")
-        if not isinstance(result, list):
-            raise TelegramError("getUpdates returned an invalid result", retryable=False,
-                                is_channel_error=True)
-        return result
-
-    def discover_chat_id(self) -> int:
-        for update in reversed(self.get_updates()):
-            chat = self._private_chat(update)
-            if chat is not None:
-                return chat["id"]
-        raise TelegramError(
-            "no private chat found in getUpdates; open the new bot in Telegram "
-            "and send /start first",
-            retryable=False,
-            is_channel_error=True,
-        )
 
     # --- internals ---
 
@@ -150,17 +138,3 @@ class TelegramClient:
                 error_code=error_code,
                 is_channel_error=error_code in CHANNEL_HTTP_CODES)
         return body
-
-    @staticmethod
-    def _private_chat(update):
-        if not isinstance(update, dict):
-            return None
-        message = update.get("message")
-        if not isinstance(message, dict):
-            return None
-        chat = message.get("chat")
-        if not isinstance(chat, dict):
-            return None
-        if chat.get("type") != "private" or not isinstance(chat.get("id"), int):
-            return None
-        return chat

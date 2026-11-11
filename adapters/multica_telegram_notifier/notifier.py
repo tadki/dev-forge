@@ -5,7 +5,7 @@ Run modes:
 - --once: exit 0 after the first delivered notification (live probe);
   a permanently rejected auth token ends the probe deterministically.
 
-Exit codes: 0 delivered (once) / 2 config or chat-id discovery failure /
+Exit codes: 0 delivered (once) / 2 config failure /
 3 stopped without delivering / 4 auth permanently rejected (--once) /
 5 delivery channel permanently down (--once) / 130 interrupted.
 """
@@ -82,16 +82,14 @@ class Notifier:
         self.sleep = sleep
         self.stop_event = stop_event
         self.once = once
-        self._chat_id = None
+        # D-1: the configured chat id is the ONLY delivery target. Discovery
+        # via getUpdates is deliberately absent — picking the "newest private
+        # chat" could leak Inbox content to somebody else's chat.
+        self._chat_id = config.telegram_chat_id
         self._auth_failures = 0
         self._channel_failures = 0
 
     def run(self) -> int:
-        try:
-            self._chat_id = self._ensure_chat_id()
-        except TelegramError as exc:
-            self.logger.error("chat_id_discovery_failed", error=str(exc))
-            return EXIT_CONFIG
         attempt = 0
         while not self._stopped():
             delivered = False
@@ -137,32 +135,14 @@ class Notifier:
         limit = len(self.config.reconnect_backoff or (1.0,))
         return failures >= limit
 
-    def _ensure_chat_id(self) -> int:
-        if self.state.chat_id is not None:
-            self.logger.info("chat_id_cached", chat_id=self.state.chat_id)
-            return self.state.chat_id
-        chat_id = self.telegram.discover_chat_id()
-        self.state.set_chat_id(chat_id)
-        self.logger.info("chat_id_discovered", chat_id=chat_id)
-        return chat_id
-
-    def _rediscover_chat_id(self) -> int:
-        # Invalidate the in-memory id BEFORE discovery: if discovery fails
-        # (channel still down), the next session must re-ensure from scratch
-        # instead of reusing the proven-stale id.
-        self._chat_id = None
-        self.state.chat_id = None
-        self.state.save()
-        chat_id = self.telegram.discover_chat_id()
-        self.state.set_chat_id(chat_id)
-        self.logger.info("chat_id_rediscovered", chat_id=chat_id)
-        return chat_id
+    def _reaffirm_chat_id(self) -> int:
+        # After "chat not found" the configured id is re-affirmed — never
+        # re-picked from getUpdates, which could select somebody else's chat.
+        self._chat_id = self.config.telegram_chat_id
+        self.logger.info("chat_id_reaffirmed", chat_id=self._chat_id)
+        return self._chat_id
 
     def _session(self) -> bool:
-        if self._chat_id is None:
-            # TelegramError here ends the session; the run loop retries,
-            # because a chat may appear once the operator sends /start.
-            self._chat_id = self._ensure_chat_id()
         ws = self.ws_factory()
         try:
             ws.connect()
@@ -241,7 +221,7 @@ class Notifier:
             if not self._is_stale_chat_error(exc):
                 raise
             self.logger.warning("stale_chat_id", error=str(exc))
-            self._chat_id = self._rediscover_chat_id()
+            self._chat_id = self._reaffirm_chat_id()
             try:
                 return self.telegram.send_message(
                     self._chat_id, text, retries=self.config.send_retries, sleep=self.sleep)

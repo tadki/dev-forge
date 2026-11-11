@@ -15,6 +15,7 @@ from multica_telegram_notifier.config import (
 REQUIRED = {
     "NOTIFIER_MULTICA_PAT": "test-pat-value-0123456789",
     "NOTIFIER_TELEGRAM_BOT_TOKEN": "test-bot-token-value",
+    "NOTIFIER_TELEGRAM_CHAT_ID": "987654",
     "NOTIFIER_MULTICA_SERVER_URL": "http://multica.internal:9278",
     "NOTIFIER_WORKSPACE_ID": "1a011680-a476-4553-929d-478690824e46",
 }
@@ -42,6 +43,7 @@ class TestLoadConfig:
         cfg = load_config(dict(REQUIRED))
         assert cfg.multica_pat == REQUIRED["NOTIFIER_MULTICA_PAT"]
         assert cfg.telegram_bot_token == REQUIRED["NOTIFIER_TELEGRAM_BOT_TOKEN"]
+        assert cfg.telegram_chat_id == 987654
         assert cfg.server_url == "http://multica.internal:9278"
         assert cfg.workspace_id == REQUIRED["NOTIFIER_WORKSPACE_ID"]
         assert cfg.telegram_api_base == "https://api.telegram.org"
@@ -113,6 +115,35 @@ class TestLoadConfig:
         env["NOTIFIER_READ_TIMEOUT"] = "0"
         with pytest.raises(ConfigError):
             load_config(env)
+
+    def test_non_integer_chat_id_fails(self):
+        env = dict(REQUIRED)
+        env["NOTIFIER_TELEGRAM_CHAT_ID"] = "not-a-number"
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert "NOTIFIER_TELEGRAM_CHAT_ID" in str(exc.value)
+
+    @pytest.mark.parametrize("raw", ["0", "-5"])
+    def test_non_positive_chat_id_fails(self, raw):
+        env = dict(REQUIRED)
+        env["NOTIFIER_TELEGRAM_CHAT_ID"] = raw
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert "NOTIFIER_TELEGRAM_CHAT_ID" in str(exc.value)
+
+    @pytest.mark.parametrize("key", [
+        "NOTIFIER_CONNECT_TIMEOUT",
+        "NOTIFIER_READ_TIMEOUT",
+        "NOTIFIER_RECONNECT_BACKOFF",
+        "NOTIFIER_SEND_RETRIES",
+    ])
+    @pytest.mark.parametrize("raw", ["nan", "inf", "-inf"])
+    def test_non_finite_time_and_backoff_values_fail(self, key, raw):
+        env = dict(REQUIRED)
+        env[key] = raw
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert key in str(exc.value)
 
     def test_trailing_slash_on_server_url_is_stripped(self):
         env = dict(REQUIRED)

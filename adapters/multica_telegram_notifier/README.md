@@ -12,11 +12,12 @@
 3. 订阅免费：`inbox:new` 是个人事件，服务端只推给 token 对应的用户本人。
 4. 适配器按 `payload.item.workspace_id` 过滤目标 workspace，去重后把通知文本
    （按 Telegram 的 UTF-16 计长口径截断到 4096 以内）通过 Telegram Bot API
-   `sendMessage` 发给你的私聊（chat ID 自动发现）。失效的 chat ID（Telegram
-   返回「chat not found」）会自动重新发现并重试一次；被 Telegram 永久拒绝的
-   通知会记入已处理状态并告警，不会在重连后无限重发。通道级故障（bot token
-   失效、bot 被拉黑、chat 尚未建立等）则保留待投递语义：通知不丢失，通道恢复
-   （如重新 `/start`、换 token）后自动补投。
+   `sendMessage` 发给配置里指定的 chat ID——这是唯一投递目标，适配器不扫描
+   bot 的其他私聊，其他私聊的会话也永远不会收到 Inbox 内容。失效的 chat ID
+   （Telegram 返回「chat not found」）会复核配置 id 并重试一次；被 Telegram
+   永久拒绝的通知会记入已处理状态并告警，不会在重连后无限重发。通道级故障
+   （bot token 失效、bot 被拉黑、chat 尚未建立等）则保留待投递语义：通知
+   不丢失，通道恢复（如重新 `/start`、换 token）后自动补投。
 5. 断线自动重连（指数退避），malformed 帧忽略，已投递通知持久化在本地状态文件，
    重启/重连不会重复发送。
 
@@ -24,7 +25,10 @@
 
 1. **创建 Telegram bot**：在 Telegram 中找 **@BotFather**，发送 `/newbot`，按提示
    命名后会得到一个 bot token（形如「数字:字母数字串」）。打开你新建的 bot 私聊，
-   发送 `/start`——chat ID 由适配器通过 `getUpdates` 自动发现，无需手查。
+   发送 `/start`，然后查询一次 `getUpdates` 取得你自己的数字 chat ID（任何
+   Telegram API 客户端都可调用一次 `getUpdates`，或由已配置过的人提供）。
+   适配器**只向配置里的这个 chat ID 发送**：它不扫描 bot 的其他私聊，因此
+   其他人与该 bot 的会话不会收到任何 Inbox 内容。
 2. **创建 Multica Personal Access Token**：在 Multica 设置里为你的账号创建 PAT
    （`mul_` 前缀）。注意：任务运行时的 `mat_` token 不能用于用户 WebSocket。
 3. **写入本地配置文件**（不要把任何 token 发到 issue、评论或聊天里）：
@@ -34,6 +38,7 @@ mkdir -p ~/.config/dev-forge
 cat > ~/.config/dev-forge/see-1561.env <<'EOF'
 NOTIFIER_MULTICA_PAT=<你的 mul_ PAT>
 NOTIFIER_TELEGRAM_BOT_TOKEN=<BotFather 下发的 token>
+NOTIFIER_TELEGRAM_CHAT_ID=<你的数字 chat ID>
 NOTIFIER_MULTICA_SERVER_URL=<你的 Multica 部署地址，如 http://192.168.x.x:9278>
 NOTIFIER_WORKSPACE_ID=<workspace UUID>
 EOF
@@ -56,11 +61,11 @@ python3 adapters/multica_telegram_notifier/notifier.py \
   --once --log-json ~/.local/state/dev-forge/see-1561-live-probe/probe.jsonl
 ```
 
-- `--once`：投递第一条通知后以 exit 0 退出；chat ID 发现失败或配置缺失
-  exit 2（首次启动时 bot token 无效会在发现阶段就失败，同样 exit 2）；
-  PAT 被永久拒绝时在一个退避周期后以 exit 4 确定性退出；投递阶段通道
-  持续不可用（bot 被拉黑、chat 丢失等，连续失败不被健康会话打断）在一个
-  退避周期后以 exit 5 确定性退出（live probe 不会无限重试）。
+- `--once`：投递第一条通知后以 exit 0 退出；配置缺失或无效（含 chat ID
+  非正整数、超时/退避含 `nan`/`inf`）exit 2；PAT 被永久拒绝时在一个退避
+  周期后以 exit 4 确定性退出；投递阶段通道持续不可用（bot 被拉黑、chat
+  丢失等，连续失败不被健康会话打断）在一个退避周期后以 exit 5 确定性退出
+  （live probe 不会无限重试）。
 - `--log-json <path>`：结构化 JSONL 日志追加写入该文件（stderr 同步输出）。
   日志中凭据字段一律被替换为 `[REDACTED]`，可安全留存作证据。
 - 通知触发源：任何会让你收到 Inbox 通知的真实动作（例如某个 agent 的正常汇报
@@ -72,10 +77,11 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 |---|---|---|---|
 | `NOTIFIER_MULTICA_PAT` | 是 | — | Multica PAT（`mul_` 前缀） |
 | `NOTIFIER_TELEGRAM_BOT_TOKEN` | 是 | — | BotFather 下发的 bot token |
+| `NOTIFIER_TELEGRAM_CHAT_ID` | 是 | — | Owner 的数字 chat ID（正整数，唯一投递目标） |
 | `NOTIFIER_MULTICA_SERVER_URL` | 是 | — | Multica 部署根地址（http/https） |
 | `NOTIFIER_WORKSPACE_ID` | 是 | — | 只转发该 workspace 的 `inbox:new` |
 | `NOTIFIER_TELEGRAM_API_BASE` | 否 | `https://api.telegram.org` | 测试可指向本地伪 API |
-| `NOTIFIER_STATE_FILE` | 否 | `~/.local/state/dev-forge/multica-telegram-notifier/state.json` | 去重与 chat ID 缓存 |
+| `NOTIFIER_STATE_FILE` | 否 | `~/.local/state/dev-forge/multica-telegram-notifier/state.json` | 去重状态文件 |
 | `NOTIFIER_RECONNECT_BACKOFF` | 否 | `1,2,4,8,15,30` | 断线重连退避秒数序列 |
 | `NOTIFIER_SEND_RETRIES` | 否 | `1,2,4` | sendMessage 失败重试间隔秒数 |
 | `NOTIFIER_CONNECT_TIMEOUT` | 否 | `10` | 连接/HTTP 超时秒数 |
@@ -86,7 +92,7 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 ## 密钥保护
 
 - PAT 与 bot token 只放在权限 600 的本地配置文件中，不进仓库、不进日志、不进
-  issue/评论；状态文件只存已投递通知 ID 与 chat ID。
+  issue/评论；状态文件只存已投递通知 ID。
 - 运行产物（`--log-json` 日志、状态文件）都应放在仓库外（默认
   `~/.local/state/dev-forge/...`）；仓库 `.gitignore` 另有 `live-probe*.jsonl`
   兜底，避免探针产物被误提交。
