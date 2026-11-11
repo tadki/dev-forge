@@ -142,10 +142,11 @@ class TelegramClient:
             raw_code = body.get("error_code") if isinstance(body, dict) else None
             error_code = raw_code if isinstance(raw_code, int) else None
             # HTTP 200 + ok:false: classify by the body's error_code so the
-            # channel/message split matches the HTTP-status path.
+            # channel/message split AND the retryable set match the
+            # HTTP-status path.
             raise TelegramError(
                 f"telegram {method} failed: {description}",
-                retryable=False,
+                retryable=error_code in RETRYABLE_HTTP,
                 error_code=error_code,
                 is_channel_error=error_code in CHANNEL_HTTP_CODES)
         return body

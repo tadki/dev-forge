@@ -56,10 +56,11 @@ python3 adapters/multica_telegram_notifier/notifier.py \
   --once --log-json ~/.local/state/dev-forge/see-1561-live-probe/probe.jsonl
 ```
 
-- `--once`：投递第一条通知后以 exit 0 退出；chat ID 发现失败或配置缺失 exit 2；
-  PAT 被永久拒绝时在一个退避周期后以 exit 4 确定性退出；投递通道持续不可用
-  （bot token 失效、bot 被拉黑等）在一个退避周期后以 exit 5 确定性退出
-  （live probe 不会无限重试）。
+- `--once`：投递第一条通知后以 exit 0 退出；chat ID 发现失败或配置缺失
+  exit 2（首次启动时 bot token 无效会在发现阶段就失败，同样 exit 2）；
+  PAT 被永久拒绝时在一个退避周期后以 exit 4 确定性退出；投递阶段通道
+  持续不可用（bot 被拉黑、chat 丢失等，连续失败不被健康会话打断）在一个
+  退避周期后以 exit 5 确定性退出（live probe 不会无限重试）。
 - `--log-json <path>`：结构化 JSONL 日志追加写入该文件（stderr 同步输出）。
   日志中凭据字段一律被替换为 `[REDACTED]`，可安全留存作证据。
 - 通知触发源：任何会让你收到 Inbox 通知的真实动作（例如某个 agent 的正常汇报

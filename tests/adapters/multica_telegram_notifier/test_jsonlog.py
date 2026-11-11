@@ -53,6 +53,19 @@ class TestJsonLogger:
         assert PAT not in buf.getvalue()
         assert "[REDACTED]" in buf.getvalue()
 
+    def test_lone_surrogate_in_field_writes_safely(self, tmp_path):
+        # A lone surrogate (upstream "\udXXX" escapes) must not crash the
+        # JSONL write after a successful delivery: the line is sanitized
+        # once before any sink sees it.
+        path = tmp_path / "probe.jsonl"
+        logger = make_logger(io.StringIO(), file_path=str(path))
+        logger.info("delivered", title="\ud800bad ✈ safe")
+        logger.close()
+        text = path.read_text(encoding="utf-8")
+        assert "\ud800" not in text
+        assert "delivered" in text
+        assert "safe" in text
+
     def test_jsonl_file_output(self, tmp_path):
         path = tmp_path / "probe.jsonl"
         buf = io.StringIO()

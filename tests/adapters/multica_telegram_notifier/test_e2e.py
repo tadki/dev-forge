@@ -75,6 +75,41 @@ class TestSendFailureRetry:
             server.close()
 
 
+class TestSurrogateLogE2E:
+    def test_once_with_log_json_survives_surrogate_title(self, tmp_path, fake_telegram):
+        # End-to-end: an inbox title carrying a lone surrogate must not crash
+        # the process after a successful delivery when --log-json is active.
+        server = FakeMulticaWS(script=[
+            ("text", make_inbox_frame(item_overrides={"title": "\ud800SEE-1561 收口"})),
+            ("sleep", 5),
+        ])
+        try:
+            env_path = tmp_path / "see-1561.env"
+            env_path.write_text(
+                "\n".join(f"{k}={v}" for k, v in make_env(server, fake_telegram, tmp_path).items()),
+                encoding="utf-8",
+            )
+            log_path = tmp_path / "probe.jsonl"
+            proc = subprocess.run(
+                [sys.executable,
+                 os.path.join(REPO_ROOT, "adapters", "multica_telegram_notifier", "notifier.py"),
+                 "--config", str(env_path),
+                 "--once",
+                 "--log-json", str(log_path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            events = [json.loads(x)["event"] for x in log_path.read_text(encoding="utf-8").splitlines()]
+            assert "delivered" in events
+            log_text = log_path.read_text(encoding="utf-8")
+            assert "\ud800" not in log_text
+            assert "SEE-1561 收口" in log_text
+            send_calls = [req for req in fake_telegram.requests if req[0].endswith("/sendMessage")]
+            assert len(send_calls) == 1
+        finally:
+            server.close()
+
+
 class TestCliSubprocess:
     def test_spec_command_shape_delivers_once(self, tmp_path, fake_telegram):
         server = FakeMulticaWS(script=[("text", make_inbox_frame())])

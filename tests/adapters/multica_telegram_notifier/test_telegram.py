@@ -208,6 +208,25 @@ class TestErrorClassification:
         assert exc.value.is_channel_error is False
         assert exc.value.retryable is False
 
+    def test_http_200_ok_false_429_is_retryable(self, fake_telegram):
+        # 429 in an ok:false body must inherit the RETRYABLE_HTTP treatment
+        # of the HTTP-status path (contrast: 401 body above is not retryable).
+        fake_telegram.responses = [(200, {"ok": False, "error_code": 429,
+                                          "description": "Too Many Requests: retry after 3"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.retryable is True
+        assert exc.value.is_channel_error is False
+
+    def test_http_200_ok_false_500_is_retryable(self, fake_telegram):
+        fake_telegram.responses = [(200, {"ok": False, "error_code": 500,
+                                          "description": "internal server error"})]
+        client, _retries, _sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.retryable is True
+
     def test_error_code_parsed_into_exception(self, fake_telegram):
         fake_telegram.responses = [(400, {"ok": False, "error_code": 400,
                                           "description": "Bad Request: chat not found"})]

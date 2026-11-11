@@ -451,9 +451,60 @@ class TestOnceChannelBound:
             assert capture.events("channel_gave_up")
             state = DedupState(cfg.state_file)
             state.load()
-            assert not state.is_seen("any-item")
+            # The pending item was never quarantined by the channel failure.
+            assert not state.is_seen("probe-item")
         finally:
             server.close()
+
+    def test_channel_counter_resets_on_non_channel_session(self, tmp_path, fake_telegram):
+        # 401 → (session ends via ws drop — non-channel, breaks the run of
+        # consecutive failures) → 401: the once bound counts CONSECUTIVE
+        # channel failures and must not fire; delivery lands normally once
+        # the scripted failures are exhausted.
+        fake_telegram.responses = [
+            (200, {"ok": True, "result": [private_chat_update(987654)]}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+            (401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
+        ]
+        holder = {}
+        sessions = {"n": 0}
+        first = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="reset-case")), ("close",)])
+        try:
+            notifier, cfg, capture = build(
+                tmp_path, first, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
+            original_factory = notifier.ws_factory
+
+            def factory():
+                if sessions["n"] == 0:
+                    sessions["n"] += 1
+                    return original_factory()
+                if sessions["n"] == 1:
+                    # A session that ends via plain ws drop (non-channel).
+                    sessions["n"] += 1
+                    dropper = FakeMulticaWS(script=[("close",)])
+                    holder["dropper"] = dropper
+                    return WSClient(f"{dropper.url}?workspace_id=ws-target",
+                                    connect_timeout=cfg.connect_timeout,
+                                    read_timeout=cfg.read_timeout)
+                delivering = FakeMulticaWS(script=[("text", make_inbox_frame(item_id="reset-case")), ("close",)])
+                holder.setdefault("delivering", delivering)
+                return WSClient(f"{delivering.url}?workspace_id=ws-target",
+                                connect_timeout=cfg.connect_timeout,
+                                read_timeout=cfg.read_timeout)
+
+            notifier.ws_factory = factory
+            thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert len(capture.events("channel_gave_up")) == 0
+            assert len(capture.events("delivery_failed_permanent")) == 0
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.is_seen("reset-case")
+        finally:
+            first.close()
+            for server in holder.values():
+                server.close()
 
     def test_steady_mode_keeps_retrying_channel_failure(self, tmp_path, fake_telegram):
         fake_telegram.responses = [
