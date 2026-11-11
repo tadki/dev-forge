@@ -348,21 +348,9 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                           </Badge>
                         )}
                         {r.firstPartyCount > 0 && (
-                          <span
-                            className="mono"
-                            title={`自建 ${r.firstPartyCount} / ${r.assetCount} 个资产`}
-                            style={{
-                              background: '#cca700',
-                              color: 'var(--ink)',
-                              border: '1px solid var(--ink)',
-                              borderRadius: 3,
-                              padding: '0 5px',
-                              fontSize: 'var(--fs-label)',
-                              fontWeight: 600,
-                            }}
-                          >
+                          <Badge tone="default" title={`自建 ${r.firstPartyCount} / ${r.assetCount} 个资产`} style={{ background: '#cca700' }}>
                             {r.firstPartyCount}
-                          </span>
+                          </Badge>
                         )}
                       </span>
                       <span className="row" style={{ gap: 4 }}>

@@ -45,9 +45,9 @@ export function SectionHeader({ no, title, en }: { no: string; title: string; en
 
 export type BadgeTone = 'ok' | 'warn' | 'bad' | 'off' | 'plain' | 'default';
 
-export function Badge({ tone = 'default', title, children }: { tone?: BadgeTone; title?: string; children: ReactNode }) {
+export function Badge({ tone = 'default', title, style, children }: { tone?: BadgeTone; title?: string; style?: CSSProperties; children: ReactNode }) {
   return (
-    <span className={`badge ${tone === 'default' ? '' : `badge-${tone}`}`} title={title}>
+    <span className={`badge ${tone === 'default' ? '' : `badge-${tone}`}`} title={title} style={style}>
       {children}
     </span>
   );
