@@ -14,6 +14,7 @@ kinds:
       collector: multica
       cmd: [multica, skill, list]
       detailCmd: [multica, skill, get, "{id}", --with-content]
+      files: true                       # detail 登记附带文件 files[]（skill get --with-content）
       note: '清单经 skill list（--output json），正文逐条 skill get --with-content（并发限流 5，上限 50 条）'
     write:
       type: command

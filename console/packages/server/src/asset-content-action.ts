@@ -76,9 +76,10 @@ interface SkillFileEntry {
   content?: string;
 }
 
-/** 附带文件路径合法性：技能内相对路径，拒绝绝对路径与 .. 穿越（兼容 '\' 分隔，防将来跑在 Windows） */
+/** 附带文件路径合法性：技能内相对路径，拒绝绝对路径与 .. 穿越（兼容 '\' 分隔，防将来跑在 Windows）；
+ *  花括号与通道占位符（{content}/{platformId}/{filePath}）冲突，一并拒绝 */
 function isSafeSkillFilePath(file: string): boolean {
-  return file.length > 0 && !isAbsolute(file) && !file.split(/[\\/]/).includes('..');
+  return file.length > 0 && !isAbsolute(file) && !file.split(/[\\/]/).includes('..') && !/[{}]/.test(file);
 }
 
 /** 编辑后的资产形态：本体 content 或附带文件 files[].content（实例缺该文件时按 upsert 补建） */
@@ -162,6 +163,16 @@ export function relatedSkillInstances(asset: Asset, state: RegistryState): Asset
   );
 }
 
+/**
+ * 实例采集端是否登记附带文件（platforms.d read.files 声明）：
+ * 附带文件编辑后实例库记录是否同步重写以采集可见性为准。本地 file 型采集只读 SKILL.md，
+ * 若把 files 硬写进其实例库记录，下轮采集立即产生无法自愈的 store-drift（库记录 create-only）。
+ * 编辑资产自身不受此限：file 必已在其 payload.files 登记，其采集端必然回读 files。
+ */
+function instanceTracksFiles(inst: Asset, platforms: PlatformDef[]): boolean {
+  return resolvePlatform(inst, platforms)?.kinds?.[inst.kind]?.read?.files === true;
+}
+
 function channelTarget(asset: Asset, state: RegistryState, platforms: PlatformDef[], file?: string): AssetContentSyncTarget {
   if (file !== undefined) return fileChannelTarget(asset, state, platforms, file);
   const resolved = resolveWriteChannel(asset, state.assets, platforms);
@@ -215,7 +226,8 @@ export function planAssetContentSync(
     targets.push({ platform: 'library', kind: 'store', assetId: asset.id, executable: true, label: `更新库内真源 ${asset.id}${file ? ` · ${file}` : ''}` });
   }
   for (const inst of instances) {
-    if (storeRecords?.has(inst.id)) {
+    // 附带文件：仅当实例采集会回读 files 才重写其库记录；不登记的平台只写生产文件，不动库记录
+    if (storeRecords?.has(inst.id) && (file === undefined || instanceTracksFiles(inst, platforms))) {
       targets.push({ platform: 'library', kind: 'store', assetId: inst.id, executable: true, label: `更新库内真源 ${inst.id}${file ? ` · ${file}` : ''}` });
     }
   }
@@ -248,7 +260,7 @@ export async function executeAssetContentSave(
   }
   if (file !== undefined) {
     if (typeof file !== 'string' || !isSafeSkillFilePath(file)) {
-      return { status: 'invalid', ok: false, output: 'file 必须是技能内相对路径（禁止绝对路径与 .. 穿越）', targets: [] };
+      return { status: 'invalid', ok: false, output: 'file 必须是技能内相对路径（禁止绝对路径、.. 穿越与花括号占位符）', targets: [] };
     }
     const registered = ((asset.payload as { files?: SkillFileEntry[] }).files ?? []).some((f) => f.path === file);
     if (!registered) {

@@ -399,4 +399,52 @@ describe('附带文件编辑（file 参数）', () => {
     }
     expect(execCalls).toHaveLength(0);
   });
+
+  it('跨平台 1:N：本地实例只写生产文件，库记录不追加 files（采集不登记，追加即永久 store-drift）', () => {
+    const localTwin = mk('skill:user-demo', { name: 'demo', payload: { content: 'old body' } });
+    const records = new Map([[localTwin.id, { asset: localTwin } as never]]);
+    const { targets } = planAssetContentSync(multicaWithFiles, stateWith([multicaWithFiles, localTwin]), DEFAULT_PLATFORMS, records, 'assign-template.md');
+    // 本地实例仍有写盘通道（1:N 语义不变），路径派生自其本体目录
+    expect(targets.filter((t) => t.kind === 'file').map((t) => t.path)).toEqual([join('/tmp/skills/skill:user-demo', 'assign-template.md')]);
+    // 库目标只有编辑侧自身：本地实例采集不登记 files，库记录同步会以采集可见性为准跳过
+    expect(targets.filter((t) => t.kind === 'store').map((t) => t.assetId)).toEqual([multicaWithFiles.id]);
+  });
+
+  it('multica 实例缺该附带文件 → 库记录 upsert 补建（其采集经 detail 回读 files）', async () => {
+    const twinEmpty = mk('skill:multica-twin', {
+      name: 'demo',
+      platforms: ['multica'],
+      source: { collector: 'multica', path: 'multica://skills/pl-twin' },
+      payload: { platformId: 'pl-twin', content: 'old body' },
+    });
+    const storeDir = join(dir, 'store-aux-twin');
+    await writeStoreRecord(storeDir, twinEmpty);
+    execCalls.length = 0;
+    const r = await executeAssetContentSave(multicaWithFiles.id, 'new template', stateWith([multicaWithFiles, twinEmpty]), {
+      platforms: DEFAULT_PLATFORMS,
+      storeDir,
+      storeRecords: (await loadFirstPartyStore(storeDir)).records,
+      exec: execOk,
+    }, 'assign-template.md');
+    expect(r.status).toBe('ok');
+    // 两个 multica 实例各自走 fileWrite 通道
+    expect(execCalls.map((c) => c.args[3]).sort()).toEqual(['pl-demo', 'pl-twin']);
+    // 实例库记录补建该文件（下轮采集 detail 回读后指纹一致，无漂移）
+    const rec = (await loadFirstPartyStore(storeDir)).records.get(twinEmpty.id);
+    expect(rec?.asset.payload).toMatchObject({ files: [{ path: 'assign-template.md', content: 'new template' }] });
+    expect(rec?.hash).toBe(
+      contentFingerprint({ ...twinEmpty, payload: { ...twinEmpty.payload, files: [{ path: 'assign-template.md', content: 'new template' }] } })
+    );
+  });
+
+  it('花括号文件名与通道占位符冲突 → invalid（即便采集登记了也不放行）', async () => {
+    const weird = {
+      ...multicaWithFiles,
+      payload: { ...multicaWithFiles.payload, files: [{ path: '{content}', content: 'x' }] },
+    };
+    execCalls.length = 0;
+    const r = await executeAssetContentSave(weird.id, 'x', stateWith([weird]), { platforms: DEFAULT_PLATFORMS, exec: execOk }, '{content}');
+    expect(r.status).toBe('invalid');
+    expect(execCalls).toHaveLength(0);
+  });
 });

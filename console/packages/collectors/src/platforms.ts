@@ -31,6 +31,9 @@ export interface PlatformRead {
   cmd?: string[];
   /** cli：逐条取正文的命令（如 multica skill get {id} --with-content） */
   detailCmd?: string[];
+  /** detail 采集是否登记附带文件 files[]（multica 经 skill get --with-content 登记）。
+   *  附带文件编辑后实例库记录是否同步重写以此为准：file 型采集只读本体，缺省不登记。 */
+  files?: boolean;
   /** file：扫描路径模式（支持 ~ 与 <project>/<devforge>/<task.work_dir> 占位） */
   paths?: string[];
   note?: string;
@@ -218,6 +221,7 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           collector: 'multica',
           cmd: ['multica', 'skill', 'list'],
           detailCmd: ['multica', 'skill', 'get', '{id}', '--with-content'],
+          files: true,
           note: '清单经 skill list（--output json），正文逐条 skill get --with-content（并发限流 5，上限 50 条）',
         },
         write: { type: 'command', cmd: ['multica', 'skill', 'update', '{platformId}', '--content', '{content}'], platformIdFrom: 'self' },
@@ -378,7 +382,7 @@ function platformDefIssue(def: unknown): string | null {
       if (fileWriteIssue) return fileWriteIssue;
     }
     const read = (v as { read?: unknown } | null)?.read as
-      | { how?: unknown; collector?: unknown; cmd?: unknown; detailCmd?: unknown; paths?: unknown; note?: unknown }
+      | { how?: unknown; collector?: unknown; cmd?: unknown; detailCmd?: unknown; files?: unknown; paths?: unknown; note?: unknown }
       | undefined;
     if (read !== undefined) {
       if (!read || typeof read !== 'object') return `kinds.${kind}.read 必须是映射`;
@@ -386,6 +390,7 @@ function platformDefIssue(def: unknown): string | null {
         return `kinds.${kind}.read.how 未知：${String(read.how)}`;
       }
       if (read.collector !== undefined && typeof read.collector !== 'string') return `kinds.${kind}.read.collector 必须是字符串`;
+      if (read.files !== undefined && typeof read.files !== 'boolean') return `kinds.${kind}.read.files 必须是布尔值`;
       if (read.note !== undefined && typeof read.note !== 'string') return `kinds.${kind}.read.note 必须是字符串`;
       if (read.how === 'cli') {
         if (!isStrArr(read.cmd)) return `kinds.${kind}.read.how=cli 需要 cmd 字符串数组`;
