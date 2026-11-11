@@ -2,10 +2,12 @@
 
 Run modes:
 - steady: reconnect forever, deliver every new inbox:new item once.
-- --once: exit 0 after the first delivered notification (live probe).
+- --once: exit 0 after the first delivered notification (live probe);
+  a permanently rejected auth token ends the probe deterministically.
 
 Exit codes: 0 delivered (once) / 2 config or chat-id discovery failure /
-3 stopped without delivering / 130 interrupted.
+3 stopped without delivering / 4 auth permanently rejected (--once) /
+130 interrupted.
 """
 
 import argparse
@@ -41,6 +43,7 @@ from multica_telegram_notifier.wsclient import WSClient, WebSocketError
 EXIT_OK = 0
 EXIT_CONFIG = 2
 EXIT_STOPPED = 3
+EXIT_AUTH_REJECTED = 4
 EXIT_INTERRUPTED = 130
 
 
@@ -61,7 +64,8 @@ def build_components(config, ws_cls=WSClient):
     state.load()
 
     def ws_factory():
-        return ws_cls(ws_url(config), connect_timeout=config.connect_timeout)
+        return ws_cls(ws_url(config), connect_timeout=config.connect_timeout,
+                      read_timeout=config.read_timeout)
 
     return telegram, state, ws_factory
 
@@ -77,10 +81,12 @@ class Notifier:
         self.sleep = sleep
         self.stop_event = stop_event
         self.once = once
+        self._chat_id = None
+        self._auth_failures = 0
 
     def run(self) -> int:
         try:
-            chat_id = self._ensure_chat_id()
+            self._chat_id = self._ensure_chat_id()
         except TelegramError as exc:
             self.logger.error("chat_id_discovery_failed", error=str(exc))
             return EXIT_CONFIG
@@ -88,10 +94,14 @@ class Notifier:
         while not self._stopped():
             delivered = False
             try:
-                delivered = self._session(chat_id)
+                delivered = self._session()
                 attempt = 0
             except AuthRejected as exc:
                 self.logger.error("auth_rejected", error=str(exc))
+                self._auth_failures += 1
+                if self._auth_bound_reached():
+                    self.logger.error("auth_gave_up", attempts=self._auth_failures)
+                    return EXIT_AUTH_REJECTED
             except (SessionError, WebSocketError, TelegramError, OSError) as exc:
                 self.logger.warning("session_ended", error=str(exc))
             if delivered:
@@ -100,6 +110,15 @@ class Notifier:
             attempt += 1
         self.logger.info("stopped")
         return EXIT_STOPPED
+
+    def _auth_bound_reached(self) -> bool:
+        # A --once live probe must terminate deterministically on a permanently
+        # bad token instead of retrying forever; one full backoff cycle of
+        # consecutive rejections is enough evidence the token won't recover.
+        if not self.once:
+            return False
+        limit = len(self.config.reconnect_backoff or (1.0,))
+        return self._auth_failures >= limit
 
     def _ensure_chat_id(self) -> int:
         if self.state.chat_id is not None:
@@ -110,14 +129,27 @@ class Notifier:
         self.logger.info("chat_id_discovered", chat_id=chat_id)
         return chat_id
 
-    def _session(self, chat_id: int) -> bool:
+    def _rediscover_chat_id(self) -> int:
+        self.state.chat_id = None
+        self.state.save()
+        chat_id = self.telegram.discover_chat_id()
+        self.state.set_chat_id(chat_id)
+        self.logger.info("chat_id_rediscovered", chat_id=chat_id)
+        return chat_id
+
+    def _session(self) -> bool:
+        if self._chat_id is None:
+            # TelegramError here ends the session; the run loop retries,
+            # because a chat may appear once the operator sends /start.
+            self._chat_id = self._ensure_chat_id()
         ws = self.ws_factory()
         try:
             ws.connect()
             ws.send_text(auth_frame(self.config.multica_pat))
             self._read_auth_response(ws)
+            self._auth_failures = 0
             self.logger.info("auth_ok", server=self.config.server_url)
-            return self._event_loop(ws, chat_id)
+            return self._event_loop(ws)
         finally:
             ws.close()
 
@@ -130,17 +162,17 @@ class Notifier:
         if not is_auth_ack(frame):
             raise SessionError(f"unexpected first frame type: {frame.get('type')!r}")
 
-    def _event_loop(self, ws, chat_id: int) -> bool:
+    def _event_loop(self, ws) -> bool:
         while True:
             frame = parse_server_frame(ws.recv_message())
             if frame is None:
                 self.logger.debug("malformed_frame_ignored")
                 continue
-            delivered = self._dispatch_frame(frame, chat_id)
+            delivered = self._dispatch_frame(frame)
             if delivered:
                 return True
 
-    def _dispatch_frame(self, frame: dict, chat_id: int) -> bool:
+    def _dispatch_frame(self, frame: dict) -> bool:
         if frame.get("type") != EVENT_INBOX_NEW:
             self.logger.debug("event_ignored", frame_type=str(frame.get("type")))
             return False
@@ -152,21 +184,47 @@ class Notifier:
         if workspace != self.config.workspace_id:
             self.logger.debug("other_workspace_ignored", workspace_id=workspace)
             return False
-        return self._deliver(item, chat_id)
+        return self._deliver(item)
 
-    def _deliver(self, item: dict, chat_id: int) -> bool:
+    def _deliver(self, item: dict) -> bool:
         item_id = inbox_item_id(item)
         if self.state.is_seen(item_id):
             self.logger.debug("duplicate_skipped", item_id=item_id)
             return False
         text = format_notification(item)
-        result = self.telegram.send_message(
-            chat_id, text, retries=self.config.send_retries, sleep=self.sleep)
+        try:
+            result = self._send_notification(text)
+        except TelegramError as exc:
+            if exc.retryable:
+                raise
+            # A permanent rejection would otherwise be treated as an ordinary
+            # session end and re-sent on every reconnect forever; record the
+            # item as handled (quarantine) so redelivery loops cannot start.
+            self.state.mark_seen(item_id)
+            self.logger.error("delivery_failed_permanent", item_id=item_id, error=str(exc))
+            return False
         self.state.mark_seen(item_id)
         self.logger.info(
             "delivered", item_id=item_id, message_id=result.get("message_id"),
             inbox_type=str(item.get("type")), title=str(item.get("title")))
         return self.once
+
+    def _send_notification(self, text: str) -> dict:
+        try:
+            return self.telegram.send_message(
+                self._chat_id, text, retries=self.config.send_retries, sleep=self.sleep)
+        except TelegramError as exc:
+            if not self._is_stale_chat_error(exc):
+                raise
+            self.logger.warning("stale_chat_id", error=str(exc))
+            self._chat_id = self._rediscover_chat_id()
+            return self.telegram.send_message(
+                self._chat_id, text, retries=self.config.send_retries, sleep=self.sleep)
+
+    @staticmethod
+    def _is_stale_chat_error(exc: TelegramError) -> bool:
+        # Telegram reports a dead chat as HTTP 400 "chat not found".
+        return exc.error_code == 400 and "chat not found" in str(exc).lower()
 
     def _stopped(self) -> bool:
         return self.stop_event is not None and self.stop_event.is_set()

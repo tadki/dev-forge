@@ -229,3 +229,24 @@ def struct_len_bytes(n):
     import struct
 
     return struct.pack("!BBQ", 0x81, 127, n)
+
+
+class TestReadTimeout:
+    def test_silent_server_raises_closed_quickly(self):
+        from multica_notifier_fakes import FakeMulticaWS
+
+        import time
+
+        server = FakeMulticaWS(script=[("sleep", 5)])
+        try:
+            client = WSClient(server.url, read_timeout=0.4)
+            client.connect()
+            client.send_text("hello")
+            assert json.loads(client.recv_message()) == {"type": "auth_ack"}
+            start = time.monotonic()
+            with pytest.raises(WebSocketClosed):
+                client.recv_message()
+            assert time.monotonic() - start < 3
+            client.close()
+        finally:
+            server.close()

@@ -81,6 +81,31 @@ class TestGetUpdates:
             client.get_updates()
 
 
+class TestTextLengthLimit:
+    def test_long_text_truncated_to_telegram_limit(self, fake_telegram):
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        result = client.send_message(42, "x" * 5000, retries=retries, sleep=sleep)
+        assert result == {"message_id": 4242}
+        _path, body = fake_telegram.requests[0]
+        assert len(body["text"]) == 4096
+        assert set(body["text"]) == {"x"}
+
+    def test_text_at_limit_unchanged(self, fake_telegram):
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        client.send_message(42, "y" * 4096, retries=retries, sleep=sleep)
+        _path, body = fake_telegram.requests[0]
+        assert body["text"] == "y" * 4096
+
+    def test_error_code_parsed_into_exception(self, fake_telegram):
+        fake_telegram.responses = [(400, {"ok": False, "error_code": 400,
+                                          "description": "Bad Request: chat not found"})]
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        with pytest.raises(TelegramError) as exc:
+            client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
+        assert exc.value.error_code == 400
+        assert exc.value.retryable is False
+
+
 class TestDiscoverChatId:
     def test_finds_private_chat(self, fake_telegram):
         fake_telegram.responses = [(200, {"ok": True, "result": [private_chat_update(987654)]})]

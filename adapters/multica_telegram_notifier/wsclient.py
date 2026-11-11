@@ -54,10 +54,11 @@ def parse_ws_url(url: str):
 
 class WSClient:
     def __init__(self, url: str, connect_timeout: float = 10.0,
-                 max_frame_bytes: int = MAX_FRAME_BYTES):
+                 max_frame_bytes: int = MAX_FRAME_BYTES, read_timeout: float = 90.0):
         self.url = url
         self.connect_timeout = connect_timeout
         self.max_frame_bytes = max_frame_bytes
+        self.read_timeout = read_timeout
         self._sock = None
         self._frag_parts = None
 
@@ -72,9 +73,12 @@ class WSClient:
         except (WebSocketError, OSError):
             self.close()
             raise
-        # Handshake needs timeouts; the steady state blocks on recv so the
-        # read loop can wait indefinitely for the next event or server ping.
-        self._sock.settimeout(None)
+        # Handshake uses the connect timeout; steady-state reads stay bounded:
+        # a half-open connection would otherwise block recv forever and
+        # silently drop notifications. The server pings every ~54 s, so a
+        # longer quiet stretch means the link is dead — end the session so
+        # the caller can rebuild it.
+        self._sock.settimeout(self.read_timeout)
 
     def send_text(self, text: str) -> None:
         self._send_frame(OP_TEXT, text.encode("utf-8"))
@@ -206,6 +210,10 @@ class WSClient:
         while len(chunks) < count:
             try:
                 chunk = self._sock.recv(count - len(chunks))
+            except TimeoutError:
+                # socket.timeout aliases TimeoutError; must precede OSError.
+                raise WebSocketClosed(
+                    f"no frame within {self.read_timeout}s (read timeout)") from None
             except (ConnectionResetError, OSError) as exc:
                 raise WebSocketClosed(f"connection lost: {exc}") from exc
             if not chunk:

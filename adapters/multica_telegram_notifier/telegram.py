@@ -14,11 +14,31 @@ import urllib.request
 
 RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504}
 
+# Telegram sendMessage hard limit on the text field (Bot API contract).
+MAX_TEXT_LENGTH = 4096
+
+
+def _error_detail(exc) -> tuple:
+    """Read (error_code, description) from a Telegram HTTP error body.
+
+    Telegram returns non-2xx with a JSON body carrying error_code/description
+    (e.g. 400 "chat not found"); body reads never raise here.
+    """
+    try:
+        body = json.loads(exc.read().decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None, ""
+    if not isinstance(body, dict):
+        return None, ""
+    raw = body.get("error_code")
+    return (raw if isinstance(raw, int) else None), str(body.get("description", ""))
+
 
 class TelegramError(Exception):
-    def __init__(self, message: str, retryable: bool = True):
+    def __init__(self, message: str, retryable: bool = True, error_code=None):
         super().__init__(message)
         self.retryable = retryable
+        self.error_code = error_code
 
 
 class TelegramClient:
@@ -28,6 +48,9 @@ class TelegramClient:
         self.timeout = timeout
 
     def send_message(self, chat_id: int, text: str, retries=(), sleep=time.sleep) -> dict:
+        # Truncate at the API boundary: one oversized inbox item must not
+        # wedge delivery (Telegram rejects > 4096 outright).
+        text = text[:MAX_TEXT_LENGTH]
         attempts = 1 + len(retries)
         for attempt in range(attempts):
             try:
@@ -73,9 +96,12 @@ class TelegramClient:
         except urllib.error.HTTPError as exc:
             # exc and its __context__ embed the token-bearing URL; `from None`
             # keeps that context out of any traceback that reaches a log.
+            error_code, description = _error_detail(exc)
+            detail = description or f"HTTP {exc.code}"
             raise TelegramError(
-                f"telegram {method} HTTP {exc.code}",
+                f"telegram {method} failed: {detail}",
                 retryable=exc.code in RETRYABLE_HTTP,
+                error_code=error_code,
             ) from None
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
             reason = type(exc).__name__
@@ -88,8 +114,11 @@ class TelegramClient:
                 f"telegram {method} returned invalid JSON", retryable=True) from None
         if not isinstance(body, dict) or body.get("ok") is not True:
             description = body.get("description", "invalid response") if isinstance(body, dict) else "invalid response"
+            raw_code = body.get("error_code") if isinstance(body, dict) else None
             raise TelegramError(
-                f"telegram {method} failed: {description}", retryable=False)
+                f"telegram {method} failed: {description}",
+                retryable=False,
+                error_code=raw_code if isinstance(raw_code, int) else None)
         return body
 
     @staticmethod
