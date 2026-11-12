@@ -182,6 +182,41 @@ class TestCaching:
         finally:
             server.close()
 
+    def test_issue_ref_positive_cache_skips_repeated_lookups(self):
+        # LOW-1 (Final Review R1): the ("issue", id) cache read in issue_ref
+        # was unpinned — bypassing it made the no-prefix-title path re-query
+        # /api/issues on every call without any test noticing. Both the hit
+        # and the TTL expiry must be observable.
+        server = FakeMulticaAPI()
+        try:
+            clock = _ManualClock()
+            resolver = _resolver(server, clock=clock)
+            assert resolver.issue_ref(ISSUE_ID, "普通标题") == (
+                "SEE-1567", "普通标题")
+            assert resolver.issue_ref(ISSUE_ID, "普通标题") == (
+                "SEE-1567", "普通标题")
+            assert len([p for p in server.requests if "/api/issues/" in p]) == 1
+            clock.now += 3600.0 * 7  # positive TTL is 6h
+            assert resolver.issue_ref(ISSUE_ID, "普通标题") == (
+                "SEE-1567", "普通标题")
+            assert len([p for p in server.requests if "/api/issues/" in p]) == 2
+        finally:
+            server.close()
+
+    def test_issue_ref_empty_title_path_also_caches(self):
+        # Same pin for the no-title branch: the second call must ride the
+        # ("issue", id) entry instead of re-fetching.
+        server = FakeMulticaAPI()
+        try:
+            resolver = _resolver(server)
+            assert resolver.issue_ref(ISSUE_ID, "") == (
+                "SEE-1567", "优化 Telegram 排版")
+            assert resolver.issue_ref(ISSUE_ID, "") == (
+                "SEE-1567", "优化 Telegram 排版")
+            assert len([p for p in server.requests if "/api/issues/" in p]) == 1
+        finally:
+            server.close()
+
 
 class TestBounding:
     def test_hanging_server_is_bounded_by_timeout(self):
