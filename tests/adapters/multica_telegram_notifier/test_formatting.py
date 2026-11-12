@@ -412,6 +412,13 @@ class TestBlockStructure:
         out = markdown_to_html("| K |\n|---|\n| v |")
         assert "• <b>K</b>: v" in out
 
+    def test_list_followed_by_paragraph_keeps_next_line(self):
+        # A list block must consume only its own lines; the following paragraph
+        # line must still render (regression guard for block-consumption bounds).
+        out = markdown_to_html("- 项\n后续段落")
+        assert "• 项" in out
+        assert "后续段落" in out
+
 
 class TestStaticResolverFallbacks:
     """The no-query static resolver must handle a missing title."""
