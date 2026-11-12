@@ -17,6 +17,8 @@ DEFAULT_CONNECT_TIMEOUT = 10.0
 # Must exceed the Multica server ping interval (~54 s): a longer quiet
 # stretch means the link is dead and the session should be rebuilt.
 DEFAULT_READ_TIMEOUT = 90.0
+# Bounded metadata lookups (agent/issue names) must never stall delivery.
+DEFAULT_QUERY_TIMEOUT = 5.0
 
 REQUIRED_KEYS = (
     "NOTIFIER_MULTICA_PAT",
@@ -44,6 +46,8 @@ class Config:
     send_retries: tuple
     connect_timeout: float
     read_timeout: float
+    api_base: str
+    query_timeout: float
 
 
 def parse_env_text(text: str) -> dict:
@@ -147,6 +151,10 @@ def load_config(env: Mapping) -> Config:
             optional("NOTIFIER_SEND_RETRIES", "1,2,4"), "NOTIFIER_SEND_RETRIES"),
         connect_timeout=connect_timeout,
         read_timeout=read_timeout,
+        api_base=optional("NOTIFIER_API_BASE", server_url).rstrip("/"),
+        query_timeout=_parse_positive_seconds(
+            optional("NOTIFIER_QUERY_TIMEOUT", str(DEFAULT_QUERY_TIMEOUT)),
+            "NOTIFIER_QUERY_TIMEOUT"),
     )
 
 

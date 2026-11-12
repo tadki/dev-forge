@@ -22,13 +22,14 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if __name__ == "__main__" and _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from multica_telegram_notifier.config import ConfigError, load_config_file, ws_url
+from multica_telegram_notifier.config import Config, ConfigError, load_config_file, ws_url
+from multica_telegram_notifier.formatting import render_notification
 from multica_telegram_notifier.jsonlog import JsonLogger
+from multica_telegram_notifier.multica_api import MetadataResolver
 from multica_telegram_notifier.protocol import (
     EVENT_INBOX_NEW,
     auth_error_message,
     auth_frame,
-    format_notification,
     inbox_item_id,
     is_auth_ack,
     is_auth_error,
@@ -38,7 +39,11 @@ from multica_telegram_notifier.protocol import (
 )
 from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.state import DedupState
-from multica_telegram_notifier.telegram import TelegramClient, TelegramError
+from multica_telegram_notifier.telegram import (
+    TelegramClient,
+    TelegramError,
+    is_parse_entity_error,
+)
 from multica_telegram_notifier.wsclient import WSClient, WebSocketError
 
 EXIT_OK = 0
@@ -73,9 +78,17 @@ def build_components(config, ws_cls=WSClient):
     return telegram, state, ws_factory
 
 
+def build_resolver(config: Config) -> MetadataResolver:
+    """Bounded read-only name lookups (§SPEC-001); failures degrade, never block."""
+    return MetadataResolver(
+        config.api_base, config.multica_pat, config.workspace_id,
+        timeout=config.query_timeout)
+
+
 class Notifier:
     def __init__(self, config, logger, telegram, state, ws_factory,
-                 sleep=time.sleep, stop_event: threading.Event = None, once: bool = False):
+                 sleep=time.sleep, stop_event: threading.Event = None, once: bool = False,
+                 resolver: MetadataResolver = None):
         self.config = config
         self.logger = logger
         self.telegram = telegram
@@ -84,6 +97,7 @@ class Notifier:
         self.sleep = sleep
         self.stop_event = stop_event
         self.once = once
+        self.resolver = resolver
         # D-1: the configured chat id is the ONLY delivery target. Discovery
         # via getUpdates is deliberately absent — picking the "newest private
         # chat" could leak Inbox content to somebody else's chat.
@@ -228,9 +242,9 @@ class Notifier:
         if self.state.is_seen(item_id):
             self.logger.debug("duplicate_skipped", item_id=item_id)
             return False
-        text = format_notification(item)
+        note = render_notification(item, self.resolver)
         try:
-            result = self._send_notification(text)
+            result = self._send_notification(note.html, note.plain)
         except TelegramError as exc:
             if exc.retryable or exc.is_channel_error:
                 # Transient or channel-level failure: the item stays pending
@@ -249,10 +263,22 @@ class Notifier:
             inbox_type=str(item.get("type")), title=str(item.get("title")))
         return self.once
 
-    def _send_notification(self, text: str) -> dict:
+    def _send_notification(self, html: str, plain: str) -> dict:
+        try:
+            return self._send_with_stale_chat_retry(html, parse_mode="HTML")
+        except TelegramError as exc:
+            if not is_parse_entity_error(exc):
+                raise
+            # §SPEC-004: only the explicit HTML entity rejection downgrades to
+            # a single plain-text send; all other errors keep their semantics.
+            self.logger.warning("html_parse_rejected_plain_fallback", error=str(exc))
+            return self._send_with_stale_chat_retry(plain, parse_mode=None)
+
+    def _send_with_stale_chat_retry(self, text: str, parse_mode) -> dict:
         try:
             return self.telegram.send_message(
-                self._chat_id, text, retries=self.config.send_retries, sleep=self.sleep)
+                self._chat_id, text, parse_mode=parse_mode,
+                retries=self.config.send_retries, sleep=self.sleep)
         except TelegramError as exc:
             if not self._is_stale_chat_error(exc):
                 raise
@@ -260,7 +286,8 @@ class Notifier:
             self._chat_id = self._reaffirm_chat_id()
             try:
                 return self.telegram.send_message(
-                    self._chat_id, text, retries=self.config.send_retries, sleep=self.sleep)
+                    self._chat_id, text, parse_mode=parse_mode,
+                    retries=self.config.send_retries, sleep=self.sleep)
             except TelegramError as retry_exc:
                 if not self._is_stale_chat_error(retry_exc):
                     raise
@@ -317,7 +344,8 @@ def main(argv=None) -> int:
                           "error": f"log file not writable: {exc}"}), file=sys.stderr)
         return EXIT_CONFIG
     telegram, state, ws_factory = build_components(config)
-    notifier = Notifier(config, logger, telegram, state, ws_factory, once=args.once)
+    notifier = Notifier(config, logger, telegram, state, ws_factory, once=args.once,
+                        resolver=build_resolver(config))
     try:
         return notifier.run()
     except KeyboardInterrupt:

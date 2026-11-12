@@ -69,28 +69,3 @@ def inbox_item_id(item: dict) -> str:
     # payloads to ASCII, so the UTF-8 encode can never raise.
     canonical = json.dumps(item, sort_keys=True)
     return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
-
-
-def format_notification(item: dict) -> str:
-    lines = [f"[Multica] {_text(item.get('type')) or 'inbox'}"]
-    title = _text(item.get("title"))
-    if title:
-        lines.append(title)
-    body = _text(item.get("body"))
-    if body:
-        lines.append(body)
-    issue_id = _text(item.get("issue_id"))
-    if issue_id:
-        lines.append(f"Issue: {issue_id}")
-    actor = " ".join(part for part in (_text(item.get("actor_type")),
-                                       _text(item.get("actor_id"))) if part)
-    if actor:
-        lines.append(f"来源: {actor}")
-    created_at = _text(item.get("created_at"))
-    if created_at:
-        lines.append(f"时间: {created_at}")
-    return "\n".join(lines)
-
-
-def _text(value) -> str:
-    return value if isinstance(value, str) else ""

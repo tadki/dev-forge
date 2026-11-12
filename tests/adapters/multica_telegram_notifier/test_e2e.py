@@ -15,7 +15,7 @@ from multica_telegram_notifier.notifier import EXIT_OK, Notifier, build_componen
 from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.wsclient import WSClient
 
-from multica_notifier_fakes import FakeMulticaWS, make_env, make_inbox_frame
+from multica_notifier_fakes import FakeMulticaAPI, FakeMulticaWS, make_env, make_inbox_frame
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 PAT = "test-pat-value-0123456789"
@@ -161,5 +161,71 @@ class TestCliSubprocess:
             assert "auth_ok" in events
             log_text = log_path.read_text(encoding="utf-8")
             assert PAT not in log_text and BOT not in log_text
+        finally:
+            server.close()
+
+
+class TestReadableNotificationE2E:
+    def _run_cli(self, tmp_path, fake_telegram, env):
+        env_path = tmp_path / "see-1567.env"
+        env_path.write_text("\n".join(f"{k}={v}" for k, v in env.items()), encoding="utf-8")
+        log_path = tmp_path / "probe.jsonl"
+        proc = subprocess.run(
+            [sys.executable,
+             os.path.join(REPO_ROOT, "adapters", "multica_telegram_notifier", "notifier.py"),
+             "--config", str(env_path), "--once", "--log-json", str(log_path)],
+            capture_output=True, text=True, timeout=30)
+        return proc, log_path
+
+    def test_cli_delivers_readable_html_with_resolved_names(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        body = "| 状态 | 说明 |\n|---|---|\n| ok | 好 |\n| bad | 坏 |"
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "actor_id": "22222222-2222-2222-2222-222222222222",
+            "issue_id": "11111111-1111-1111-1111-111111111111",
+            "body": body, "title": "优化 Telegram 排版"})), ("sleep", 5)])
+        try:
+            proc, _log = self._run_cli(tmp_path, fake_telegram,
+                                       make_env(server, fake_telegram, tmp_path, api=api))
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
+            assert req[1]["parse_mode"] == "HTML"
+            text = req[1]["text"]
+            assert text.startswith("🤖 <b>Bachi</b> · <b>SEE-1567</b>")
+            assert "|---|" not in text
+            assert "<b>状态</b>: ok · <b>说明</b>: 好" in text
+            assert "22222222" not in text and "11111111" not in text
+        finally:
+            server.close()
+            api.close()
+
+    def test_cli_survives_metadata_api_outage_with_safe_header(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "actor_id": "22222222-2222-2222-2222-222222222222",
+            "issue_id": "11111111-1111-1111-1111-111111111111"})), ("sleep", 5)])
+        try:
+            proc, _log = self._run_cli(tmp_path, fake_telegram,
+                                       make_env(server, fake_telegram, tmp_path))
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
+            text = req[1]["text"]
+            assert text.startswith("🤖 <b>Agent</b>")
+            assert "22222222" not in text and "11111111" not in text
+        finally:
+            server.close()
+
+    def test_cli_plain_text_fallback_on_parse_rejection(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (400, {"ok": False, "error_code": 400,
+                   "description": "Bad Request: can't parse entities: Unsupported start tag"})]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            proc, _log = self._run_cli(tmp_path, fake_telegram,
+                                       make_env(server, fake_telegram, tmp_path))
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            calls = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")]
+            assert len(calls) == 2
+            assert calls[0][1].get("parse_mode") == "HTML"
+            assert "parse_mode" not in calls[1][1]
         finally:
             server.close()

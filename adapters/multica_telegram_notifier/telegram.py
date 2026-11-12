@@ -24,7 +24,7 @@ CHANNEL_HTTP_CODES = {401, 403, 404}
 MAX_TEXT_LENGTH = 4096
 
 
-def _truncate_utf16(text: str, limit: int = MAX_TEXT_LENGTH) -> str:
+def truncate_utf16(text: str, limit: int = MAX_TEXT_LENGTH) -> str:
     # Telegram measures length in UTF-16 code units (non-BMP chars count 2),
     # so cutting by Python len() alone can still exceed the limit for
     # emoji-heavy text; cut on the UTF-16 byte stream instead.
@@ -85,14 +85,15 @@ class TelegramClient:
         self.bot_token = bot_token
         self.timeout = timeout
 
-    def send_message(self, chat_id: int, text: str, retries=(), sleep=time.sleep) -> dict:
+    def send_message(self, chat_id: int, text: str, parse_mode=None,
+                     retries=(), sleep=time.sleep) -> dict:
         # Truncate at the API boundary: one oversized inbox item must not
         # wedge delivery (Telegram rejects > 4096 UTF-16 units outright).
-        text = _truncate_utf16(text)
+        text = truncate_utf16(text)
         attempts = 1 + len(retries)
         for attempt in range(attempts):
             try:
-                body = self._call("sendMessage", {"chat_id": chat_id, "text": text})
+                body = self._call("sendMessage", _payload(chat_id, text, parse_mode))
                 result = body.get("result")
                 if not isinstance(result, dict):
                     # A broken/malicious proxy answer must not crash callers
@@ -154,3 +155,19 @@ class TelegramClient:
             # HTTP-status path.
             raise _ok_false_error(method, body)
         return body
+
+
+def _payload(chat_id: int, text: str, parse_mode) -> dict:
+    payload = {"chat_id": chat_id, "text": text}
+    if parse_mode is not None:
+        payload["parse_mode"] = parse_mode
+    return payload
+
+
+def is_parse_entity_error(exc: BaseException) -> bool:
+    # §SPEC-004: Telegram reports an HTML entity it cannot parse as HTTP 400
+    # "can't parse entities". Only that explicit rejection may trigger the
+    # one-shot plain-text fallback; every other 400 keeps its classification.
+    return (isinstance(exc, TelegramError)
+            and exc.error_code == 400
+            and "can't parse entities" in str(exc).lower())
