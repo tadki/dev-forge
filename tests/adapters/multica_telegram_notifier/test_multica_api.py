@@ -196,3 +196,13 @@ class TestSecretDiscipline:
             assert PAT not in repr(excinfo.value)
         finally:
             server.close()
+
+
+class TestIdentifierOnlyTitleResolver:
+    def test_identifier_only_title_returns_empty_title(self):
+        server = FakeMulticaAPI()
+        try:
+            assert _resolver(server).issue_ref(ISSUE_ID, "SEE-100") == ("SEE-100", "")
+            assert server.requests == []
+        finally:
+            server.close()

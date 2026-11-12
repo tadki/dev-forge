@@ -23,7 +23,7 @@ if __name__ == "__main__" and _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from multica_telegram_notifier.config import Config, ConfigError, load_config_file, ws_url
-from multica_telegram_notifier.formatting import render_notification
+from multica_telegram_notifier.formatting import render_notification, utf16_len
 from multica_telegram_notifier.jsonlog import JsonLogger
 from multica_telegram_notifier.multica_api import MetadataResolver
 from multica_telegram_notifier.protocol import (
@@ -188,8 +188,9 @@ class Notifier:
     def _reaffirm_chat_id(self) -> int:
         # After "chat not found" the configured id is re-affirmed — never
         # re-picked from getUpdates, which could select somebody else's chat.
+        # The id itself stays out of the logs (secret-surface discipline).
         self._chat_id = self.config.telegram_chat_id
-        self.logger.info("chat_id_reaffirmed", chat_id=self._chat_id)
+        self.logger.info("chat_id_reaffirmed")
         return self._chat_id
 
     def _session(self) -> bool:
@@ -235,7 +236,22 @@ class Notifier:
         if workspace != self.config.workspace_id:
             self.logger.debug("other_workspace_ignored", workspace_id=workspace)
             return False
-        return self._deliver(item)
+        return self._deliver(self._merge_frame_actor(item, frame))
+
+    @staticmethod
+    def _merge_frame_actor(item: dict, frame: dict) -> dict:
+        # F6: the wire contract puts actor_id/actor_type at the frame top
+        # level; fill them in for items that carry no actor fields of their
+        # own, while item-embedded fields keep precedence (immutability: the
+        # incoming item is copied, never mutated).
+        merged = None
+        for key in ("actor_type", "actor_id"):
+            value = item.get(key)
+            if (not isinstance(value, str) or not value.strip()) and isinstance(frame.get(key), str):
+                if merged is None:
+                    merged = dict(item)
+                merged[key] = frame[key]
+        return merged if merged is not None else item
 
     def _deliver(self, item: dict) -> bool:
         item_id = inbox_item_id(item)
@@ -244,7 +260,7 @@ class Notifier:
             return False
         note = render_notification(item, self.resolver)
         try:
-            result = self._send_notification(note.html, note.plain)
+            result, sent_text, sent_mode = self._send_notification(note.html, note.plain)
         except TelegramError as exc:
             if exc.retryable or exc.is_channel_error:
                 # Transient or channel-level failure: the item stays pending
@@ -258,21 +274,27 @@ class Notifier:
             self.logger.error("delivery_failed_permanent", item_id=item_id, error=str(exc))
             return False
         self.state.mark_seen(item_id)
+        # §SPEC-007 evidence: record the exact outbound payload (already
+        # surrogate-safe and ≤4096 UTF-16 units) so a real probe can verify
+        # the readable header, table cards and the no-bare-UUID guarantee
+        # straight from the JSONL log; values still pass the Redactor.
         self.logger.info(
             "delivered", item_id=item_id, message_id=result.get("message_id"),
-            inbox_type=str(item.get("type")), title=str(item.get("title")))
+            inbox_type=str(item.get("type")), title=str(item.get("title")),
+            parse_mode=sent_mode, text_units=utf16_len(sent_text),
+            outbound_text=sent_text)
         return self.once
 
-    def _send_notification(self, html: str, plain: str) -> dict:
+    def _send_notification(self, html: str, plain: str) -> tuple:
         try:
-            return self._send_with_stale_chat_retry(html, parse_mode="HTML")
+            return self._send_with_stale_chat_retry(html, parse_mode="HTML"), html, "HTML"
         except TelegramError as exc:
             if not is_parse_entity_error(exc):
                 raise
             # §SPEC-004: only the explicit HTML entity rejection downgrades to
             # a single plain-text send; all other errors keep their semantics.
             self.logger.warning("html_parse_rejected_plain_fallback", error=str(exc))
-            return self._send_with_stale_chat_retry(plain, parse_mode=None)
+            return self._send_with_stale_chat_retry(plain, parse_mode=None), plain, None
 
     def _send_with_stale_chat_retry(self, text: str, parse_mode) -> dict:
         try:

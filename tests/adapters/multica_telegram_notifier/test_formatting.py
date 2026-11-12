@@ -260,3 +260,100 @@ class TestFitting:
         body = "开头标记\n\n" + "y" * 8000
         note = render_notification(_item(body=body), _FixedResolver())
         assert "开头标记" in note.html
+
+
+class TestUrlEmphasisIsolation:
+    """F1: emphasis regexes must never touch href attributes or URL text."""
+
+    def test_link_with_dunder_url_href_intact(self):
+        out = markdown_to_html("[init](https://x.test/adapters/__init__.py)")
+        assert out == '<a href="https://x.test/adapters/__init__.py">init</a>'
+
+    def test_bare_url_text_not_emphasized(self):
+        out = markdown_to_html("see https://x.test/a/__init__.py end")
+        assert "<b>" not in out and "<i>" not in out
+        assert "https://x.test/a/__init__.py" in out
+
+    def test_plain_mode_urls_undistorted(self):
+        out = render_notification(
+            _item(body="[init](https://x.test/a/__init__.py) ok https://y.test/__main__.py"),
+            _FixedResolver()).plain
+        assert "__init__.py" in out and "__main__.py" in out
+        assert "<b>" not in out
+
+    def test_emphasis_still_works_outside_urls(self):
+        assert markdown_to_html("待办：_注意_ 与 **加粗**") == "待办：<i>注意</i> 与 <b>加粗</b>"
+
+
+class TestShortDelimiterTables:
+    """F2: GFM delimiter cells need only one hyphen."""
+
+    def test_single_hyphen_delimiter(self):
+        md = "| A | B |\n|-|-|\n| 1 | 2 |"
+        assert "<b>A</b>: 1 · <b>B</b>: 2" in markdown_to_html(md)
+
+    def test_alignment_colons_with_short_delims(self):
+        md = "| A | B |\n|:-:|-:|\n| 1 | 2 |"
+        assert "<b>A</b>: 1 · <b>B</b>: 2" in markdown_to_html(md)
+
+
+class TestHeaderOnlyTable:
+    """F3: a header-only GFM table must keep its header data."""
+
+    def test_header_only_table_before_paragraph(self):
+        md = "| A | B |\n|---|---|\n\n段落"
+        out = markdown_to_html(md)
+        assert "<b>A</b> · <b>B</b>" in out
+        assert "段落" in out
+
+    def test_header_only_table_at_eof(self):
+        out = markdown_to_html("| A | B |\n|---|---|")
+        assert "<b>A</b> · <b>B</b>" in out
+
+
+class TestIdentifierOnlyTitle:
+    """F4: a title that is exactly the identifier must not repeat."""
+
+    def test_pure_identifier_title_not_duplicated(self):
+        note = render_notification(_item(title="SEE-100"), None)
+        assert note.html.count("SEE-100") == 1
+
+    def test_normal_title_still_renders_identifier_and_title(self):
+        note = render_notification(_item(title="SEE-100 修复登录"), None)
+        assert "<b>SEE-100</b> 修复登录" in note.html
+
+
+class TestSentinelNeutralization:
+    """F5: literal NUL/SOH control chars must not bypass escaping or
+    collide with protection keys."""
+
+    def test_literal_nul_sentinel_line_escaped(self):
+        out = markdown_to_html("\x00<b>inject</b>\x00")
+        assert "<b>inject</b>" not in out
+        assert "&lt;b&gt;inject&lt;/b&gt;" in out
+
+    def test_protection_key_collision_cannot_duplicate_fragments(self):
+        out = markdown_to_html("`code0` \x010\x01 tail")
+        assert out.count("<code>") == 1
+        assert "tail" in out
+
+    def test_control_chars_removed_from_labels(self):
+        note = render_notification(_item(title="abc\x00<b>x</b>"), None)
+        assert "<b>x</b>" not in note.html
+        assert "&lt;b&gt;x&lt;/b&gt;" in note.html
+
+
+class TestParenthesizedUrls:
+    """F7: link destinations keep balanced parentheses."""
+
+    def test_parens_in_link_url_kept(self):
+        out = markdown_to_html("[w](https://x.test/Foo_(bar))")
+        assert out == '<a href="https://x.test/Foo_(bar)">w</a>'
+
+    def test_image_parens_kept(self):
+        out = markdown_to_html("![i](https://x.test/a_(b).png)")
+        assert out == '<a href="https://x.test/a_(b).png">i</a>'
+
+    def test_sentence_paren_after_link_not_swallowed(self):
+        out = markdown_to_html("[w](https://x.test/a) (after)")
+        assert out == '<a href="https://x.test/a">w</a> (after)'
