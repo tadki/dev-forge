@@ -1055,3 +1055,48 @@ class TestLogSecretSurface:
             assert '"chat_id":' not in all_log_text
         finally:
             server.close()
+
+
+class TestOutboundEvidenceExactness:
+    """FR-2: delivered.outbound_text/text_units must equal the payload the
+    Telegram client actually sent, including the plain-text fallback of an
+    oversized body (which the client truncates at its own boundary)."""
+
+    def _utf16_units(self, text):
+        return len(text.encode("utf-16-le", errors="ignore")) // 2
+
+    def test_long_plain_fallback_evidence_matches_actual_payload(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (400, {"ok": False, "error_code": 400,
+                   "description": "Bad Request: can't parse entities: Unsupported start tag"})]
+        huge_body = "长" * 6000  # plain rendering alone exceeds 4096 units
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "body": huge_body})), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            calls = send_calls(fake_telegram)
+            assert len(calls) == 2 and "parse_mode" not in calls[1][1]
+            sent_text = calls[1][1]["text"]
+            delivered = capture.events("delivered")[0]
+            assert delivered["outbound_text"] == sent_text
+            assert delivered["text_units"] == self._utf16_units(sent_text)
+            assert delivered["text_units"] <= 4096
+        finally:
+            server.close()
+
+    def test_html_evidence_matches_actual_payload(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "body": "**粗** " + "长" * 5000})), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            sent_text = send_calls(fake_telegram)[0][1]["text"]
+            delivered = capture.events("delivered")[0]
+            assert delivered["outbound_text"] == sent_text
+            assert delivered["text_units"] == self._utf16_units(sent_text)
+            assert delivered["text_units"] <= 4096
+        finally:
+            server.close()

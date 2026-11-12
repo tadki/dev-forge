@@ -85,26 +85,30 @@ class MetadataResolver:
 
     def issue_ref(self, issue_id: str, item_title: str) -> tuple:
         """Returns (identifier, title); both may be empty on fallback."""
+        # FR-3: only a canonical UUID may become a REST path segment. Any
+        # other id (upstream event data) degrades locally and never steers
+        # the authenticated request off /api/issues/.
+        safe_id = issue_id if isinstance(issue_id, str) and looks_like_uuid(issue_id) else ""
         if item_title:
             m = _IDENTIFIER_RE.match(item_title)
             if m:
                 # F4: identifier-only title must not duplicate the identifier
                 # as the title.
                 return m.group(1), m.group(2).strip()
-            if not issue_id:
+            if not safe_id:
                 return "", item_title
             # Title exists but carries no SEE identifier: look one up.
-            ref = self._cached(("issue", issue_id))
+            ref = self._cached(("issue", safe_id))
             if ref is _MISS:
-                ref = self._fetch_issue(issue_id)
+                ref = self._fetch_issue(safe_id)
             if ref and ref[0]:
                 return ref[0], item_title
             return "", item_title
-        if not issue_id:
+        if not safe_id:
             return "", ""
-        ref = self._cached(("issue", issue_id))
+        ref = self._cached(("issue", safe_id))
         if ref is _MISS:
-            ref = self._fetch_issue(issue_id)
+            ref = self._fetch_issue(safe_id)
         return ref if ref else ("", "")
 
     # --- internals ---
@@ -124,7 +128,12 @@ class MetadataResolver:
 
     def _cached(self, key):
         entry = self._cache.get(key)
-        if entry is None or entry[1] <= self._clock():
+        if entry is None:
+            return _MISS
+        if entry[1] <= self._clock():
+            # Evict expired entries on miss so the cache does not grow without
+            # bound as distinct ids stream through a long-lived daemon.
+            self._cache.pop(key, None)
             return _MISS
         return entry[0]
 

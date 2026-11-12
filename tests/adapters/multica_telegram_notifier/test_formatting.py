@@ -440,3 +440,62 @@ class TestFittingDegradation:
         assert out.startswith("H" * 80)
         assert out.endswith("F" * 80)
         assert "<" not in out and ">" not in out
+
+
+class TestFixedPartsBudget:
+    """FR-1: header/footer fixed metadata must fit inside the 4096 UTF-16
+    budget too — a huge event title/agent name/created_at must never push the
+    rendered HTML past the limit or leave a dangling entity."""
+
+    _ENTITY_TAIL_LEGAL = None
+
+    def _assert_budget_safe(self, note_html):
+        import re
+
+        assert len(note_html.encode("utf-16-le", errors="ignore")) // 2 <= 4096
+        # No dangling entity anywhere: every & starts a complete entity.
+        assert not re.search(r"&(?!amp;|lt;|gt;|#\d+;|#x[0-9a-fA-F]+;)", note_html)
+        # The truncated tail must not be a bare "&" either.
+        assert not note_html.rstrip().endswith("&")
+
+    def test_huge_ampersand_title_fits(self):
+        note = render_notification(_item(title="&" * 5000), None)
+        self._assert_budget_safe(note.html)
+        assert note.html.startswith("🤖")
+
+    def test_huge_agent_name_fits(self):
+        class _HugeAgent:
+            def agent_display(self, actor_type, actor_id):
+                return "A" * 5000
+
+            def issue_ref(self, issue_id, item_title):
+                return ("SEE-1", "t")
+
+        note = render_notification(_item(), _HugeAgent())
+        self._assert_budget_safe(note.html)
+        assert "<b>" in note.html and note.html.count("<b>") == note.html.count("</b>")
+
+    def test_huge_created_at_fits(self):
+        note = render_notification(_item(created_at="&" * 5000), None)
+        self._assert_budget_safe(note.html)
+
+    def test_huge_api_title_fits(self):
+        class _HugeTitle:
+            def agent_display(self, actor_type, actor_id):
+                return "Bachi"
+
+            def issue_ref(self, issue_id, item_title):
+                return ("SEE-1", "&" * 5000)
+
+        note = render_notification(_item(), _HugeTitle())
+        self._assert_budget_safe(note.html)
+
+    def test_huge_title_keeps_readable_prefix(self):
+        note = render_notification(_item(title="标题开头" + "&" * 5000), None)
+        self._assert_budget_safe(note.html)
+        assert "标题开头" in note.html
+
+    def test_huge_title_plain_mode_bounded_header(self):
+        note = render_notification(_item(title="&" * 5000), None)
+        head_line = note.plain.split("\n", 1)[0]
+        assert len(head_line.encode("utf-16-le", errors="ignore")) // 2 < 800

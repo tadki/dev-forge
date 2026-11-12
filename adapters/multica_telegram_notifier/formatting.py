@@ -51,6 +51,17 @@ _DELIM_CELL_RE = re.compile(r":?-+:?")
 _MAX_TABLE_COLS = 6
 _FENCE_SENTINEL = "\x00"
 
+# FR-1: fixed header/footer metadata is clamped in UTF-16 units BEFORE the
+# heading text is escaped. Worst case (& → &amp; ×5): agent 64→320,
+# identifier 16→80, title 256→1280, footer ~480 plus template/separator ~80
+# ⇒ fixed parts ≤ ~2240 units, safely under Telegram's 4096 budget and leaving
+# room for the body.
+_MAX_AGENT_UNITS = 64
+_MAX_IDENTIFIER_UNITS = 16
+_MAX_TITLE_UNITS = 256
+_MAX_CREATED_UNITS = 64
+_MAX_KIND_UNITS = 32
+
 
 class Notification(NamedTuple):
     html: str
@@ -316,6 +327,15 @@ def _text(value) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _clamp(text: str, limit: int) -> str:
+    """UTF-16-clamps a header/footer component before escaping (FR-1), so a
+    huge event title/name cannot push the rendered message past 4096 units or
+    leave a dangling entity."""
+    if utf16_len(text) <= limit:
+        return text
+    return truncate_utf16(text, max(1, limit - 1)) + "…"
+
+
 class _StaticResolver:
     """No-query resolver: uses only what the event itself carries."""
 
@@ -339,11 +359,13 @@ def _compose_header(item: dict, resolver) -> tuple:
     actor_type, actor_id = _text(item.get("actor_type")), _text(item.get("actor_id"))
     icon = _ACTOR_ICONS.get(actor_type, _DEFAULT_ICON)
     parts_html, parts_plain = [], []
-    agent = resolver.agent_display(actor_type, actor_id)
+    agent = _clamp(resolver.agent_display(actor_type, actor_id), _MAX_AGENT_UNITS)
     if agent:
         parts_html.append(f"{icon} <b>{escape_html(agent)}</b>")
         parts_plain.append(f"{icon} {agent}")
     identifier, title = resolver.issue_ref(_text(item.get("issue_id")), _text(item.get("title")))
+    identifier = _clamp(identifier, _MAX_IDENTIFIER_UNITS)
+    title = _clamp(title, _MAX_TITLE_UNITS)
     if identifier and title:
         parts_html.append(f"<b>{escape_html(identifier)}</b> {escape_html(title)}")
         parts_plain.append(f"{identifier} {title}")
@@ -357,12 +379,15 @@ def _compose_header(item: dict, resolver) -> tuple:
 
 
 def _compose_footer(item: dict) -> tuple:
-    parts = []
-    created = _text(item.get("created_at"))
+    created = _clamp(_text(item.get("created_at")), _MAX_CREATED_UNITS)
+    kind = _clamp(_text(item.get("type")) or "inbox", _MAX_KIND_UNITS)
+    html_parts, plain_parts = [], []
     if created:
-        parts.append(f"🕐 {created}")
-    parts.append(_text(item.get("type")) or "inbox")
-    return " · ".join(parts), " · ".join(parts)
+        html_parts.append(f"🕐 {escape_html(created)}")
+        plain_parts.append(f"🕐 {created}")
+    html_parts.append(escape_html(kind))
+    plain_parts.append(kind)
+    return " · ".join(html_parts), " · ".join(plain_parts)
 
 
 def _collapse_blank_runs(text: str) -> str:
@@ -374,6 +399,8 @@ def fit_html_text(body_md: str, header: str = "", footer: str = "",
     """Renders body_md to HTML and, when the result exceeds Telegram's 4096
     UTF-16 budget, shrinks the SOURCE and re-renders, so tags and entities are
     never cut mid-token. Degrades deterministically to tag-free escaped text."""
+    # Header/footer are clamped component-wise upstream (see the _MAX_*_UNITS
+    # constants), so `fixed` has a deterministic bound well below `limit`.
     fixed = utf16_len(header) + utf16_len(footer)
     out = header + _render_blocks(body_md, "html") + footer
     if utf16_len(out) <= limit:
@@ -386,7 +413,9 @@ def fit_html_text(body_md: str, header: str = "", footer: str = "",
         if utf16_len(out) <= limit:
             return truncate_utf16(out, limit)
         size //= 2
-    budget = max(1, limit - fixed - utf16_len("\n"))
+    # Last resort: escaped text can grow ×5 (& → &amp;), so budget the raw
+    # cut by that factor to keep the final string inside the limit.
+    budget = max(1, (limit - fixed - utf16_len("\n")) // 5)
     return header + escape_html(truncate_utf16(body_md, budget)) + footer
 
 

@@ -286,3 +286,53 @@ class TestMalformedResponses:
             assert _resolver(server).agent_display("agent", AGENT_ID) == "Agent"
         finally:
             server.close()
+
+
+class TestIssuePathSafety:
+    """FR-3: a non-UUID issue_id must never reach the REST path — external
+    event data cannot steer the authenticated request off /api/issues/."""
+
+    def test_parent_traversal_id_never_queries(self):
+        server = FakeMulticaAPI()
+        try:
+            resolver = _resolver(server)
+            assert resolver.issue_ref("../agents/x", "普通标题") == ("", "普通标题")
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_query_string_id_never_queries(self):
+        server = FakeMulticaAPI()
+        try:
+            resolver = _resolver(server)
+            assert resolver.issue_ref("11111111-1111-1111-1111-111111111111?x=1", "") == ("", "")
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_backslash_and_non_string_ids_never_query(self):
+        server = FakeMulticaAPI()
+        try:
+            resolver = _resolver(server)
+            assert resolver.issue_ref("..\\agents\\x", "") == ("", "")
+            assert resolver.issue_ref(123, "") == ("", "")
+            assert resolver.issue_ref(None, "") == ("", "")
+            assert server.requests == []
+        finally:
+            server.close()
+
+
+class TestCacheEviction:
+    def test_expired_entry_evicted_on_miss(self):
+        server = FakeMulticaAPI()
+        try:
+            clock = _ManualClock()
+            resolver = _resolver(server, clock=clock)
+            resolver.agent_display("agent", AGENT_ID)
+            assert len(resolver._cache) == 1
+            clock.now += 3600.0 * 7
+            resolver.agent_display("agent", AGENT_ID)
+            assert len(resolver._cache) == 1
+            assert len(server.requests) == 2
+        finally:
+            server.close()
