@@ -581,6 +581,31 @@ class TestCommentLink:
         finally:
             server.close()
 
+    def test_link_reuses_issue_lookup_cache(self):
+        # Repeated links for the same item within the positive TTL must hit
+        # /api/issues once; the lookup is cached like every other metadata
+        # query (a streaming daemon links each issue over and over).
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server)
+            resolver.comment_link(ISSUE_ID, COMMENT_ID)
+            resolver.comment_link(ISSUE_ID, COMMENT_ID)
+            assert len([p for p in server.requests if "/api/issues/" in p]) == 1
+        finally:
+            server.close()
+
+    def test_display_and_link_paths_share_the_issue_cache(self):
+        # issue_ref() (display) and comment_link() (href) describe the same
+        # item, so they must share the ("issue", uuid) entry: one request.
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server)
+            resolver.issue_ref(ISSUE_ID, "没有标识符前缀的标题")
+            resolver.comment_link(ISSUE_ID, COMMENT_ID)
+            assert len([p for p in server.requests if "/api/issues/" in p]) == 1
+        finally:
+            server.close()
+
 
 class TestWebRootGate:
     """§SPEC-002 R2 (QA H1/L1/L2): NOTIFIER_WEB_BASE_URL is the ONLY web
@@ -626,6 +651,8 @@ class TestWebRootGate:
 
     @pytest.mark.parametrize("tail", [
         "&" * 505,             # QA L1 repro: escape-amplifying base
+        "a&b",                 # charset-only: short enough to pass the length gate,
+                               # so only the '&' exclusion can reject it
         "x/\"onmouseover=\"1",  # quotes must not reach the href attribute
         "a<b>c",
         "a?b=1",
@@ -658,6 +685,18 @@ class TestWebRootGate:
             assert self._resolver(server, web_base).comment_link(
                 ISSUE_ID, COMMENT_ID) == ""
             assert server.requests == []
+        finally:
+            server.close()
+
+    def test_trailing_slash_web_root_normalized_by_resolver(self):
+        # The config layer strips a trailing slash, but a resolver built
+        # directly with one must still compose a single-slash path (join
+        # boundary is a normalisation site, not a string concat accident).
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            url = self._resolver(server, "http://web.test/").comment_link(
+                ISSUE_ID, COMMENT_ID)
+            assert url == f"http://web.test/seed/issues/SEE-1567#comment-{COMMENT_ID}"
         finally:
             server.close()
 
