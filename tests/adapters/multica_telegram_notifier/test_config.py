@@ -256,3 +256,36 @@ class TestMetadataApiConfig:
         assert cfg.query_timeout == 0.3
         with pytest.raises(ConfigError):
             load_config(dict(self.BASE_ENV, NOTIFIER_QUERY_TIMEOUT="0"))
+
+
+class TestWebBaseConfig:
+    """§SPEC-002 R2: the optional deep-link web root key. Loading stays
+    permissive — an invalid value degrades links at render time (it must
+    never fall back to the API origin), it must not fail startup."""
+
+    BASE_ENV = {
+        "NOTIFIER_MULTICA_PAT": "p",
+        "NOTIFIER_TELEGRAM_BOT_TOKEN": "t",
+        "NOTIFIER_TELEGRAM_CHAT_ID": "1",
+        "NOTIFIER_MULTICA_SERVER_URL": "http://srv.example:9278",
+        "NOTIFIER_WORKSPACE_ID": "ws",
+    }
+
+    def test_unset_defaults_to_empty(self):
+        cfg = load_config(self.BASE_ENV)
+        assert cfg.web_base_url == ""
+
+    def test_override_stripped_and_trailing_slash_removed(self):
+        cfg = load_config(dict(
+            self.BASE_ENV, NOTIFIER_WEB_BASE_URL="http://192.168.1.210:9277/"))
+        assert cfg.web_base_url == "http://192.168.1.210:9277"
+
+    def test_blank_value_treated_as_unset(self):
+        cfg = load_config(dict(self.BASE_ENV, NOTIFIER_WEB_BASE_URL="  "))
+        assert cfg.web_base_url == ""
+
+    def test_invalid_value_does_not_fail_startup(self):
+        # Degradation contract: link-time gates reject this; config load
+        # must stay green so notifications keep flowing unlinked.
+        cfg = load_config(dict(self.BASE_ENV, NOTIFIER_WEB_BASE_URL="not a url"))
+        assert cfg.web_base_url == "not a url"

@@ -30,10 +30,11 @@ def _resolver(server, timeout=2.0, clock=time.monotonic):
         timeout=timeout, clock=clock)
 
 
-def _ws_resolver(server, timeout=2.0, clock=time.monotonic, workspace=WS_UUID):
+def _ws_resolver(server, timeout=2.0, clock=time.monotonic, workspace=WS_UUID,
+                 web_base="http://web.test"):
     return MetadataResolver(
         server_url=server.base_url, pat=PAT, workspace_id=workspace,
-        timeout=timeout, clock=clock)
+        timeout=timeout, clock=clock, web_base=web_base)
 
 
 class _ManualClock:
@@ -469,34 +470,47 @@ class TestWorkspaceSlugValidation:
 
 
 class TestCommentLink:
-    """§SPEC-001/002/004: the title-line deep link is composed ONLY from
-    validated components; any missing or invalid component degrades."""
+    """§SPEC-002 R2: the deep link is composed ONLY from validated
+    components; the web root is NOTIFIER_WEB_BASE_URL alone (never the API
+    origin), and the issue path segment comes from the /api/issues lookup of
+    the item's canonical issue_id — the title prefix never steers a URL."""
+
+    WEB = "http://web.test"
 
     def test_full_deep_link(self):
         server = FakeMulticaAPI(workspace_body={"slug": "seed"})
         try:
-            resolver = _ws_resolver(server)
-            assert resolver.comment_link("SEE-1567", COMMENT_ID) == (
-                f"{server.base_url}/seed/issues/SEE-1567#comment-{COMMENT_ID}")
+            url = _ws_resolver(server).comment_link(ISSUE_ID, COMMENT_ID)
+            assert url == f"{self.WEB}/seed/issues/SEE-1567#comment-{COMMENT_ID}"
+        finally:
+            server.close()
+
+    def test_issue_path_segment_sourced_from_issue_api(self):
+        # QA M2: the identifier in the URL must come from the /api/issues
+        # lookup of item.issue_id — comment_link never sees the title, so a
+        # lying title prefix cannot steer the URL.
+        server = FakeMulticaAPI(
+            issue_body={"identifier": "SEE-1562", "title": "真实归属"})
+        try:
+            url = _ws_resolver(server).comment_link(ISSUE_ID, COMMENT_ID)
+            assert url == f"{self.WEB}/seed/issues/SEE-1562#comment-{COMMENT_ID}"
         finally:
             server.close()
 
     def test_missing_comment_id_links_issue_page_without_anchor(self):
         server = FakeMulticaAPI(workspace_body={"slug": "seed"})
         try:
-            resolver = _ws_resolver(server)
-            assert resolver.comment_link("SEE-1567", "") == (
-                f"{server.base_url}/seed/issues/SEE-1567")
+            url = _ws_resolver(server).comment_link(ISSUE_ID, "")
+            assert url == f"{self.WEB}/seed/issues/SEE-1567"
         finally:
             server.close()
 
     def test_non_uuid_comment_id_never_enters_url(self):
         server = FakeMulticaAPI(workspace_body={"slug": "seed"})
         try:
-            resolver = _ws_resolver(server)
             injected = "x#frag?workspace_id=../admin"
-            url = resolver.comment_link("SEE-1567", injected)
-            assert url == f"{server.base_url}/seed/issues/SEE-1567"
+            url = _ws_resolver(server).comment_link(ISSUE_ID, injected)
+            assert url == f"{self.WEB}/seed/issues/SEE-1567"
             assert injected not in url
         finally:
             server.close()
@@ -505,70 +519,145 @@ class TestCommentLink:
         server = FakeMulticaAPI(workspace_body={"slug": "seed"})
         try:
             resolver = _ws_resolver(server)
-            assert resolver.comment_link("SEE-1567", 123) == (
-                f"{server.base_url}/seed/issues/SEE-1567")
-            assert resolver.comment_link("SEE-1567", None) == (
-                f"{server.base_url}/seed/issues/SEE-1567")
+            assert resolver.comment_link(ISSUE_ID, 123) == (
+                f"{self.WEB}/seed/issues/SEE-1567")
+            assert resolver.comment_link(ISSUE_ID, None) == (
+                f"{self.WEB}/seed/issues/SEE-1567")
         finally:
             server.close()
 
-    @pytest.mark.parametrize("identifier", [
-        "", None, "优化排版", "ABC-12", "see-1567",
-        "SEE-", "SEE-abc", "SEE-1567/x", "SEE-1567?x",
-        "SEE-" + "9" * 13,  # over the digit bound: not a real identifier
+    @pytest.mark.parametrize("issue_id", [
+        "", None, 123, "issue-uuid-1",
+        "11111111-1111-1111-1111-111111111111?x",
+        "../issues/11111111-1111-1111-1111-111111111111",
     ])
-    def test_identifier_must_be_see_shaped_to_link(self, identifier):
+    def test_non_canonical_issue_id_never_queries_or_links(self, issue_id):
+        # QA M2: only a canonical issue uuid may drive the lookup; anything
+        # else degrades locally with zero requests.
         server = FakeMulticaAPI(workspace_body={"slug": "seed"})
         try:
-            assert _ws_resolver(server).comment_link(identifier, COMMENT_ID) == ""
+            assert _ws_resolver(server).comment_link(issue_id, COMMENT_ID) == ""
+            assert server.requests == []
         finally:
             server.close()
 
-    def test_max_digits_identifier_links(self):
-        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+    def test_issue_query_failure_degrades_to_no_link(self):
+        server = FakeMulticaAPI(issue_status=500)
         try:
-            url = _ws_resolver(server).comment_link("SEE-" + "9" * 12, COMMENT_ID)
-            assert url.endswith("/issues/SEE-" + "9" * 12 + f"#comment-{COMMENT_ID}")
+            assert _ws_resolver(server).comment_link(ISSUE_ID, COMMENT_ID) == ""
+            assert any("/api/issues/" in p for p in server.requests)
+            assert not any("/api/workspaces/" in p for p in server.requests)
+        finally:
+            server.close()
+
+    def test_api_identifier_must_be_see_shaped_for_link(self):
+        server = FakeMulticaAPI(issue_body={"identifier": "ABC-12", "title": "t"})
+        try:
+            assert _ws_resolver(server).comment_link(ISSUE_ID, COMMENT_ID) == ""
         finally:
             server.close()
 
     def test_slug_failure_degrades_to_no_link(self):
         server = FakeMulticaAPI(workspace_status=500)
         try:
-            assert _ws_resolver(server).comment_link("SEE-1567", COMMENT_ID) == ""
+            assert _ws_resolver(server).comment_link(ISSUE_ID, COMMENT_ID) == ""
         finally:
             server.close()
 
-    def test_oversized_web_base_degrades_without_querying(self):
-        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+    def test_max_digits_identifier_links(self):
+        server = FakeMulticaAPI(
+            issue_body={"identifier": "SEE-" + "9" * 12, "title": "t"})
         try:
-            resolver = MetadataResolver(
-                server_url="http://" + "a" * 600, pat=PAT,
-                workspace_id=WS_UUID, timeout=2.0)
-            assert resolver.comment_link("SEE-1567", COMMENT_ID) == ""
-            assert server.requests == []
+            url = _ws_resolver(server).comment_link(ISSUE_ID, COMMENT_ID)
+            assert url.endswith("/issues/SEE-" + "9" * 12 + f"#comment-{COMMENT_ID}")
         finally:
             server.close()
 
-    def test_non_http_web_base_degrades_without_querying(self):
-        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+    def test_13_digit_api_identifier_does_not_link(self):
+        server = FakeMulticaAPI(
+            issue_body={"identifier": "SEE-" + "9" * 13, "title": "t"})
         try:
-            resolver = MetadataResolver(
-                server_url="ftp://127.0.0.1:1", pat=PAT,
-                workspace_id=WS_UUID, timeout=0.3)
-            assert resolver.comment_link("SEE-1567", COMMENT_ID) == ""
-            assert server.requests == []
+            assert _ws_resolver(server).comment_link(ISSUE_ID, COMMENT_ID) == ""
         finally:
             server.close()
 
-    def test_web_base_prefers_explicit_override(self):
+
+class TestWebRootGate:
+    """§SPEC-002 R2 (QA H1/L1/L2): NOTIFIER_WEB_BASE_URL is the ONLY web
+    root. Unset, non-http, over-long, or charset-violating values degrade to
+    no link with ZERO requests — the gates must run before any lookup, and
+    the API origin must never be used as a fallback."""
+
+    def _resolver(self, server, web_base):
+        return MetadataResolver(
+            server_url=server.base_url, pat=PAT, workspace_id=WS_UUID,
+            timeout=2.0, web_base=web_base)
+
+    def test_unset_web_root_never_links_and_never_falls_back(self):
+        # The API origin (server.base_url) must NOT become the web root.
         server = FakeMulticaAPI(workspace_body={"slug": "seed"})
         try:
             resolver = MetadataResolver(
                 server_url=server.base_url, pat=PAT, workspace_id=WS_UUID,
-                timeout=2.0, web_base="http://web.test")
-            assert resolver.comment_link("SEE-1567", COMMENT_ID) == (
-                f"http://web.test/seed/issues/SEE-1567#comment-{COMMENT_ID}")
+                timeout=2.0)
+            assert resolver.comment_link(ISSUE_ID, COMMENT_ID) == ""
+            assert server.requests == []
+        finally:
+            server.close()
+
+    @pytest.mark.parametrize("web_base", [
+        "ftp://web.test:9277",
+        "web.test:9277",
+        "//web.test:9277",
+        "",
+    ])
+    def test_non_http_web_root_rejected_with_zero_requests(self, web_base):
+        # Discriminating zero-request assertion: the fake API here WORKS, so
+        # if the http(s) gate were missing the slug/issue lookups would fire
+        # and be recorded — the assertion fails. (Transport-level failures
+        # prove nothing; see the QA L2 finding.)
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            assert self._resolver(server, web_base).comment_link(
+                ISSUE_ID, COMMENT_ID) == ""
+            assert server.requests == []
+        finally:
+            server.close()
+
+    @pytest.mark.parametrize("tail", [
+        "&" * 505,             # QA L1 repro: escape-amplifying base
+        "x/\"onmouseover=\"1",  # quotes must not reach the href attribute
+        "a<b>c",
+        "a?b=1",
+        "a b",
+        "a\nb",
+    ])
+    def test_charset_violating_web_root_rejected_with_zero_requests(self, tail):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            web_base = "http://web.test/" + tail
+            assert self._resolver(server, web_base).comment_link(
+                ISSUE_ID, COMMENT_ID) == ""
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_max_length_charset_valid_web_root_links(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            web_base = "http://" + "a" * 505  # exactly 512, charset-clean
+            url = self._resolver(server, web_base).comment_link(ISSUE_ID, COMMENT_ID)
+            assert url == f"{web_base}/seed/issues/SEE-1567#comment-{COMMENT_ID}"
+        finally:
+            server.close()
+
+    def test_overlong_web_root_rejected_with_zero_requests(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            web_base = "http://" + "a" * 600
+            assert self._resolver(server, web_base).comment_link(
+                ISSUE_ID, COMMENT_ID) == ""
+            assert server.requests == []
         finally:
             server.close()
 

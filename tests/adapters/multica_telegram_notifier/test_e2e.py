@@ -233,12 +233,15 @@ class TestReadableNotificationE2E:
 
 CANON_WS_E2E = "33333333-3333-3333-3333-333333333333"
 COMMENT_UUID_E2E = "44444444-4444-4444-4444-444444444444"
+WEB_ROOT_E2E = "http://web.test"
 
 
 class TestDeepLinkE2E:
-    """§SPEC-005: the real CLI subprocess must ship the anchored title line
-    over the full fake-WS → real adapter → fake-Telegram chain, and keep the
-    plain fallback path free of anchors."""
+    """§SPEC-005 R2: the real CLI subprocess must ship the anchored title
+    line over the full fake-WS → real adapter → fake-Telegram chain with the
+    web root from NOTIFIER_WEB_BASE_URL (never the API origin), keep the
+    plain fallback path free of anchors, and carry the /api/issues
+    identifier in the URL even when the title prefix lies."""
 
     def _run_cli(self, tmp_path, fake_telegram, env):
         env_path = tmp_path / "see-1572.env"
@@ -250,6 +253,11 @@ class TestDeepLinkE2E:
              "--config", str(env_path), "--once", "--log-json", str(log_path)],
             capture_output=True, text=True, timeout=30)
         return proc, log_path
+
+    def _env(self, tmp_path, multica, telegram, api, **overrides):
+        return make_env(multica, telegram, tmp_path, api=api,
+                        NOTIFIER_WORKSPACE_ID=CANON_WS_E2E,
+                        NOTIFIER_WEB_BASE_URL=WEB_ROOT_E2E, **overrides)
 
     def _comment_env_frame(self):
         return make_inbox_frame(
@@ -264,18 +272,45 @@ class TestDeepLinkE2E:
         api = FakeMulticaAPI()
         server = FakeMulticaWS(script=[("text", self._comment_env_frame()), ("sleep", 5)])
         try:
-            env = make_env(server, fake_telegram, tmp_path, api=api,
-                           **{"NOTIFIER_WORKSPACE_ID": CANON_WS_E2E})
+            env = self._env(tmp_path, server, fake_telegram, api)
             proc, _log = self._run_cli(tmp_path, fake_telegram, env)
             assert proc.returncode == 0, proc.stderr[-2000:]
             req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
             assert req[1]["parse_mode"] == "HTML"
             text = req[1]["text"]
-            expected = (f'<a href="{env["NOTIFIER_MULTICA_SERVER_URL"]}'
+            expected = (f'<a href="{WEB_ROOT_E2E}'
                         f'/seed/issues/SEE-1567#comment-{COMMENT_UUID_E2E}">'
                         "🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化 Telegram 排版</a>")
             assert text.split("\n", 1)[0] == expected
             assert text.count("<a ") == 1
+        finally:
+            server.close()
+            api.close()
+
+    def test_cli_title_prefix_lying_issue_links_api_identifier(self, tmp_path, fake_telegram):
+        # QA M2 end to end: title says SEE-1546, the item's issue is
+        # SEE-1562. Header text keeps the title; the href must open the real
+        # issue's page on the web root origin.
+        api = FakeMulticaAPI(issue_body={"identifier": "SEE-1562", "title": "真实标题"})
+        frame = make_inbox_frame(
+            workspace_id=CANON_WS_E2E,
+            item_overrides={
+                "actor_id": "22222222-2222-2222-2222-222222222222",
+                "issue_id": "11111111-1111-1111-1111-111111111111",
+                "title": "SEE-1546 R22 独立复核：主体通过", "type": "new_comment",
+                "details": {"comment_id": COMMENT_UUID_E2E}})
+        server = FakeMulticaWS(script=[("text", frame), ("sleep", 5)])
+        try:
+            env = self._env(tmp_path, server, fake_telegram, api)
+            proc, _log = self._run_cli(tmp_path, fake_telegram, env)
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
+            first_line = req[1]["text"].split("\n", 1)[0]
+            assert first_line == (
+                f'<a href="{WEB_ROOT_E2E}/seed/issues/SEE-1562'
+                f'#comment-{COMMENT_UUID_E2E}">'
+                "🤖 <b>Bachi</b> · <b>SEE-1546</b> R22 独立复核：主体通过</a>")
+            assert "SEE-1546" not in first_line.split('">', 1)[0]
         finally:
             server.close()
             api.close()
@@ -287,15 +322,14 @@ class TestDeepLinkE2E:
         api = FakeMulticaAPI()
         server = FakeMulticaWS(script=[("text", self._comment_env_frame()), ("sleep", 5)])
         try:
-            env = make_env(server, fake_telegram, tmp_path, api=api,
-                           **{"NOTIFIER_WORKSPACE_ID": CANON_WS_E2E})
+            env = self._env(tmp_path, server, fake_telegram, api)
             proc, _log = self._run_cli(tmp_path, fake_telegram, env)
             assert proc.returncode == 0, proc.stderr[-2000:]
             calls = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")]
             assert len(calls) == 2
             html_first = calls[0][1]["text"].split("\n", 1)[0]
             plain_first = calls[1][1]["text"].split("\n", 1)[0]
-            assert html_first.startswith("<a href=")
+            assert html_first.startswith(f'<a href="{WEB_ROOT_E2E}')
             assert plain_first == "🤖 Bachi · SEE-1567 优化 Telegram 排版"
             assert "<a" not in plain_first
         finally:
@@ -306,14 +340,32 @@ class TestDeepLinkE2E:
         api = FakeMulticaAPI(workspace_status=503)
         server = FakeMulticaWS(script=[("text", self._comment_env_frame()), ("sleep", 5)])
         try:
-            env = make_env(server, fake_telegram, tmp_path, api=api,
-                           **{"NOTIFIER_WORKSPACE_ID": CANON_WS_E2E})
+            env = self._env(tmp_path, server, fake_telegram, api)
             proc, _log = self._run_cli(tmp_path, fake_telegram, env)
             assert proc.returncode == 0, proc.stderr[-2000:]
             req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
             first_line = req[1]["text"].split("\n", 1)[0]
             assert first_line.startswith("🤖 <b>Bachi</b>")
             assert "<a " not in first_line
+        finally:
+            server.close()
+            api.close()
+
+    def test_cli_web_root_unset_delivers_unlinked_header(self, tmp_path, fake_telegram):
+        # QA H1: no NOTIFIER_WEB_BASE_URL → plain header; the WS/API origin
+        # (a 404 page origin in the real deployment) must never be linked.
+        api = FakeMulticaAPI()
+        server = FakeMulticaWS(script=[("text", self._comment_env_frame()), ("sleep", 5)])
+        try:
+            env = make_env(server, fake_telegram, tmp_path, api=api,
+                           NOTIFIER_WORKSPACE_ID=CANON_WS_E2E)
+            proc, _log = self._run_cli(tmp_path, fake_telegram, env)
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
+            first_line = req[1]["text"].split("\n", 1)[0]
+            assert first_line.startswith("🤖 <b>Bachi</b>")
+            assert "<a " not in first_line
+            assert env["NOTIFIER_MULTICA_SERVER_URL"] not in first_line
         finally:
             server.close()
             api.close()

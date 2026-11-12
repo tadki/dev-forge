@@ -17,15 +17,23 @@
   `GET /api/issues/<id>` 补全。
 - **标题行深链（SEE-1572）**：HTML 模式下整行标题渲染为单个 `<a href>` 锚点，
   点击直达该通知对应的 Multica comment 页面位置：
-  `{NOTIFIER_MULTICA_SERVER_URL}/{workspace slug}/issues/{SEE-XXX}#comment-<comment uuid>`。
-  comment uuid 取自 inbox item 的 `details.comment_id`（真实 wire 捕获定案），
-  workspace slug 经只读查询 `GET /api/workspaces/<workspace UUID>` 获取，与
-  其他元信息共用同一套超时/缓存纪律（命中 6 小时 / 失败 60 秒）。URL 仅由
-  校验过的组件拼接（http(s) server 根 ≤512、slug 限 `[a-z0-9-]{1,64}`、
-  标识符限 `SEE-\d{1,12}`、comment uuid 限 canonical UUID），事件文本永远进不了
-  URL。逐级降级：comment uuid 缺失或非法 → 链接退化为 issue 页（无锚点）；
-  issue 标识符不可得或 slug 查询失败/非法 → 标题行保持现状非链接纯文本；
-  纯文本回退模式的标题行永远不加链接。任何降级都不阻断、不重复投递。
+  `{NOTIFIER_WEB_BASE_URL}/{workspace slug}/issues/{issue 标识符}#comment-<comment uuid>`。
+  web 根只取**可选配置键 `NOTIFIER_WEB_BASE_URL`**（真实部署中 Web UI 与
+  API/WS 端口不同，绝不回退 API 地址）；issue 路径段以 inbox item 的
+  `issue_id`（canonical UUID）经只读查询 `GET /api/issues/<id>` 取得的
+  identifier 为准——标题前缀只用于显示，不进 URL（实测存在标题前缀与真实
+  issue 不符的 item）。comment uuid 取自 item 的 `details.comment_id`（真实
+  wire 捕获定案）；workspace slug 经 `GET /api/workspaces/<workspace UUID>`
+  获取，与其他元信息共用同一套超时/缓存纪律（命中 6 小时 / 失败 60 秒）。
+  URL 仅由校验过的组件拼接：web 根限 http(s)、≤512、字符集
+  `[A-Za-z0-9.:/_-]`（不含 `& < > "`，转义恒等、href 属性不可被逃逸），slug
+  限 `[a-z0-9-]{1,64}`，标识符限 `SEE-\d{1,12}`，comment uuid 限 canonical
+  UUID——事件文本永远进不了 URL，含锚点包装后的固定部长度确定性 <4096。
+  所有校验门都在任何网络请求之前执行，非法配置零查询开销。逐级降级：
+  `NOTIFIER_WEB_BASE_URL` 未设置/非法、issue 查询失败/issue_id 非法或 slug
+  失败 → 标题行保持现状非链接纯文本；comment uuid 缺失或非法 → 链接退化为
+  issue 页（无锚点）；纯文本回退模式的标题行永远不加链接。任何降级都不
+  阻断、不重复投递。
 - **Markdown 渲染**：常用 Markdown 以 `parse_mode=HTML` 渲染为 Telegram 支持
   的标签子集（粗体/斜体/删除线/行内代码/围栏代码/引用/链接/列表）；
   `& < >` 一律转义，危险链接协议（如 `javascript:`）去掉锚点只保留文字。
@@ -130,6 +138,7 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 | `NOTIFIER_READ_TIMEOUT` | 否 | `90` | 单帧读取超时秒数（须大于服务端 ~54s ping 周期；超时视为半开连接并重建会话） |
 | `NOTIFIER_API_BASE` | 否 | 同 `NOTIFIER_MULTICA_SERVER_URL` | 元信息只读查询（Agent 显示名/issue 标识符）根地址 |
 | `NOTIFIER_QUERY_TIMEOUT` | 否 | `5` | 单次元信息查询超时秒数；失败自动降级，不阻断投递 |
+| `NOTIFIER_WEB_BASE_URL` | 否 | —（未设置则标题行无深链） | 深链 Web UI 根地址（http/https、≤512、字符集 `[A-Za-z0-9.:/_-]`）。注意与 API 地址区分：真实部署 Web UI 与 API/WS 端口不同。未设置或非法时标题行降级为非链接纯文本，绝不回退 API 地址；已部署环境启用深链需在 env 中补设此键（重启由 Owner 受控 rollout） |
 
 配置文件里已有的值优先于同名进程环境变量；进程环境变量再作为缺省回退。
 

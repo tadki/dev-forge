@@ -240,6 +240,7 @@ class TestHeaderComposition:
 
 
 LINK = "http://x.test/seed/issues/SEE-1567#comment-" + "4" * 36
+ITEM_ISSUE_ID = "11111111-1111-1111-1111-111111111111"
 
 
 class _LinkResolver(_FixedResolver):
@@ -251,8 +252,8 @@ class _LinkResolver(_FixedResolver):
         self.link = link
         self.link_calls = []
 
-    def comment_link(self, identifier, comment_id):
-        self.link_calls.append((identifier, comment_id))
+    def comment_link(self, issue_id, comment_id):
+        self.link_calls.append((issue_id, comment_id))
         return self.link
 
 
@@ -301,24 +302,26 @@ class TestTitleDeepLink:
 
     def test_comment_id_read_from_details_wire_field(self):
         # Live wire capture (2026-11-13, read-only): the comment uuid rides at
-        # item["details"]["comment_id"] as a canonical UUID string.
+        # item["details"]["comment_id"] as a canonical UUID string, and the
+        # link is driven by the item's issue_id (R2: title never steers URL).
         note = render_notification(
             _item(details={"comment_id": "4" * 36}), _LinkResolver())
         assert note.html.split("\n", 1)[0].startswith(f'<a href="{LINK}">')
         resolver = _LinkResolver()
         render_notification(_item(details={"comment_id": "4" * 36}), resolver)
-        assert resolver.link_calls == [("SEE-1567", "4" * 36)]
+        assert resolver.link_calls == [(ITEM_ISSUE_ID, "4" * 36)]
 
     def test_missing_details_passes_empty_comment_id(self):
         resolver = _LinkResolver()
         render_notification(_item(), resolver)
-        assert resolver.link_calls == [("SEE-1567", "")]
+        assert resolver.link_calls == [(ITEM_ISSUE_ID, "")]
 
     def test_non_dict_details_and_non_string_comment_id_safe(self):
         resolver = _LinkResolver()
         render_notification(_item(details=[]), resolver)
         render_notification(_item(details={"comment_id": 5}), resolver)
-        assert resolver.link_calls == [("SEE-1567", ""), ("SEE-1567", "")]
+        assert resolver.link_calls == [
+            (ITEM_ISSUE_ID, ""), (ITEM_ISSUE_ID, "")]
 
     def test_empty_header_line_never_gets_bare_anchor(self):
         class _EmptyResolver:
@@ -341,7 +344,10 @@ class TestDeepLinkBudget:
     worst-case URL components must keep the rendered HTML under 4096 UTF-16
     units with balanced tags and no dangling entity."""
 
-    _MAX_LINK = ("http://" + "a" * 500 + ".test/" + "b" * 64
+    # Charset-clean worst case (R2): web root exactly 512 [A-Za-z0-9.:/_-]
+    # chars, max slug, max identifier, canonical uuid — escape_html is
+    # identity on every character, so the URL length is deterministic.
+    _MAX_LINK = ("http://" + "a" * 505 + "/" + "b" * 64
                  + "/issues/SEE-999999999999#comment-" + "4" * 36)
 
     def _assert_budget_safe(self, note_html):

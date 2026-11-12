@@ -48,6 +48,10 @@ class Config:
     read_timeout: float
     api_base: str
     query_timeout: float
+    # Deep-link web root (SEE-1572 R2): the deployed Web UI origin. Empty =
+    # unset, which disables deep links entirely; the API/WS origin is never
+    # used as a fallback because the deployments differ (QA H1).
+    web_base_url: str
 
 
 def parse_env_text(text: str) -> dict:
@@ -155,6 +159,7 @@ def load_config(env: Mapping) -> Config:
         query_timeout=_parse_positive_seconds(
             optional("NOTIFIER_QUERY_TIMEOUT", str(DEFAULT_QUERY_TIMEOUT)),
             "NOTIFIER_QUERY_TIMEOUT"),
+        web_base_url=optional("NOTIFIER_WEB_BASE_URL", "").rstrip("/"),
     )
 
 
