@@ -7,7 +7,6 @@ import json
 from multica_telegram_notifier.protocol import (
     auth_error_message,
     auth_frame,
-    format_notification,
     inbox_item_id,
     is_auth_ack,
     is_auth_error,
@@ -113,29 +112,3 @@ class TestInboxItemId:
         assert inbox_item_id(item) == fallback
 
 
-class TestFormatNotification:
-    def test_full_item_deterministic_output(self):
-        item = parse_inbox_new(parse_server_frame(make_inbox_frame()))
-        text = format_notification(item)
-        assert text == (
-            "[Multica] issue_assigned\n"
-            "SEE-1561 code 子步骤\n"
-            "Atlas 分配了 code 任务\n"
-            "Issue: issue-uuid-1\n"
-            "来源: agent agent-atlas-1\n"
-            "时间: 2026-11-11T03:00:00Z"
-        )
-
-    def test_minimal_item_omits_missing_lines(self):
-        text = format_notification({"type": None, "title": "只有标题"})
-        assert text == "[Multica] inbox\n只有标题"
-
-    def test_non_string_optional_fields_ignored(self):
-        text = format_notification({"title": "t", "body": 123, "issue_id": None, "created_at": 5})
-        assert text == "[Multica] inbox\nt"
-
-    def test_output_is_plain_text(self):
-        # Pure text only: no markdown entities that Telegram would need parse_mode for.
-        item = parse_inbox_new(parse_server_frame(make_inbox_frame()))
-        text = format_notification(item)
-        assert "**" not in text and "]" in text and text.startswith("[Multica] ")

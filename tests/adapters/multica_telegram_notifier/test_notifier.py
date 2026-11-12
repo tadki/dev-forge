@@ -16,6 +16,7 @@ from multica_telegram_notifier.config import load_config
 from multica_telegram_notifier.jsonlog import JsonLogger
 from multica_telegram_notifier.notifier import (
     EXIT_AUTH_REJECTED,
+    build_resolver,
     EXIT_CHANNEL_FAILED,
     EXIT_CONFIG,
     EXIT_DELIVERY_FAILED,
@@ -30,7 +31,13 @@ from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.state import DedupState
 from multica_telegram_notifier.wsclient import WSClient
 
-from multica_notifier_fakes import FakeMulticaWS, FakeTelegram, make_env, make_inbox_frame
+from multica_notifier_fakes import (
+    FakeMulticaAPI,
+    FakeMulticaWS,
+    FakeTelegram,
+    make_env,
+    make_inbox_frame,
+)
 
 PAT = "test-pat-value-0123456789"
 BOT = "test-bot-token-value"
@@ -100,7 +107,7 @@ class TestHappyPath:
             assert len(send_calls(fake_telegram)) == 1
             path, body = send_calls(fake_telegram)[0]
             assert body["chat_id"] == 987654
-            assert "SEE-1561 code 子步骤" in body["text"]
+            assert "<b>SEE-1561</b> code 子步骤" in body["text"]
             state = DedupState(cfg.state_file)
             state.load()
             assert state.is_seen("item-1")
@@ -138,7 +145,7 @@ class TestFiltering:
             thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             assert len(send_calls(fake_telegram)) == 1
-            assert "SEE-1561 code 子步骤" in send_calls(fake_telegram)[0][1]["text"]
+            assert "<b>SEE-1561</b> code 子步骤" in send_calls(fake_telegram)[0][1]["text"]
         finally:
             server.close()
 
@@ -854,3 +861,113 @@ class TestDirectScriptBootstrap:
             runpy.run_path(module_file, run_name="__main__")
         assert exc.value.code == EXIT_CONFIG
         assert pkg_parent in _sys.path
+
+
+def build_with_resolver(tmp_path, multica, telegram, api=None, env_over=None):
+    cfg = load_config(make_env(multica, telegram, tmp_path, api=api, **(env_over or {})))
+    capture = EventCapture()
+    logger = JsonLogger(Redactor([cfg.multica_pat, cfg.telegram_bot_token]), stream=capture)
+    telegram_client, state, ws_factory = build_components(cfg, ws_cls=WSClient)
+    notifier = Notifier(cfg, logger, telegram_client, state, ws_factory, once=True,
+                        resolver=build_resolver(cfg))
+    return notifier, cfg, capture
+
+
+UUID_ACTOR = "22222222-2222-2222-2222-222222222222"
+UUID_ISSUE = "11111111-1111-1111-1111-111111111111"
+
+
+class TestReadableNotification:
+    def test_delivered_payload_has_readable_header_and_html_table(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        body = "| 状态 | 说明 |\n|---|---|\n| ok | 好 |"
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "actor_id": UUID_ACTOR, "issue_id": UUID_ISSUE, "body": body,
+            "title": "优化 Telegram 排版"})), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build_with_resolver(tmp_path, server, fake_telegram, api)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            api_requests = api.requests
+            assert any("/api/agents/" in p for p in api_requests)
+            assert any("/api/issues/" in p for p in api_requests)
+            req = send_calls(fake_telegram)[0]
+            assert req[1]["parse_mode"] == "HTML"
+            text = req[1]["text"]
+            assert text.startswith("🤖 <b>Bachi</b> · <b>SEE-1567</b>")
+            assert "|---|" not in text
+            assert "<b>状态</b>: ok · <b>说明</b>: 好" in text
+            assert UUID_ACTOR not in text and UUID_ISSUE not in text
+        finally:
+            server.close()
+            api.close()
+
+    def test_metadata_failure_falls_back_without_uuid_and_still_delivers(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "actor_id": UUID_ACTOR, "issue_id": UUID_ISSUE})), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build_with_resolver(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_API_BASE": "http://127.0.0.1:1"})
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            req = send_calls(fake_telegram)[0]
+            text = req[1]["text"]
+            assert text.startswith("🤖 <b>Agent</b>")
+            assert UUID_ACTOR not in text and UUID_ISSUE not in text
+        finally:
+            server.close()
+
+
+class TestParseEntityFallback:
+    _PARSE_ERROR = (400, {"ok": False, "error_code": 400,
+                          "description": "Bad Request: can't parse entities: Unsupported start tag"})
+
+    def test_parse_rejection_falls_back_to_plain_once(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [self._PARSE_ERROR]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            calls = send_calls(fake_telegram)
+            assert len(calls) == 2
+            assert calls[0][1].get("parse_mode") == "HTML"
+            assert "parse_mode" not in calls[1][1]
+            assert "<b>" in calls[0][1]["text"] and "<b>" not in calls[1][1]["text"]
+            assert any(e.get("event") == "html_parse_rejected_plain_fallback"
+                       for e in capture.events())
+        finally:
+            server.close()
+
+    def test_fallback_failure_keeps_item_pending_then_recovers(self, tmp_path, fake_telegram):
+        boom = (500, {"ok": False, "description": "boom"})
+        fake_telegram.responses = [self._PARSE_ERROR, boom, boom, boom]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            calls = send_calls(fake_telegram)
+            assert len(calls) == 5
+            assert calls[0][1].get("parse_mode") == "HTML"
+            assert all("parse_mode" not in c[1] for c in calls[1:4])
+            assert calls[4][1].get("parse_mode") == "HTML"
+        finally:
+            server.close()
+
+    def test_other_400_never_triggers_plain_fallback(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [(400, {"ok": False, "error_code": 400,
+                                          "description": "Bad Request: chat not found"})]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            # chat-not-found keeps its stale-chat/reaffirm semantics: exactly two
+            # HTML-mode attempts (original + reaffirmed retry), no plain fallback.
+            calls = send_calls(fake_telegram)
+            assert all(c[1].get("parse_mode") == "HTML" for c in calls)
+            assert not any(e.get("event") == "html_parse_rejected_plain_fallback"
+                           for e in capture.events())
+        finally:
+            server.close()

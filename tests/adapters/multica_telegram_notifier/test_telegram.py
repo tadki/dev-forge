@@ -12,6 +12,7 @@ from multica_telegram_notifier.telegram import (
     TelegramClient,
     TelegramError,
     _error_detail,
+    is_parse_entity_error,
 )
 
 from multica_notifier_fakes import FakeTelegram
@@ -342,3 +343,37 @@ class TestErrorBodyReadRobustness:
             client.send_message(42, "hi", retries=(), sleep=lambda _s: None)
         assert exc.value.retryable is True
         assert BOT not in str(exc.value)
+
+
+class TestParseModePayload:
+    def test_parse_mode_included_when_given(self, fake_telegram):
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        client.send_message(42, "<b>hi</b>", parse_mode="HTML", retries=retries, sleep=sleep)
+        _path, body = fake_telegram.requests[0]
+        assert body["parse_mode"] == "HTML"
+
+    def test_no_parse_mode_by_default(self, fake_telegram):
+        client, retries, sleep = make_client(fake_telegram.base_url)
+        client.send_message(42, "hello", retries=retries, sleep=sleep)
+        _path, body = fake_telegram.requests[0]
+        assert "parse_mode" not in body
+
+
+class TestParseEntityDetection:
+    def _error(self, code, description):
+        return TelegramError(f"telegram sendMessage failed: {description}",
+                             retryable=False, error_code=code)
+
+    def test_parse_entity_rejection_detected(self):
+        assert is_parse_entity_error(
+            self._error(400, "Bad Request: can't parse entities: Unsupported start tag"))
+
+    def test_other_400_not_detected(self):
+        assert not is_parse_entity_error(self._error(400, "Bad Request: chat not found"))
+
+    def test_other_codes_not_detected(self):
+        assert not is_parse_entity_error(self._error(500, "can't parse entities"))
+        assert not is_parse_entity_error(self._error(429, "can't parse entities"))
+
+    def test_unrelated_exception_not_detected(self):
+        assert not is_parse_entity_error(ValueError("can't parse entities"))

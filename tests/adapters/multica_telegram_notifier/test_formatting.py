@@ -1,0 +1,262 @@
+"""§SPEC-001/002/003/005 unit tests for the Markdown→Telegram-HTML renderer:
+escaping, supported-tag whitelist, GFM table → key-value cards, safe
+degradations, UTF-16 fitting, and the readable header composition."""
+
+import pytest
+
+from multica_telegram_notifier.formatting import (
+    Notification,
+    fit_html_text,
+    markdown_to_html,
+    render_notification,
+)
+
+
+class _FixedResolver:
+    """Resolver stub returning canned labels; records query attempts."""
+
+    def __init__(self, agent=("Bachi", "agent"), issue=("SEE-1567", "优化排版")):
+        self.agent = agent
+        self.issue = issue
+        self.agent_queries = 0
+        self.issue_queries = 0
+
+    def agent_display(self, actor_type, actor_id):
+        self.agent_queries += 1
+        return self.agent[0]
+
+    def issue_ref(self, issue_id, item_title):
+        self.issue_queries += 1
+        return self.issue
+
+
+class _BrokenResolver:
+    """Simulates total metadata-query failure."""
+
+    def agent_display(self, actor_type, actor_id):
+        return "Agent" if actor_type == "agent" else "Unknown"
+
+    def issue_ref(self, issue_id, item_title):
+        return ("", item_title or "")
+
+
+def _item(**overrides):
+    item = {
+        "id": "item-1",
+        "type": "issue_assigned",
+        "title": "SEE-1567 优化排版",
+        "body": "正文",
+        "issue_id": "11111111-1111-1111-1111-111111111111",
+        "actor_type": "agent",
+        "actor_id": "22222222-2222-2222-2222-222222222222",
+        "created_at": "2026-11-11T03:00:00Z",
+    }
+    item.update(overrides)
+    return item
+
+
+class TestEscaping:
+    def test_html_specials_escaped(self):
+        assert markdown_to_html("a <b> & \"c\"") == "a &lt;b&gt; &amp; \"c\""
+
+    def test_script_tag_text_is_escaped_not_rendered(self):
+        out = markdown_to_html("<script>alert(1)</script>")
+        assert "<script>" not in out
+        assert "&lt;script&gt;" in out
+
+    def test_code_span_content_escaped(self):
+        assert markdown_to_html("`<i>x</i>`") == "<code>&lt;i&gt;x&lt;/i&gt;</code>"
+
+    def test_bold_italic_strikethrough(self):
+        assert markdown_to_html("**b** *i* ~~s~~") == "<b>b</b> <i>i</i> <s>s</s>"
+
+    def test_heading_becomes_bold(self):
+        assert markdown_to_html("## 标题") == "<b>标题</b>"
+
+    def test_unordered_list_bullets(self):
+        assert markdown_to_html("- 一\n- 二") == "• 一\n• 二"
+
+    def test_ordered_list_keeps_number(self):
+        assert markdown_to_html("1. 甲\n2. 乙") == "1. 甲\n2. 乙"
+
+    def test_blockquote_wrapped(self):
+        assert markdown_to_html("> 引用行") == "<blockquote>引用行</blockquote>"
+
+    def test_fenced_code_pre_escaped(self):
+        out = markdown_to_html("```python\nx < y\n```")
+        assert out.startswith("<pre>")
+        assert out.endswith("</pre>")
+        assert "x &lt; y" in out
+
+    def test_unterminated_fence_still_balanced(self):
+        out = markdown_to_html("```code\nnever closed")
+        assert out.count("<pre>") == out.count("</pre>") == 1
+
+    def test_link_href_and_text(self):
+        out = markdown_to_html("[标题](https://x.test/a?b=1&c=2)")
+        assert out == '<a href="https://x.test/a?b=1&amp;c=2">标题</a>'
+
+    def test_dangerous_scheme_neutralized_to_plain_text(self):
+        out = markdown_to_html("[点我](javascript:alert(1))")
+        assert "<a" not in out and "href" not in out
+        assert "点我" in out
+
+    def test_autolink(self):
+        assert markdown_to_html("<https://a.test>") == '<a href="https://a.test">https://a.test</a>'
+
+    def test_image_becomes_link(self):
+        out = markdown_to_html("![图](https://x.test/i.png)")
+        assert out == '<a href="https://x.test/i.png">图</a>'
+
+    def test_formatting_inside_code_span_is_literal(self):
+        out = markdown_to_html("`**x**`")
+        assert "<b>" not in out
+        assert "<code>**x**</code>" in out
+
+
+class TestTables:
+    def test_two_column_becomes_key_value_lines(self):
+        md = "| 状态 | 说明 |\n|---|---|\n| ok | 好 |\n| bad | 坏 |"
+        out = markdown_to_html(md)
+        assert "|---|" not in out and "---" not in out.replace("&amp;", "")
+        assert "<b>状态</b>: ok · <b>说明</b>: 好" in out
+        assert "<b>状态</b>: bad · <b>说明</b>: 坏" in out
+
+    def test_three_column_becomes_row_cards(self):
+        md = "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |"
+        out = markdown_to_html(md)
+        assert "• <b>A</b>: 1\n• <b>B</b>: 2\n• <b>C</b>: 3" in out
+
+    def test_cell_inline_formatting_kept(self):
+        md = "| K | V |\n|---|---|\n| **粗** | `代` |"
+        out = markdown_to_html(md)
+        assert "<b>粗</b>" in out and "<code>代</code>" in out
+
+    def test_empty_cell_placeholder(self):
+        md = "| K | V |\n|---|---|\n| a |  |"
+        assert "<b>K</b>: a · <b>V</b>: —" in markdown_to_html(md)
+
+    def test_ragged_row_padded_and_extras_merged(self):
+        md = "| A | B |\n|---|---|\n| only |\n| 1 | 2 | extra |"
+        out = markdown_to_html(md)
+        assert "<b>A</b>: only · <b>B</b>: —" in out
+        assert "<b>A</b>: 1 · <b>B</b>: 2 · extra" in out
+
+    def test_wide_table_summarized(self):
+        header = "| " + " | ".join(f"c{i}" for i in range(1, 8)) + " |"
+        delim = "|" + "|".join(["---"] * 7) + "|"
+        row = "|" + "|".join(["v"] * 7) + "|"
+        out = markdown_to_html("\n".join([header, delim, row]))
+        assert "表格过宽" in out and "7 列 × 1 行" in out
+        assert "|" not in out
+
+    def test_cjk_cells(self):
+        md = "| 名称 | 值 |\n|---|---|\n| 中文键 | 中文值 |"
+        assert "<b>名称</b>: 中文键 · <b>值</b>: 中文值" in markdown_to_html(md)
+
+    def test_pipe_text_without_delimiter_row_stays_text(self):
+        out = markdown_to_html("a | b 普通文本")
+        assert "a | b 普通文本" in out
+        assert "<b>" not in out
+
+    def test_pseudo_table_inside_code_block_untouched(self):
+        md = "```\n| a | b |\n|---|---|\n```"
+        out = markdown_to_html(md)
+        assert "| a | b |" in out and "|---|---|" in out
+        assert "<b>" not in out
+
+    def test_plain_mode_table_has_no_tags(self):
+        md = "| K | V |\n|---|---|\n| a | b |"
+        out = render_notification(_item(body=md), _FixedResolver()).plain
+        assert "<b>" not in out
+        assert "K: a · V: b" in out
+
+
+class TestHeaderComposition:
+    def test_header_order_agent_then_identifier_then_title(self):
+        note = render_notification(_item(), _FixedResolver(
+            agent=("Revy", "agent"), issue=("SEE-1567", "优化 Telegram 排版")))
+        header = note.html.split("\n", 1)[0]
+        assert header.index("Revy") < header.index("SEE-1567") < header.index("优化 Telegram 排版")
+
+    def test_header_is_bold_html(self):
+        note = render_notification(_item(), _FixedResolver())
+        header = note.html.split("\n", 1)[0]
+        assert header.startswith("🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化排版")
+
+    def test_footer_time_and_type(self):
+        note = render_notification(_item(), _FixedResolver())
+        assert note.html.rstrip().endswith("🕐 2026-11-11T03:00:00Z · issue_assigned")
+
+    def test_missing_issue_omits_segment_without_uuid(self):
+        note = render_notification(
+            _item(issue_id=None, title="只有标题"), _FixedResolver(issue=("", "")))
+        header = note.html.split("\n", 1)[0]
+        assert "SEE-" not in header
+        assert "11111111" not in note.html
+
+    def test_resolver_failure_falls_back_without_bare_uuid(self):
+        item = _item(title=None, body=None)
+        item["issue_id"] = "99999999-9999-9999-9999-999999999999"
+        note = render_notification(item, _BrokenResolver())
+        assert "99999999" not in note.html
+        assert "🤖 <b>Agent</b>" in note.html
+
+    def test_readable_actor_slug_used_directly(self):
+        class _SlugResolver:
+            def agent_display(self, actor_type, actor_id):
+                return actor_id
+
+            def issue_ref(self, issue_id, item_title):
+                return ("", item_title or "")
+
+        note = render_notification(_item(title="t", actor_id="agent-atlas-slug"), _SlugResolver())
+        assert "agent-atlas-slug" in note.html
+
+    def test_returns_both_modes(self):
+        note = render_notification(_item(), _FixedResolver())
+        assert isinstance(note, Notification)
+        assert "<b>" in note.html and "<b>" not in note.plain
+        assert "Bachi" in note.plain
+
+
+class TestFitting:
+    def _huge_body(self, units):
+        return "字" * (units // 1)  # CJK = 1 UTF-16 unit each
+
+    def test_long_document_fits_4096_and_balanced_tags(self):
+        body = ("## 段落\n\n**加粗** 内容 行\n\n| K | V |\n|---|---|\n" +
+                "\n".join(f"| k{i} | v{i}" + str(i) + " |" for i in range(300)))
+        note = render_notification(_item(body=body), _FixedResolver())
+        encoded = note.html.encode("utf-16-le", errors="strict")
+        assert len(encoded) // 2 <= 4096
+        assert note.html.count("<b>") == note.html.count("</b>")
+
+    def test_non_bmp_emoji_heavy_text_fits_without_surrogates(self):
+        body = "🚀" * 3000  # each = 2 UTF-16 units
+        note = render_notification(_item(body=body), _FixedResolver())
+        note.html.encode("utf-16-le", errors="strict")  # must not raise
+        assert len(note.html.encode("utf-16-le")) // 2 <= 4096
+
+    def test_lone_surrogate_dropped(self):
+        note = render_notification(_item(body="ok \ud800 文本"), _FixedResolver())
+        note.html.encode("utf-16-le", errors="strict")
+
+    def test_entities_never_cut(self):
+        import re
+
+        body = "&" * 4000 + "尾部"
+        note = render_notification(_item(body=body), _FixedResolver())
+        assert len(note.html.encode("utf-16-le")) // 2 <= 4096
+        # Every & that survived must be part of a whole entity, never "amp&".
+        assert not re.search(r"&(?!amp;|lt;|gt;)", note.html)
+
+    def test_fit_html_text_direct(self):
+        md = "x" * 9000
+        out = fit_html_text(md, header="🤖 <b>A</b>\n──────────\n", footer="\n\n🕐 t")
+        assert len(out.encode("utf-16-le")) // 2 <= 4096
+
+    def test_truncation_keeps_head_of_document(self):
+        body = "开头标记\n\n" + "y" * 8000
+        note = render_notification(_item(body=body), _FixedResolver())
+        assert "开头标记" in note.html

@@ -228,3 +228,31 @@ class TestWsUrl:
         env = dict(REQUIRED)
         env["NOTIFIER_MULTICA_SERVER_URL"] = "https://multica.internal"
         assert ws_url(load_config(env)).startswith("wss://multica.internal/ws?")
+
+
+class TestMetadataApiConfig:
+    BASE_ENV = {
+        "NOTIFIER_MULTICA_PAT": "p",
+        "NOTIFIER_TELEGRAM_BOT_TOKEN": "t",
+        "NOTIFIER_TELEGRAM_CHAT_ID": "1",
+        "NOTIFIER_MULTICA_SERVER_URL": "http://srv.example",
+        "NOTIFIER_WORKSPACE_ID": "ws",
+    }
+
+    def test_api_base_defaults_to_server_url(self):
+        cfg = load_config(self.BASE_ENV)
+        assert cfg.api_base == "http://srv.example"
+
+    def test_api_base_override(self):
+        cfg = load_config(dict(self.BASE_ENV, NOTIFIER_API_BASE="http://api.example/"))
+        assert cfg.api_base == "http://api.example"
+
+    def test_query_timeout_default(self):
+        cfg = load_config(self.BASE_ENV)
+        assert cfg.query_timeout == 5.0
+
+    def test_query_timeout_override_and_validation(self):
+        cfg = load_config(dict(self.BASE_ENV, NOTIFIER_QUERY_TIMEOUT="0.3"))
+        assert cfg.query_timeout == 0.3
+        with pytest.raises(ConfigError):
+            load_config(dict(self.BASE_ENV, NOTIFIER_QUERY_TIMEOUT="0"))

@@ -181,6 +181,59 @@ class FakeMulticaWS:
                 pass
 
 
+class FakeMulticaAPI:
+    """Scriptable fake of the Multica REST read endpoints (agent/issue lookups)
+    used by resolver, notifier-integration and E2E tests."""
+
+    def __init__(self, agent_body=None, issue_body=None, agent_status=200,
+                 issue_status=200, delay=0.0):
+        self.agent_body = agent_body if agent_body is not None else {"name": "Bachi"}
+        self.issue_body = issue_body if issue_body is not None else {
+            "identifier": "SEE-1567", "title": "优化 Telegram 排版"}
+        self.agent_status = agent_status
+        self.issue_status = issue_status
+        self.delay = delay
+        self.requests = []
+        self.auth_headers = []
+        self._lock = threading.Lock()
+
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                with server._lock:
+                    server.requests.append(self.path)
+                    server.auth_headers.append(self.headers.get("Authorization", ""))
+                if server.delay:
+                    time.sleep(server.delay)
+                if "/api/agents/" in self.path:
+                    status, body = server.agent_status, server.agent_body
+                else:
+                    status, body = server.issue_status, server.issue_body
+                payload = json.dumps(body).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        self._http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self._http.server_address[1]
+        self._thread = threading.Thread(target=self._http.serve_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def base_url(self):
+        return f"http://127.0.0.1:{self.port}"
+
+    def close(self):
+        self._http.shutdown()
+        self._http.server_close()
+
+
 class FakeTelegram:
     """Fake api.telegram.org. responses: list of (status, body-dict) consumed
     in order per request; exhausted requests get a default ok response."""
@@ -261,8 +314,12 @@ def make_inbox_frame(item_overrides=None, workspace_id="ws-target", item_id="ite
     return json.dumps({"type": event_type, "payload": {"item": item}, "actor_id": "actor-1", "actor_type": "agent"})
 
 
-def make_env(multica, telegram, tmp_path, **overrides):
-    """Config mapping wired to the two fakes, with fast test timings."""
+def make_env(multica, telegram, tmp_path, api=None, **overrides):
+    """Config mapping wired to the fakes, with fast test timings.
+
+    api: optional FakeMulticaAPI; when omitted the metadata resolver points at
+    the WS fake origin, where REST queries fail fast (bounding timeout below).
+    """
     env = {
         "NOTIFIER_MULTICA_PAT": "test-pat-value-0123456789",
         "NOTIFIER_TELEGRAM_BOT_TOKEN": "test-bot-token-value",
@@ -274,7 +331,10 @@ def make_env(multica, telegram, tmp_path, **overrides):
         "NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05",
         "NOTIFIER_SEND_RETRIES": "0.02,0.05",
         "NOTIFIER_CONNECT_TIMEOUT": "3",
+        "NOTIFIER_QUERY_TIMEOUT": "0.05",
     }
+    if api is not None:
+        env["NOTIFIER_API_BASE"] = api.base_url
     env.update(overrides)
     return env
 

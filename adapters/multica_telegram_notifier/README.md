@@ -1,8 +1,32 @@
-# Multica → Telegram 通知适配器（SEE-1561）
+# Multica → Telegram 通知适配器（SEE-1561 / SEE-1567）
 
 独立的 Python 适配器：连接 Multica realtime WebSocket，监听目标 workspace 的
-`inbox:new` 个人事件，把每条收件箱通知以纯文本推送到你自建的 Telegram bot 私聊。
+`inbox:new` 个人事件，把每条收件箱通知推送到你自建的 Telegram bot 私聊。
 仅用 Python 3 标准库，无第三方依赖。
+
+## 消息排版（SEE-1567）
+
+通知以可读元信息开头，正文按 Telegram HTML 渲染：
+
+- **首部元信息**：`🤖 Agent 显示名 · SEE-XXX issue 标题`，随后一条分隔线。
+  Agent 显示名优先用事件自带的可读字段；是 UUID 时通过 Multica 只读 REST
+  查询（`GET /api/agents/<id>?workspace_id=…`，Bearer PAT 鉴权）补全，带
+  TTL 缓存（命中 6 小时 / 失败 60 秒负缓存）与超时上限。查询失败时降级为
+  类型标签（Agent / Member / Unknown），**永远不会出现裸 UUID**，也绝不会
+  阻断通知投递。issue 标识符优先从事件标题前缀提取；缺失时查询
+  `GET /api/issues/<id>` 补全。
+- **Markdown 渲染**：常用 Markdown 以 `parse_mode=HTML` 渲染为 Telegram 支持
+  的标签子集（粗体/斜体/删除线/行内代码/围栏代码/引用/链接/列表）；
+  `& < >` 一律转义，危险链接协议（如 `javascript:`）去掉锚点只保留文字。
+- **表格**：GFM 管道表格转为移动端友好的键值列表/逐行卡片——两列表格一行
+  一条，三列及以上逐行成卡片，单元格行内格式保留；空单元格显示 `—`，
+  列数不齐自动补齐/合并，超过 6 列的宽表以一行摘要代替，代码块内的
+  伪表格保持原样。分隔行 `|---|` 不会出现在任何输出里。
+- **降级**：仅当 Telegram 明确返回 400「can't parse entities」时，才以无
+  `parse_mode` 的纯文本重发一次；其余 400、stale chat、通道/可重试错误
+  分类与 SEE-1561 完全一致，同一通知不会重复成功投递。
+- **长度**：按 Telegram 4096 UTF-16 单位上限先收缩源文本再渲染，永不切断
+  HTML 标签或实体，孤立代理字符一律清除；超长正文保留开头部分。
 
 ## 工作原理
 
@@ -89,13 +113,16 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 | `NOTIFIER_SEND_RETRIES` | 否 | `1,2,4` | sendMessage 失败重试间隔秒数 |
 | `NOTIFIER_CONNECT_TIMEOUT` | 否 | `10` | 连接/HTTP 超时秒数 |
 | `NOTIFIER_READ_TIMEOUT` | 否 | `90` | 单帧读取超时秒数（须大于服务端 ~54s ping 周期；超时视为半开连接并重建会话） |
+| `NOTIFIER_API_BASE` | 否 | 同 `NOTIFIER_MULTICA_SERVER_URL` | 元信息只读查询（Agent 显示名/issue 标识符）根地址 |
+| `NOTIFIER_QUERY_TIMEOUT` | 否 | `5` | 单次元信息查询超时秒数；失败自动降级，不阻断投递 |
 
 配置文件里已有的值优先于同名进程环境变量；进程环境变量再作为缺省回退。
 
 ## 密钥保护
 
 - PAT 与 bot token 只放在权限 600 的本地配置文件中，不进仓库、不进日志、不进
-  issue/评论；状态文件只存已投递通知 ID。
+  issue/评论；状态文件只存已投递通知 ID。元信息查询的 PAT 同样只出现在
+  Authorization 头里，错误消息刻意不含 URL/token。
 - 运行产物（`--log-json` 日志、状态文件）都应放在仓库外（默认
   `~/.local/state/dev-forge/...`）；仓库 `.gitignore` 另有 `live-probe*.jsonl`
   兜底，避免探针产物被误提交。
@@ -103,15 +130,26 @@ python3 adapters/multica_telegram_notifier/notifier.py \
   token 的 URL。
 - 泄漏应急：在 BotFather `/revoke` 换 token；在 Multica 设置里删除并重建 PAT。
 
+## 运维边界
+
+- 元信息查询是只读 GET（`/api/agents/<id>`、`/api/issues/<id>`），带超时与
+  双向 TTL 缓存；Multica 服务暂时不可用只会让消息首部降级为类型标签，
+  投递照常进行。
+- 本仓库的开发/测试不停止、不重启已部署的 `multica-telegram-notifier.service`；
+  合并后的稳定目录更新与服务重启由 Owner 另行受控 rollout。
+
 ## 测试
 
 ```bash
 python3 -m pytest tests/adapters/multica_telegram_notifier -q
 ```
 
-覆盖协议解析（auth/auth_ack/inbox:new）、Telegram 正常与失败路径、重连/去重/
-malformed 容忍，以及伪 Multica WS → 真实适配器 → 伪 Telegram API 的端到端链路
-（鉴权失败、发送失败与重试）。全套测试仅用本地伪服务器，不触网、不碰真实凭据。
+覆盖协议解析（auth/auth_ack/inbox:new）、Markdown→HTML 渲染与转义、表格卡片
+转换、元信息解析器（命中/缓存/超时/降级/凭据安全）、Telegram 正常与失败路径
+（含 parse-entity 纯文本回退）、重连/去重/malformed 容忍，以及伪 Multica WS
++ 伪 Multica REST → 真实适配器 → 伪 Telegram API 的端到端链路（鉴权失败、
+发送失败、重试、可读首部与降级）。全套测试仅用本地伪服务器，不触网、
+不碰真实凭据。
 
 ## 与既有 autopilot / webhook 的关系
 
