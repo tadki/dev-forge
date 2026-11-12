@@ -334,5 +334,13 @@ class TestCacheEviction:
             resolver.agent_display("agent", AGENT_ID)
             assert len(resolver._cache) == 1
             assert len(server.requests) == 2
+            # The expired entry must be REMOVED at the miss itself, not merely
+            # overwritten by the re-fetch that follows: drive one expired miss
+            # with no store after it and the dict must actually shrink.
+            resolver._store(("agent", AGENT_ID), "Bachi", 60.0)
+            clock.now += 120.0
+            assert ("agent", AGENT_ID) in resolver._cache
+            resolver._cached(("agent", AGENT_ID))
+            assert ("agent", AGENT_ID) not in resolver._cache
         finally:
             server.close()

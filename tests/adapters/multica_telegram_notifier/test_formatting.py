@@ -499,3 +499,46 @@ class TestFixedPartsBudget:
         note = render_notification(_item(title="&" * 5000), None)
         head_line = note.plain.split("\n", 1)[0]
         assert len(head_line.encode("utf-16-le", errors="ignore")) // 2 < 800
+
+
+class TestClampBounds:
+    """Hardener: the clamp must mark truncation with an ellipsis, treat the
+    exact limit as unchanged, and apply to identifier/kind/footer components;
+    the fit fallback budget must account for x5 entity growth."""
+
+    def test_clamp_truncates_with_ellipsis(self):
+        note = render_notification(
+            _item(title="T" * 300), _FixedResolver(issue=("SEE-1567", "T" * 300)))
+        header = note.html.split("\n", 1)[0]
+        assert "…" in header
+        assert "T" * 300 not in header
+
+    def test_clamp_at_exact_limit_keeps_component_whole(self):
+        note = render_notification(
+            _item(title="T" * 256), _FixedResolver(issue=("SEE-1567", "T" * 256)))
+        header = note.html.split("\n", 1)[0]
+        assert "T" * 256 in header
+        assert "…" not in header
+
+    def test_overlong_identifier_clamped(self):
+        long_id = "SEE-" + "9" * 300
+        note = render_notification(_item(title=long_id), _FixedResolver(issue=(long_id, "")))
+        header = note.html.split("\n", 1)[0]
+        assert "…" in header
+        assert long_id not in header
+
+    def test_footer_kind_escaped_in_html(self):
+        note = render_notification(_item(type="<b>kind&amp;</b>"), _FixedResolver())
+        assert note.html.rstrip().endswith("· &lt;b&gt;kind&amp;amp;&lt;/b&gt;")
+
+    def test_footer_kind_clamped(self):
+        note = render_notification(_item(type="K" * 100), _FixedResolver())
+        assert note.html.rstrip().endswith("K" * 31 + "…")
+        assert "K" * 100 not in note.html
+
+    def test_fit_fallback_budget_accounts_for_escape_growth(self):
+        import re
+
+        out = fit_html_text("&" * 2000, header="H" * 10, footer="F" * 10, limit=100)
+        assert len(out.encode("utf-16-le", errors="strict")) // 2 <= 100
+        assert not re.search(r"&(?!amp;|lt;|gt;)", out)
