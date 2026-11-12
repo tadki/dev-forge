@@ -175,59 +175,67 @@ def _render_blocks(md: str, mode: str) -> str:
             _flush_paragraph(blocks, paragraph)
             i += 1
             continue
-        if line.startswith(_FENCE_SENTINEL) and line.endswith(_FENCE_SENTINEL):
+        consumed, block = _render_block(lines, i, mode)
+        if block is not None:
             _flush_paragraph(blocks, paragraph)
-            blocks.append(line.strip(_FENCE_SENTINEL))
-            i += 1
-            continue
-        if "|" in line and i + 1 < len(lines) and _is_delimiter_row(lines[i + 1]):
-            header, rows, consumed = _collect_table(lines, i)
-            _flush_paragraph(blocks, paragraph)
-            blocks.append(_table_cards(header, rows, mode))
+            blocks.append(block)
+        if consumed:
             i += consumed
-            continue
-        if _HR_RE.match(line):
-            _flush_paragraph(blocks, paragraph)
-            blocks.append(SEPARATOR)
-            i += 1
-            continue
-        heading = _HEADING_RE.match(line)
-        if heading:
-            _flush_paragraph(blocks, paragraph)
-            inner = _render_inline(heading.group(1), mode)
-            blocks.append(f"<b>{inner}</b>" if mode == "html" else inner)
-            i += 1
-            continue
-        if _QUOTE_RE.match(line):
-            _flush_paragraph(blocks, paragraph)
-            quote = []
-            while i < len(lines):
-                m = _QUOTE_RE.match(lines[i])
-                if not m:
-                    break
-                quote.append(_render_inline(m.group(1), mode))
-                i += 1
-            joined = "\n".join(quote)
-            blocks.append(f"<blockquote>{joined}</blockquote>" if mode == "html" else joined)
-            continue
-        if _LIST_RE.match(line):
-            _flush_paragraph(blocks, paragraph)
-            items = []
-            while i < len(lines) and _LIST_RE.match(lines[i]):
-                m = _LIST_RE.match(lines[i])
-                indent, marker, content = m.group(1), m.group(2), m.group(3)
-                prefix = "  " * min(len(indent) // 2, 3)
-                if marker in ("-", "*", "+"):
-                    items.append(f"{prefix}• {_render_inline(content, mode)}")
-                else:
-                    items.append(f"{prefix}{marker.rstrip('.)')}. {_render_inline(content, mode)}")
-                i += 1
-            blocks.append("\n".join(items))
             continue
         paragraph.append(_render_inline(line, mode))
         i += 1
     _flush_paragraph(blocks, paragraph)
     return "\n\n".join(b for b in blocks if b)
+
+
+def _render_block(lines: list, i: int, mode: str) -> tuple:
+    """Renders the block starting at lines[i]; returns (consumed, block).
+    block is None when the line starts no block (it is a paragraph line)."""
+    line = lines[i]
+    if line.startswith(_FENCE_SENTINEL) and line.endswith(_FENCE_SENTINEL):
+        return 1, line.strip(_FENCE_SENTINEL)
+    if "|" in line and i + 1 < len(lines) and _is_delimiter_row(lines[i + 1]):
+        header, rows, consumed = _collect_table(lines, i)
+        return consumed, _table_cards(header, rows, mode)
+    if _HR_RE.match(line):
+        return 1, SEPARATOR
+    heading = _HEADING_RE.match(line)
+    if heading:
+        inner = _render_inline(heading.group(1), mode)
+        return 1, (f"<b>{inner}</b>" if mode == "html" else inner)
+    if _QUOTE_RE.match(line):
+        return _render_quote(lines, i, mode)
+    if _LIST_RE.match(line):
+        return _render_list(lines, i, mode)
+    return 0, None
+
+
+def _render_quote(lines: list, start: int, mode: str) -> tuple:
+    quote = []
+    i = start
+    while i < len(lines):
+        m = _QUOTE_RE.match(lines[i])
+        if not m:
+            break
+        quote.append(_render_inline(m.group(1), mode))
+        i += 1
+    joined = "\n".join(quote)
+    return i - start, (f"<blockquote>{joined}</blockquote>" if mode == "html" else joined)
+
+
+def _render_list(lines: list, start: int, mode: str) -> tuple:
+    items = []
+    i = start
+    while i < len(lines) and _LIST_RE.match(lines[i]):
+        m = _LIST_RE.match(lines[i])
+        indent, marker, content = m.group(1), m.group(2), m.group(3)
+        prefix = "  " * min(len(indent) // 2, 3)
+        if marker in ("-", "*", "+"):
+            items.append(f"{prefix}• {_render_inline(content, mode)}")
+        else:
+            items.append(f"{prefix}{marker.rstrip('.)')}. {_render_inline(content, mode)}")
+        i += 1
+    return i - start, "\n".join(items)
 
 
 def _flush_paragraph(blocks, paragraph):
