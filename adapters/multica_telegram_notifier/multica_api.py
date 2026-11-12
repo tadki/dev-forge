@@ -34,9 +34,12 @@ DEFAULT_QUERY_TIMEOUT = 5.0
 _MAX_NAME_LEN = 64
 _MAX_TITLE_LEN = 256
 
-# SEE-1572 deep-link surface: the web link root is the operator-configured
-# server URL; every other URL component is validated before composition, so
-# event-controlled text can never enter a URL (§SPEC-004).
+# SEE-1572 deep-link surface (R2): the web link root is the operator-configured
+# NOTIFIER_WEB_BASE_URL only — the API/WS origin is a different deployment
+# surface in the real install (QA H1) and is never a fallback. The restricted
+# charset contains no & < > ", so escape_html is identity on every URL
+# component and the escaped length equals the raw length (QA L1).
+_WEB_BASE_RE = re.compile(r"^[A-Za-z0-9.:/_-]+$")
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 _MAX_SLUG_LEN = 64
 _MAX_WEB_BASE_LEN = 512
@@ -66,12 +69,12 @@ def type_label(actor_type: str) -> str:
 class MetadataResolver:
     def __init__(self, server_url: str, pat: str, workspace_id: str,
                  timeout: float = DEFAULT_QUERY_TIMEOUT, clock=time.monotonic,
-                 web_base: str = None):
+                 web_base: str = ""):
         self._base = server_url.rstrip("/")
-        # Web link root for deep links (§SPEC-002): the deployed Multica web
-        # origin. Defaults to the API base — they are the same origin in the
-        # standard deployment.
-        self._web_base = (web_base if web_base else server_url).rstrip("/")
+        # Web link root for deep links (§SPEC-002 R2): the NOTIFIER_WEB_BASE_URL
+        # value. Empty (or link-time invalid) disables deep links — there is
+        # deliberately NO fallback to the API origin (QA H1).
+        self._web_base = (web_base or "").rstrip("/")
         self._pat = pat
         self._workspace = workspace_id
         self._timeout = timeout
@@ -151,21 +154,24 @@ class MetadataResolver:
                         POSITIVE_TTL_SECONDS if slug else NEGATIVE_TTL_SECONDS)
         return slug or ""
 
-    def comment_link(self, identifier: str, comment_id: str) -> str:
-        """Web deep link for the notification title line (§SPEC-001/002);
-        "" degrades to the current unlinked header. Degradation chain: no
-        SEE-shaped identifier or no validated slug → "" (plain header);
-        comment uuid missing/invalid → issue-page link without an anchor;
-        otherwise the full #comment-<uuid> deep link. Every component is
-        validated locally (identifier regex, http(s) web root, bounded
-        length, canonical UUID) or by workspace_slug() — event-controlled
-        text never reaches the URL."""
-        if not isinstance(identifier, str) or not _LINK_IDENTIFIER_RE.fullmatch(identifier):
+    def comment_link(self, issue_id: str, comment_id: str) -> str:
+        """Web deep link for the notification title line (§SPEC-001/002 R2);
+        "" degrades to the current unlinked header. All gates run BEFORE any
+        REST request, so an invalid configuration costs zero lookups:
+        - web root: NOTIFIER_WEB_BASE_URL only — http(s), ≤512, restricted
+          charset; unset/invalid → "" (no API-origin fallback, QA H1/L1);
+        - issue path segment: the /api/issues identifier of the item's
+          canonical issue_id — the notification title never steers a URL
+          (QA M2); lookup failure or non-canonical id → "";
+        - slug: workspace_slug() (validated, cached); failure → "";
+        - comment uuid: canonical UUID required; missing/invalid → issue
+          page link without the anchor.
+        """
+        base = self._validated_web_root()
+        if not base:
             return ""
-        base = self._web_base
-        if not base.lower().startswith(("http://", "https://")):
-            return ""
-        if len(base) > _MAX_WEB_BASE_LEN:
+        identifier = self._link_identifier(issue_id)
+        if not identifier:
             return ""
         slug = self.workspace_slug()
         if not slug:
@@ -176,6 +182,30 @@ class MetadataResolver:
         return url
 
     # --- internals ---
+
+    def _validated_web_root(self) -> str:
+        base = self._web_base
+        if not base or not base.lower().startswith(("http://", "https://")):
+            return ""
+        # The charset excludes & < > " and any whitespace/control character,
+        # so escape_html is identity on the whole URL and a quote can never
+        # break out of the href attribute; length in chars equals UTF-16
+        # units, keeping the fixed-header budget deterministic (QA L1).
+        if len(base) > _MAX_WEB_BASE_LEN or not _WEB_BASE_RE.fullmatch(base):
+            return ""
+        return base
+
+    def _link_identifier(self, issue_id: str) -> str:
+        # QA M2: only the /api/issues identifier of the item's canonical
+        # issue uuid may enter the URL; a title prefix is display data and
+        # demonstrably unreliable (real items where they disagree).
+        if not (isinstance(issue_id, str) and looks_like_uuid(issue_id)):
+            return ""
+        ref = self._cached(("issue", issue_id))
+        if ref is _MISS:
+            ref = self._fetch_issue(issue_id)
+        identifier = ref[0] if ref else ""
+        return identifier if _LINK_IDENTIFIER_RE.fullmatch(identifier) else ""
 
     def _fetch_issue(self, issue_id: str):
         try:

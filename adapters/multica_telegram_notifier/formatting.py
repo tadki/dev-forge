@@ -54,12 +54,15 @@ _FENCE_SENTINEL = "\x00"
 # FR-1: fixed header/footer metadata is clamped in UTF-16 units BEFORE the
 # heading text is escaped. Worst case (& → &amp; ×5): agent 64→320,
 # identifier 16→80, title 256→1280, footer ~480 plus template/separator ~80.
-# SEE-1572: the header line may be wrapped in one <a href> anchor; every URL
-# component is validated upstream (multica_api: http(s) web root ≤512 code
-# points, slug [a-z0-9-]{1,64}, identifier SEE-\d{1,12}, canonical UUID), so
-# the URL is bounded at 512+1+64+8+16+9+36 = 646 units and the wrapper adds
-# ≤ 646+15. Worst-case fixed parts: 320+3+16+1+1280+661 (header) + 560
-# (footer) ⇒ ≤ ~2840 units, safely under Telegram's 4096 budget.
+# SEE-1572 R2: the header line may be wrapped in one <a href> anchor; every
+# URL component is validated upstream (multica_api: http(s) web root ≤512 in
+# the &<>"-free charset [A-Za-z0-9.:/_-], slug [a-z0-9-]{1,64}, identifier
+# SEE-\d{1,12}, canonical UUID), so escape_html is IDENTITY on the URL and
+# its escaped length equals its raw length — bounded at
+# 512+1+64+8+16+9+36 = 646 units, wrapper adds ≤ 646+15. Worst-case fixed
+# parts: 320+3+16+1+1280+661 (header) + 560 (footer) ⇒ ≤ ~2840 units,
+# deterministically under Telegram's 4096 budget (no escape amplification
+# can occur inside the URL — that was QA finding L1).
 _MAX_AGENT_UNITS = 64
 _MAX_IDENTIFIER_UNITS = 16
 _MAX_TITLE_UNITS = 256
@@ -358,7 +361,7 @@ class _StaticResolver:
             return m.group(1), m.group(2).strip()
         return ("", item_title)
 
-    def comment_link(self, identifier, comment_id):
+    def comment_link(self, issue_id, comment_id):
         return ""
 
 
@@ -373,14 +376,17 @@ def _comment_id(item: dict) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _deep_link(item: dict, resolver, identifier: str) -> str:
+def _deep_link(item: dict, resolver) -> str:
     # Duck-typed resolvers without the deep-link surface (older stubs) keep
     # the current unlinked header; the static resolver defines comment_link
     # as a constant "" so both production resolvers carry the full surface.
+    # The link is driven by the item's issue_id, NOT the title prefix: the
+    # resolver resolves it through /api/issues, so a title that names a
+    # different issue cannot steer the URL (QA M2).
     getter = getattr(resolver, "comment_link", None)
     if getter is None:
         return ""
-    return getter(identifier, _comment_id(item))
+    return getter(_text(item.get("issue_id")), _comment_id(item))
 
 
 def _compose_header(item: dict, resolver) -> tuple:
@@ -392,10 +398,10 @@ def _compose_header(item: dict, resolver) -> tuple:
         parts_html.append(f"{icon} <b>{escape_html(agent)}</b>")
         parts_plain.append(f"{icon} {agent}")
     identifier, title = resolver.issue_ref(_text(item.get("issue_id")), _text(item.get("title")))
-    # The link is composed from the RAW identifier: comment_link re-validates
-    # the SEE shape, so a clamped or odd-shaped identifier can never enter
-    # the URL.
-    link = _deep_link(item, resolver, identifier)
+    # Display identifier (possibly the title prefix) and link target are
+    # independent on purpose: the URL only ever carries the /api/issues
+    # identifier of item.issue_id (QA M2).
+    link = _deep_link(item, resolver)
     identifier = _clamp(identifier, _MAX_IDENTIFIER_UNITS)
     title = _clamp(title, _MAX_TITLE_UNITS)
     if identifier and title:

@@ -82,11 +82,13 @@ def build_components(config, ws_cls=WSClient):
 
 def build_resolver(config: Config) -> MetadataResolver:
     """Bounded read-only name lookups (§SPEC-001); failures degrade, never block.
-    web_base stays NOTIFIER_MULTICA_SERVER_URL: that origin is the deep-link
-    root even when NOTIFIER_API_BASE points the lookups elsewhere."""
+    The deep-link web root is NOTIFIER_WEB_BASE_URL only (§SPEC-002 R2): the
+    real deployment serves the Web UI and the API/WS on different ports (QA
+    H1), so the API origin is never used as a link root. Unset/invalid
+    values degrade to an unlinked header."""
     return MetadataResolver(
         config.api_base, config.multica_pat, config.workspace_id,
-        timeout=config.query_timeout, web_base=config.server_url)
+        timeout=config.query_timeout, web_base=config.web_base_url)
 
 
 class Notifier:

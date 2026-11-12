@@ -921,12 +921,18 @@ class TestReadableNotification:
 
 CANON_WS = "33333333-3333-3333-3333-333333333333"
 COMMENT_UUID = "44444444-4444-4444-4444-444444444444"
+WEB_ROOT = "http://web.test"
 
 
 class TestDeepLinkDelivery:
-    """§SPEC-001/002: the delivered outbound payload carries the title line
-    as a single anchor to {server_url}/{slug}/issues/{id}#comment-{uuid};
-    degradations keep delivery intact (never blocks, never duplicates)."""
+    """§SPEC-001/002 R2: the delivered outbound payload carries the title
+    line as a single anchor to {NOTIFIER_WEB_BASE_URL}/{slug}/issues/
+    {identifier-from-issue-api}#comment-{uuid}; degradations keep delivery
+    intact (never blocks, never duplicates)."""
+
+    def _env(self, **api_kwargs):
+        return {"NOTIFIER_WORKSPACE_ID": CANON_WS,
+                "NOTIFIER_WEB_BASE_URL": WEB_ROOT}
 
     def _comment_frame(self):
         return make_inbox_frame(
@@ -940,18 +946,62 @@ class TestDeepLinkDelivery:
         api = FakeMulticaAPI()
         server = FakeMulticaWS(script=[("text", self._comment_frame()), ("sleep", 5)])
         try:
-            notifier, cfg, _capture = build_with_resolver(
-                tmp_path, server, fake_telegram, api,
-                env_over={"NOTIFIER_WORKSPACE_ID": CANON_WS})
+            notifier, _cfg, _capture = build_with_resolver(
+                tmp_path, server, fake_telegram, api, env_over=self._env())
             _thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             assert any("/api/workspaces/" in p for p in api.requests)
             text = send_calls(fake_telegram)[0][1]["text"]
-            expected = (f'<a href="{cfg.server_url}/seed/issues/SEE-1567'
+            expected = (f'<a href="{WEB_ROOT}/seed/issues/SEE-1567'
                         f'#comment-{COMMENT_UUID}">🤖 <b>Bachi</b> · <b>SEE-1567</b>'
                         " 优化 Telegram 排版</a>")
             assert text.split("\n", 1)[0] == expected
             assert text.count("<a ") == 1
+        finally:
+            server.close()
+            api.close()
+
+    def test_web_root_unset_delivers_unlinked_header(self, tmp_path, fake_telegram):
+        # R2: without NOTIFIER_WEB_BASE_URL the header stays plain — the API
+        # origin must never become the link root (QA H1: it is a 404 origin).
+        api = FakeMulticaAPI()
+        server = FakeMulticaWS(script=[("text", self._comment_frame()), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build_with_resolver(
+                tmp_path, server, fake_telegram, api,
+                env_over={"NOTIFIER_WORKSPACE_ID": CANON_WS})
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            first_line = send_calls(fake_telegram)[0][1]["text"].split("\n", 1)[0]
+            assert first_line.startswith("🤖 <b>Bachi</b>")
+            assert "<a " not in first_line
+        finally:
+            server.close()
+            api.close()
+
+    def test_title_prefix_lying_issue_uses_api_identifier_in_url(self, tmp_path, fake_telegram):
+        # QA M2: real delivery evidence — a title prefixed SEE-1546 on an
+        # item whose issue is SEE-1562. Header text keeps the title, the URL
+        # must carry the /api/issues identifier of item.issue_id.
+        api = FakeMulticaAPI(issue_body={"identifier": "SEE-1562", "title": "真实标题"})
+        frame = make_inbox_frame(
+            workspace_id=CANON_WS,
+            item_overrides={
+                "actor_id": UUID_ACTOR, "issue_id": UUID_ISSUE,
+                "title": "SEE-1546 R22 独立复核：主体通过", "type": "new_comment",
+                "details": {"comment_id": COMMENT_UUID}})
+        server = FakeMulticaWS(script=[("text", frame), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build_with_resolver(
+                tmp_path, server, fake_telegram, api, env_over=self._env())
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            text = send_calls(fake_telegram)[0][1]["text"]
+            first_line = text.split("\n", 1)[0]
+            assert first_line == (
+                f'<a href="{WEB_ROOT}/seed/issues/SEE-1562#comment-{COMMENT_UUID}">'
+                "🤖 <b>Bachi</b> · <b>SEE-1546</b> R22 独立复核：主体通过</a>")
+            assert "SEE-1546" not in first_line.split('">', 1)[0]
         finally:
             server.close()
             api.close()
@@ -964,14 +1014,13 @@ class TestDeepLinkDelivery:
                             "title": "优化 Telegram 排版", "details": {}})
         server = FakeMulticaWS(script=[("text", frame), ("sleep", 5)])
         try:
-            notifier, cfg, _capture = build_with_resolver(
-                tmp_path, server, fake_telegram, api,
-                env_over={"NOTIFIER_WORKSPACE_ID": CANON_WS})
+            notifier, _cfg, _capture = build_with_resolver(
+                tmp_path, server, fake_telegram, api, env_over=self._env())
             _thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             first_line = send_calls(fake_telegram)[0][1]["text"].split("\n", 1)[0]
             assert first_line == (
-                f'<a href="{cfg.server_url}/seed/issues/SEE-1567">'
+                f'<a href="{WEB_ROOT}/seed/issues/SEE-1567">'
                 "🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化 Telegram 排版</a>")
         finally:
             server.close()
@@ -982,8 +1031,7 @@ class TestDeepLinkDelivery:
         server = FakeMulticaWS(script=[("text", self._comment_frame()), ("sleep", 5)])
         try:
             notifier, _cfg, _capture = build_with_resolver(
-                tmp_path, server, fake_telegram, api,
-                env_over={"NOTIFIER_WORKSPACE_ID": CANON_WS})
+                tmp_path, server, fake_telegram, api, env_over=self._env())
             _thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             first_line = send_calls(fake_telegram)[0][1]["text"].split("\n", 1)[0]
@@ -1000,8 +1048,7 @@ class TestDeepLinkDelivery:
         server = FakeMulticaWS(script=[("text", self._comment_frame()), ("sleep", 5)])
         try:
             notifier, _cfg, _capture = build_with_resolver(
-                tmp_path, server, fake_telegram, api,
-                env_over={"NOTIFIER_WORKSPACE_ID": CANON_WS})
+                tmp_path, server, fake_telegram, api, env_over=self._env())
             _thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             assert len(send_calls(fake_telegram)) == 1
