@@ -80,6 +80,15 @@ class TestAgentLookup:
         finally:
             server.close()
 
+    def test_overlong_display_name_truncated_to_max(self):
+        # _MAX_NAME_LEN bounds the header label so one huge name cannot blow
+        # past the fixed budget or the 4096 limit.
+        server = FakeMulticaAPI(agent_body={"name": "N" * 100})
+        try:
+            assert _resolver(server).agent_display("agent", AGENT_ID) == "N" * 64
+        finally:
+            server.close()
+
 
 class TestIssueLookup:
     def test_uuid_resolved_to_identifier_and_title(self):
@@ -204,5 +213,76 @@ class TestIdentifierOnlyTitleResolver:
         try:
             assert _resolver(server).issue_ref(ISSUE_ID, "SEE-100") == ("SEE-100", "")
             assert server.requests == []
+        finally:
+            server.close()
+
+
+class TestTypeLabelFallback:
+    """Actor types outside the known map still surface a readable label when
+    the type string itself is a safe, non-UUID slug."""
+
+    def test_unknown_short_type_used_directly(self):
+        server = FakeMulticaAPI()
+        try:
+            assert _resolver(server).agent_display("squad", "") == "squad"
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_uuid_shaped_type_is_unknown_not_uuid(self):
+        server = FakeMulticaAPI()
+        try:
+            out = _resolver(server).agent_display(AGENT_ID, "")
+            assert out == "Unknown"
+            assert AGENT_ID not in out
+        finally:
+            server.close()
+
+
+class TestIssueRefFallbacks:
+    """issue_ref must degrade deterministically when only one of the two
+    identity fields is present."""
+
+    def test_title_without_issue_id_returns_title_only(self):
+        server = FakeMulticaAPI()
+        try:
+            assert _resolver(server).issue_ref("", "普通标题") == ("", "普通标题")
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_no_title_no_issue_id_returns_empty(self):
+        server = FakeMulticaAPI()
+        try:
+            assert _resolver(server).issue_ref("", "") == ("", "")
+            assert server.requests == []
+        finally:
+            server.close()
+
+
+class TestMalformedResponses:
+    """The resolver must treat odd payloads as query failures and fall back,
+    never raise or leak the malformed body."""
+
+    def test_non_string_name_falls_back_to_type_label(self):
+        server = FakeMulticaAPI(agent_body={"name": 12345})
+        try:
+            out = _resolver(server).agent_display("agent", AGENT_ID)
+            assert out == "Agent"
+            assert "12345" not in out
+        finally:
+            server.close()
+
+    def test_invalid_json_body_degrades_to_fallback(self):
+        server = FakeMulticaAPI(agent_raw=b"{not valid json")
+        try:
+            assert _resolver(server).agent_display("agent", AGENT_ID) == "Agent"
+        finally:
+            server.close()
+
+    def test_non_object_json_body_degrades_to_fallback(self):
+        server = FakeMulticaAPI(agent_body=["not", "an", "object"])
+        try:
+            assert _resolver(server).agent_display("agent", AGENT_ID) == "Agent"
         finally:
             server.close()

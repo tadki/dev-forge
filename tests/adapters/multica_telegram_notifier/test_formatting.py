@@ -5,6 +5,7 @@ degradations, UTF-16 fitting, and the readable header composition."""
 import pytest
 
 from multica_telegram_notifier.formatting import (
+    SEPARATOR,
     Notification,
     fit_html_text,
     markdown_to_html,
@@ -171,6 +172,24 @@ class TestTables:
         assert "<b>" not in out
         assert "K: a · V: b" in out
 
+    def test_six_column_table_not_summarized(self):
+        # Exactly _MAX_TABLE_COLS (6) columns must still render as cards; only
+        # strictly wider tables degrade to the "too wide" note.
+        header = "| " + " | ".join(f"c{i}" for i in range(1, 7)) + " |"
+        delim = "|" + "|".join(["---"] * 6) + "|"
+        row = "|" + "|".join(str(i) for i in range(1, 7)) + "|"
+        out = markdown_to_html("\n".join([header, delim, row]))
+        assert "表格过宽" not in out
+        assert "<b>c1</b>: 1" in out
+
+    def test_partially_delimited_row_is_not_a_table(self):
+        # A row whose cells do not ALL look like delimiter cells must not turn
+        # the block into a table (all(), not any()).
+        md = "| A | B |\n| --- | notdelim |\n| 1 | 2 |"
+        out = markdown_to_html(md)
+        assert "<b>A</b>: 1" not in out
+        assert "notdelim" in out
+
 
 class TestHeaderComposition:
     def test_header_order_agent_then_identifier_then_title(self):
@@ -260,6 +279,18 @@ class TestFitting:
         body = "开头标记\n\n" + "y" * 8000
         note = render_notification(_item(body=body), _FixedResolver())
         assert "开头标记" in note.html
+
+    def test_fit_at_exact_limit_is_unchanged(self):
+        # A rendered body exactly at the limit must be returned as-is, not
+        # shrunk by falling into the shrink loop (boundary is <=, not <).
+        assert fit_html_text("abc", limit=3) == "abc"
+        assert fit_html_text("abcde", limit=5) == "abcde"
+
+    def test_blank_runs_collapsed_to_single_blank_line(self):
+        # header ending in a newline plus the footer's leading blank line would
+        # produce a triple newline; it must collapse to a single blank line.
+        note = render_notification(_item(body=""), _FixedResolver())
+        assert "\n\n\n" not in note.html
 
 
 class TestUrlEmphasisIsolation:
@@ -357,3 +388,48 @@ class TestParenthesizedUrls:
     def test_sentence_paren_after_link_not_swallowed(self):
         out = markdown_to_html("[w](https://x.test/a) (after)")
         assert out == '<a href="https://x.test/a">w</a> (after)'
+
+
+class TestBlockStructure:
+    """Block-level constructs that must render without swallowing neighbours."""
+
+    def test_horizontal_rule_becomes_separator(self):
+        assert markdown_to_html("---") == SEPARATOR
+        assert SEPARATOR in markdown_to_html("上\n\n---\n\n下")
+
+    def test_quote_block_ends_at_non_quote_line(self):
+        out = markdown_to_html("> 引用\n普通\n> 再引用")
+        assert out.count("<blockquote>") == 2
+        assert "<blockquote>引用</blockquote>" in out
+        assert "普通" in out
+
+    def test_pipe_line_followed_by_plain_line_not_table(self):
+        out = markdown_to_html("a | b\n普通文本")
+        assert "<b>" not in out
+        assert "a | b" in out and "普通文本" in out
+
+    def test_single_column_table_becomes_bullet_card(self):
+        out = markdown_to_html("| K |\n|---|\n| v |")
+        assert "• <b>K</b>: v" in out
+
+
+class TestStaticResolverFallbacks:
+    """The no-query static resolver must handle a missing title."""
+
+    def test_no_title_and_no_issue_renders_agent_only_header(self):
+        note = render_notification(_item(title=None, issue_id=None), None)
+        header = note.html.split("\n", 1)[0]
+        assert "🤖 <b>Agent</b>" in header
+        assert "SEE-" not in header
+        assert "None" not in header
+
+
+class TestFittingDegradation:
+    """When the fixed header/footer alone exceed the budget the fitter must
+    degrade deterministically instead of looping or emitting broken tags."""
+
+    def test_fit_degrades_when_header_and_footer_exceed_limit(self):
+        out = fit_html_text("x" * 500, header="H" * 80, footer="F" * 80, limit=100)
+        assert out.startswith("H" * 80)
+        assert out.endswith("F" * 80)
+        assert "<" not in out and ">" not in out
