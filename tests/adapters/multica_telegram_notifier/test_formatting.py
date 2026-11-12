@@ -286,8 +286,8 @@ class TestTitleDeepLink:
         assert "<a" not in note.plain
 
     def test_resolver_without_comment_link_stays_unlinked(self):
-        # Duck-typed resolvers without the deep-link surface (older stubs,
-        # the static resolver) must keep the current header byte-for-byte.
+        # Duck-typed resolvers without the deep-link surface (older stubs)
+        # must keep the current header byte-for-byte.
         note = render_notification(_item(), _FixedResolver())
         header = note.html.split("\n", 1)[0]
         assert header.startswith("🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化排版")

@@ -374,8 +374,9 @@ def _comment_id(item: dict) -> str:
 
 
 def _deep_link(item: dict, resolver, identifier: str) -> str:
-    # Duck-typed resolvers without the deep-link surface (older stubs, the
-    # static resolver) keep the current unlinked header.
+    # Duck-typed resolvers without the deep-link surface (older stubs) keep
+    # the current unlinked header; the static resolver defines comment_link
+    # as a constant "" so both production resolvers carry the full surface.
     getter = getattr(resolver, "comment_link", None)
     if getter is None:
         return ""

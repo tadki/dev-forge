@@ -22,7 +22,7 @@
   workspace slug 经只读查询 `GET /api/workspaces/<workspace UUID>` 获取，与
   其他元信息共用同一套超时/缓存纪律（命中 6 小时 / 失败 60 秒）。URL 仅由
   校验过的组件拼接（http(s) server 根 ≤512、slug 限 `[a-z0-9-]{1,64}`、
-  标识符限 `SEE-\d+`、comment uuid 限 canonical UUID），事件文本永远进不了
+  标识符限 `SEE-\d{1,12}`、comment uuid 限 canonical UUID），事件文本永远进不了
   URL。逐级降级：comment uuid 缺失或非法 → 链接退化为 issue 页（无锚点）；
   issue 标识符不可得或 slug 查询失败/非法 → 标题行保持现状非链接纯文本；
   纯文本回退模式的标题行永远不加链接。任何降级都不阻断、不重复投递。
