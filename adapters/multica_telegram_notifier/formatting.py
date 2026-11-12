@@ -53,9 +53,13 @@ _FENCE_SENTINEL = "\x00"
 
 # FR-1: fixed header/footer metadata is clamped in UTF-16 units BEFORE the
 # heading text is escaped. Worst case (& → &amp; ×5): agent 64→320,
-# identifier 16→80, title 256→1280, footer ~480 plus template/separator ~80
-# ⇒ fixed parts ≤ ~2240 units, safely under Telegram's 4096 budget and leaving
-# room for the body.
+# identifier 16→80, title 256→1280, footer ~480 plus template/separator ~80.
+# SEE-1572: the header line may be wrapped in one <a href> anchor; every URL
+# component is validated upstream (multica_api: http(s) web root ≤512 code
+# points, slug [a-z0-9-]{1,64}, identifier SEE-\d{1,12}, canonical UUID), so
+# the URL is bounded at 512+1+64+8+16+9+36 = 646 units and the wrapper adds
+# ≤ 646+15. Worst-case fixed parts: 320+3+16+1+1280+661 (header) + 560
+# (footer) ⇒ ≤ ~2840 units, safely under Telegram's 4096 budget.
 _MAX_AGENT_UNITS = 64
 _MAX_IDENTIFIER_UNITS = 16
 _MAX_TITLE_UNITS = 256
@@ -354,6 +358,29 @@ class _StaticResolver:
             return m.group(1), m.group(2).strip()
         return ("", item_title)
 
+    def comment_link(self, identifier, comment_id):
+        return ""
+
+
+def _comment_id(item: dict) -> str:
+    """The comment uuid from the live wire shape (item.details.comment_id,
+    captured read-only 2026-11-13); "" when absent or not a string. It is
+    validated against the canonical-UUID form before it can reach a URL."""
+    details = item.get("details")
+    if not isinstance(details, dict):
+        return ""
+    value = details.get("comment_id")
+    return value if isinstance(value, str) else ""
+
+
+def _deep_link(item: dict, resolver, identifier: str) -> str:
+    # Duck-typed resolvers without the deep-link surface (older stubs, the
+    # static resolver) keep the current unlinked header.
+    getter = getattr(resolver, "comment_link", None)
+    if getter is None:
+        return ""
+    return getter(identifier, _comment_id(item))
+
 
 def _compose_header(item: dict, resolver) -> tuple:
     actor_type, actor_id = _text(item.get("actor_type")), _text(item.get("actor_id"))
@@ -364,6 +391,10 @@ def _compose_header(item: dict, resolver) -> tuple:
         parts_html.append(f"{icon} <b>{escape_html(agent)}</b>")
         parts_plain.append(f"{icon} {agent}")
     identifier, title = resolver.issue_ref(_text(item.get("issue_id")), _text(item.get("title")))
+    # The link is composed from the RAW identifier: comment_link re-validates
+    # the SEE shape, so a clamped or odd-shaped identifier can never enter
+    # the URL.
+    link = _deep_link(item, resolver, identifier)
     identifier = _clamp(identifier, _MAX_IDENTIFIER_UNITS)
     title = _clamp(title, _MAX_TITLE_UNITS)
     if identifier and title:
@@ -375,7 +406,10 @@ def _compose_header(item: dict, resolver) -> tuple:
     elif title:
         parts_html.append(escape_html(title))
         parts_plain.append(title)
-    return " · ".join(parts_html), " · ".join(parts_plain)
+    line_html = " · ".join(parts_html)
+    if link and line_html:
+        line_html = f'<a href="{escape_html(link)}">{line_html}</a>'
+    return line_html, " · ".join(parts_plain)
 
 
 def _compose_footer(item: dict) -> tuple:

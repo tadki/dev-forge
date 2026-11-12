@@ -81,10 +81,12 @@ def build_components(config, ws_cls=WSClient):
 
 
 def build_resolver(config: Config) -> MetadataResolver:
-    """Bounded read-only name lookups (§SPEC-001); failures degrade, never block."""
+    """Bounded read-only name lookups (§SPEC-001); failures degrade, never block.
+    web_base stays NOTIFIER_MULTICA_SERVER_URL: that origin is the deep-link
+    root even when NOTIFIER_API_BASE points the lookups elsewhere."""
     return MetadataResolver(
         config.api_base, config.multica_pat, config.workspace_id,
-        timeout=config.query_timeout)
+        timeout=config.query_timeout, web_base=config.server_url)
 
 
 class Notifier:

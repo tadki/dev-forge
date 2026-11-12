@@ -229,3 +229,91 @@ class TestReadableNotificationE2E:
             assert "parse_mode" not in calls[1][1]
         finally:
             server.close()
+
+
+CANON_WS_E2E = "33333333-3333-3333-3333-333333333333"
+COMMENT_UUID_E2E = "44444444-4444-4444-4444-444444444444"
+
+
+class TestDeepLinkE2E:
+    """§SPEC-005: the real CLI subprocess must ship the anchored title line
+    over the full fake-WS → real adapter → fake-Telegram chain, and keep the
+    plain fallback path free of anchors."""
+
+    def _run_cli(self, tmp_path, fake_telegram, env):
+        env_path = tmp_path / "see-1572.env"
+        env_path.write_text("\n".join(f"{k}={v}" for k, v in env.items()), encoding="utf-8")
+        log_path = tmp_path / "probe.jsonl"
+        proc = subprocess.run(
+            [sys.executable,
+             os.path.join(REPO_ROOT, "adapters", "multica_telegram_notifier", "notifier.py"),
+             "--config", str(env_path), "--once", "--log-json", str(log_path)],
+            capture_output=True, text=True, timeout=30)
+        return proc, log_path
+
+    def _comment_env_frame(self):
+        return make_inbox_frame(
+            workspace_id=CANON_WS_E2E,
+            item_overrides={
+                "actor_id": "22222222-2222-2222-2222-222222222222",
+                "issue_id": "11111111-1111-1111-1111-111111111111",
+                "title": "优化 Telegram 排版", "type": "new_comment",
+                "details": {"comment_id": COMMENT_UUID_E2E}})
+
+    def test_cli_delivers_anchor_title_line_to_comment_deep_link(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        server = FakeMulticaWS(script=[("text", self._comment_env_frame()), ("sleep", 5)])
+        try:
+            env = make_env(server, fake_telegram, tmp_path, api=api,
+                           **{"NOTIFIER_WORKSPACE_ID": CANON_WS_E2E})
+            proc, _log = self._run_cli(tmp_path, fake_telegram, env)
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
+            assert req[1]["parse_mode"] == "HTML"
+            text = req[1]["text"]
+            expected = (f'<a href="{env["NOTIFIER_MULTICA_SERVER_URL"]}'
+                        f'/seed/issues/SEE-1567#comment-{COMMENT_UUID_E2E}">'
+                        "🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化 Telegram 排版</a>")
+            assert text.split("\n", 1)[0] == expected
+            assert text.count("<a ") == 1
+        finally:
+            server.close()
+            api.close()
+
+    def test_cli_plain_fallback_keeps_header_unlinked(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (400, {"ok": False, "error_code": 400,
+                   "description": "Bad Request: can't parse entities: Unsupported start tag"})]
+        api = FakeMulticaAPI()
+        server = FakeMulticaWS(script=[("text", self._comment_env_frame()), ("sleep", 5)])
+        try:
+            env = make_env(server, fake_telegram, tmp_path, api=api,
+                           **{"NOTIFIER_WORKSPACE_ID": CANON_WS_E2E})
+            proc, _log = self._run_cli(tmp_path, fake_telegram, env)
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            calls = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")]
+            assert len(calls) == 2
+            html_first = calls[0][1]["text"].split("\n", 1)[0]
+            plain_first = calls[1][1]["text"].split("\n", 1)[0]
+            assert html_first.startswith("<a href=")
+            assert plain_first == "🤖 Bachi · SEE-1567 优化 Telegram 排版"
+            assert "<a" not in plain_first
+        finally:
+            server.close()
+            api.close()
+
+    def test_cli_slug_outage_delivers_unlinked_header(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI(workspace_status=503)
+        server = FakeMulticaWS(script=[("text", self._comment_env_frame()), ("sleep", 5)])
+        try:
+            env = make_env(server, fake_telegram, tmp_path, api=api,
+                           **{"NOTIFIER_WORKSPACE_ID": CANON_WS_E2E})
+            proc, _log = self._run_cli(tmp_path, fake_telegram, env)
+            assert proc.returncode == 0, proc.stderr[-2000:]
+            req = [r for r in fake_telegram.requests if r[0].endswith("/sendMessage")][0]
+            first_line = req[1]["text"].split("\n", 1)[0]
+            assert first_line.startswith("🤖 <b>Bachi</b>")
+            assert "<a " not in first_line
+        finally:
+            server.close()
+            api.close()

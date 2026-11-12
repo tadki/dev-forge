@@ -186,17 +186,21 @@ class FakeMulticaAPI:
     used by resolver, notifier-integration and E2E tests."""
 
     def __init__(self, agent_body=None, issue_body=None, agent_status=200,
-                 issue_status=200, delay=0.0, agent_raw=None, issue_raw=None):
+                 issue_status=200, delay=0.0, agent_raw=None, issue_raw=None,
+                 workspace_body=None, workspace_status=200, workspace_raw=None):
         self.agent_body = agent_body if agent_body is not None else {"name": "Bachi"}
         self.issue_body = issue_body if issue_body is not None else {
             "identifier": "SEE-1567", "title": "优化 Telegram 排版"}
+        self.workspace_body = workspace_body if workspace_body is not None else {"slug": "seed"}
         self.agent_status = agent_status
         self.issue_status = issue_status
+        self.workspace_status = workspace_status
         self.delay = delay
         # Raw byte bodies bypass json.dumps so tests can feed malformed/odd
         # payloads (e.g. invalid JSON) that the resolver must degrade on.
         self.agent_raw = agent_raw
         self.issue_raw = issue_raw
+        self.workspace_raw = workspace_raw
         self.requests = []
         self.auth_headers = []
         self._lock = threading.Lock()
@@ -210,7 +214,10 @@ class FakeMulticaAPI:
                     server.auth_headers.append(self.headers.get("Authorization", ""))
                 if server.delay:
                     time.sleep(server.delay)
-                if "/api/agents/" in self.path:
+                if "/api/workspaces/" in self.path:
+                    status, body = server.workspace_status, server.workspace_body
+                    raw = server.workspace_raw
+                elif "/api/agents/" in self.path:
                     status, body = server.agent_status, server.agent_body
                     raw = server.agent_raw
                 else:
