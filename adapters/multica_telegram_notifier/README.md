@@ -15,6 +15,17 @@
   类型标签（Agent / Member / Unknown），**永远不会出现裸 UUID**，也绝不会
   阻断通知投递。issue 标识符优先从事件标题前缀提取；缺失时查询
   `GET /api/issues/<id>` 补全。
+- **标题行深链（SEE-1572）**：HTML 模式下整行标题渲染为单个 `<a href>` 锚点，
+  点击直达该通知对应的 Multica comment 页面位置：
+  `{NOTIFIER_MULTICA_SERVER_URL}/{workspace slug}/issues/{SEE-XXX}#comment-<comment uuid>`。
+  comment uuid 取自 inbox item 的 `details.comment_id`（真实 wire 捕获定案），
+  workspace slug 经只读查询 `GET /api/workspaces/<workspace UUID>` 获取，与
+  其他元信息共用同一套超时/缓存纪律（命中 6 小时 / 失败 60 秒）。URL 仅由
+  校验过的组件拼接（http(s) server 根 ≤512、slug 限 `[a-z0-9-]{1,64}`、
+  标识符限 `SEE-\d+`、comment uuid 限 canonical UUID），事件文本永远进不了
+  URL。逐级降级：comment uuid 缺失或非法 → 链接退化为 issue 页（无锚点）；
+  issue 标识符不可得或 slug 查询失败/非法 → 标题行保持现状非链接纯文本；
+  纯文本回退模式的标题行永远不加链接。任何降级都不阻断、不重复投递。
 - **Markdown 渲染**：常用 Markdown 以 `parse_mode=HTML` 渲染为 Telegram 支持
   的标签子集（粗体/斜体/删除线/行内代码/围栏代码/引用/链接/列表）；
   `& < >` 一律转义，危险链接协议（如 `javascript:`）去掉锚点只保留文字。
@@ -38,7 +49,8 @@
    `{"type":"auth_ack"}`；失败会收到 `{"error":...}` 且连接被服务端关闭。
 3. 订阅免费：`inbox:new` 是个人事件，服务端只推给 token 对应的用户本人。
 4. 适配器按 `payload.item.workspace_id` 过滤目标 workspace，去重后把通知文本
-   （按 Telegram 的 UTF-16 计长口径截断到 4096 以内）通过 Telegram Bot API
+   （按 Telegram 的 UTF-16 计长口径截断到 4096 以内，含锚点包装后的固定首部/
+   尾部一并计入预算）通过 Telegram Bot API
    `sendMessage` 发给配置里指定的 chat ID——这是唯一投递目标，适配器不扫描
    bot 的其他私聊，其他私聊的会话也永远不会收到 Inbox 内容。失效的 chat ID
    （Telegram 返回「chat not found」）会复核配置 id 并重试一次；被 Telegram
@@ -136,8 +148,10 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 
 ## 运维边界
 
-- 元信息查询是只读 GET（`/api/agents/<id>`、`/api/issues/<id>`），带超时与
-  双向 TTL 缓存；Multica 服务暂时不可用只会让消息首部降级为类型标签，
+- 元信息查询是只读 GET（`/api/agents/<id>`、`/api/issues/<id>`、
+  `/api/workspaces/<id>`——仅后者服务于标题行深链的 slug 解析），带超时与
+  双向 TTL 缓存；Multica 服务暂时不可用只会让消息首部降级为类型标签或
+  去掉深链锚点（深链三个组件任一不可得时标题行回到纯文本现状），
   投递照常进行。
 - 本仓库的开发/测试不停止、不重启已部署的 `multica-telegram-notifier.service`；
   合并后的稳定目录更新与服务重启由 Owner 另行受控 rollout。

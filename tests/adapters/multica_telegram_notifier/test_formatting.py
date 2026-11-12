@@ -239,6 +239,155 @@ class TestHeaderComposition:
         assert "Bachi" in note.plain
 
 
+LINK = "http://x.test/seed/issues/SEE-1567#comment-" + "4" * 36
+
+
+class _LinkResolver(_FixedResolver):
+    """FixedResolver plus a canned deep link (the MetadataResolver surface
+    used for the SEE-1572 title-line anchor)."""
+
+    def __init__(self, link=LINK, **kwargs):
+        super().__init__(**kwargs)
+        self.link = link
+        self.link_calls = []
+
+    def comment_link(self, identifier, comment_id):
+        self.link_calls.append((identifier, comment_id))
+        return self.link
+
+
+class TestTitleDeepLink:
+    """§SPEC-001: in HTML mode the whole header line renders as ONE <a href>
+    anchor to the comment deep link; the line's text content is unchanged and
+    the plain fallback header stays exactly as before."""
+
+    def test_html_header_wrapped_in_single_anchor(self):
+        note = render_notification(_item(), _LinkResolver())
+        header = note.html.split("\n", 1)[0]
+        assert header == (
+            f'<a href="{LINK}">🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化排版</a>')
+
+    def test_header_line_has_exactly_one_anchor(self):
+        note = render_notification(_item(), _LinkResolver())
+        header = note.html.split("\n", 1)[0]
+        assert header.count("<a ") == 1 and header.count("</a>") == 1
+
+    def test_anchor_text_content_identical_to_unlinked(self):
+        linked = render_notification(_item(), _LinkResolver()).html.split("\n", 1)[0]
+        unlinked = render_notification(_item(), _LinkResolver(link="")).html.split("\n", 1)[0]
+        prefix = f'<a href="{LINK}">'
+        assert linked.startswith(prefix) and linked.endswith("</a>")
+        assert linked[len(prefix):-len("</a>")] == unlinked
+
+    def test_plain_header_never_linked(self):
+        note = render_notification(_item(), _LinkResolver())
+        head_plain = note.plain.split("\n", 1)[0]
+        assert head_plain == "🤖 Bachi · SEE-1567 优化排版"
+        assert "<a" not in note.plain
+
+    def test_resolver_without_comment_link_stays_unlinked(self):
+        # Duck-typed resolvers without the deep-link surface (older stubs,
+        # the static resolver) must keep the current header byte-for-byte.
+        note = render_notification(_item(), _FixedResolver())
+        header = note.html.split("\n", 1)[0]
+        assert header.startswith("🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化排版")
+        assert "<a " not in header
+
+    def test_empty_link_degrades_to_unlinked_header(self):
+        note = render_notification(_item(), _LinkResolver(link=""))
+        header = note.html.split("\n", 1)[0]
+        assert header.startswith("🤖 <b>Bachi</b>")
+        assert "<a " not in header
+
+    def test_comment_id_read_from_details_wire_field(self):
+        # Live wire capture (2026-11-13, read-only): the comment uuid rides at
+        # item["details"]["comment_id"] as a canonical UUID string.
+        note = render_notification(
+            _item(details={"comment_id": "4" * 36}), _LinkResolver())
+        assert note.html.split("\n", 1)[0].startswith(f'<a href="{LINK}">')
+        resolver = _LinkResolver()
+        render_notification(_item(details={"comment_id": "4" * 36}), resolver)
+        assert resolver.link_calls == [("SEE-1567", "4" * 36)]
+
+    def test_missing_details_passes_empty_comment_id(self):
+        resolver = _LinkResolver()
+        render_notification(_item(), resolver)
+        assert resolver.link_calls == [("SEE-1567", "")]
+
+    def test_non_dict_details_and_non_string_comment_id_safe(self):
+        resolver = _LinkResolver()
+        render_notification(_item(details=[]), resolver)
+        render_notification(_item(details={"comment_id": 5}), resolver)
+        assert resolver.link_calls == [("SEE-1567", ""), ("SEE-1567", "")]
+
+    def test_empty_header_line_never_gets_bare_anchor(self):
+        class _EmptyResolver:
+            def agent_display(self, actor_type, actor_id):
+                return ""
+
+            def issue_ref(self, issue_id, item_title):
+                return ("", "")
+
+            def comment_link(self, identifier, comment_id):
+                return LINK
+
+        note = render_notification(_item(title=None, issue_id=None), _EmptyResolver())
+        assert not note.html.startswith("<a")
+        assert "<a " not in note.html.split("\n", 1)[0]
+
+
+class TestDeepLinkBudget:
+    """§SPEC-004: the anchor wrapper is part of the fixed header budget —
+    worst-case URL components must keep the rendered HTML under 4096 UTF-16
+    units with balanced tags and no dangling entity."""
+
+    _MAX_LINK = ("http://" + "a" * 500 + ".test/" + "b" * 64
+                 + "/issues/SEE-999999999999#comment-" + "4" * 36)
+
+    def _assert_budget_safe(self, note_html):
+        import re
+
+        assert len(note_html.encode("utf-16-le", errors="ignore")) // 2 <= 4096
+        assert not re.search(r"&(?!amp;|lt;|gt;|#\d+;|#x[0-9a-fA-F]+;)", note_html)
+        assert note_html.count("<a ") == note_html.count("</a>")
+
+    def test_max_components_anchor_fits_budget(self):
+        max_link = self._MAX_LINK
+
+        class _MaxLinkResolver(_FixedResolver):
+            def comment_link(self, identifier, comment_id):
+                return max_link
+
+        note = render_notification(_item(title="&" * 300), _MaxLinkResolver())
+        self._assert_budget_safe(note.html)
+        assert f'<a href="{max_link}">' in note.html
+
+    def test_url_never_carries_event_text(self):
+        class _CannedLinkResolver(_FixedResolver):
+            def comment_link(self, identifier, comment_id):
+                return LINK
+
+        item = _item(title='</a><script>alert(1)</script><a href="http://evil')
+        note = render_notification(item, _CannedLinkResolver())
+        header = note.html.split("\n", 1)[0]
+        assert header.count("<a ") == 1
+        assert header.startswith(f'<a href="{LINK}">')
+        assert "evil" not in header.split('">', 1)[0]
+
+    def test_huge_agent_and_anchor_together_fit(self):
+        max_link = self._MAX_LINK
+
+        class _HugeAgentLink(_FixedResolver):
+            def agent_display(self, actor_type, actor_id):
+                return "&" * 64
+
+            def comment_link(self, identifier, comment_id):
+                return max_link
+
+        note = render_notification(_item(title="&" * 300), _HugeAgentLink())
+        self._assert_budget_safe(note.html)
+
+
 class TestFitting:
     def _huge_body(self, units):
         return "字" * (units // 1)  # CJK = 1 UTF-16 unit each

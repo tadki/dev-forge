@@ -34,6 +34,14 @@ DEFAULT_QUERY_TIMEOUT = 5.0
 _MAX_NAME_LEN = 64
 _MAX_TITLE_LEN = 256
 
+# SEE-1572 deep-link surface: the web link root is the operator-configured
+# server URL; every other URL component is validated before composition, so
+# event-controlled text can never enter a URL (§SPEC-004).
+_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
+_MAX_SLUG_LEN = 64
+_MAX_WEB_BASE_LEN = 512
+_LINK_IDENTIFIER_RE = re.compile(r"^SEE-\d{1,12}$")
+
 _TYPE_LABELS = {"agent": "Agent", "member": "Member", "user": "User"}
 
 _MISS = object()
@@ -57,8 +65,13 @@ def type_label(actor_type: str) -> str:
 
 class MetadataResolver:
     def __init__(self, server_url: str, pat: str, workspace_id: str,
-                 timeout: float = DEFAULT_QUERY_TIMEOUT, clock=time.monotonic):
+                 timeout: float = DEFAULT_QUERY_TIMEOUT, clock=time.monotonic,
+                 web_base: str = None):
         self._base = server_url.rstrip("/")
+        # Web link root for deep links (§SPEC-002): the deployed Multica web
+        # origin. Defaults to the API base — they are the same origin in the
+        # standard deployment.
+        self._web_base = (web_base if web_base else server_url).rstrip("/")
         self._pat = pat
         self._workspace = workspace_id
         self._timeout = timeout
@@ -110,6 +123,57 @@ class MetadataResolver:
         if ref is _MISS:
             ref = self._fetch_issue(safe_id)
         return ref if ref else ("", "")
+
+    def workspace_slug(self) -> str:
+        """Validated workspace slug for web deep links (§SPEC-002); "" on any
+        failure. FR-3 discipline: only a canonical workspace UUID may become
+        the REST path segment; anything else degrades locally with zero
+        requests. Cached positive (6 h) / negative (60 s) like the other
+        lookups so a flaky endpoint cannot stall every notification."""
+        if not looks_like_uuid(self._workspace):
+            return ""
+        slug = self._cached(("workspace", self._workspace))
+        if slug is _MISS:
+            try:
+                data = self._get_json(f"/api/workspaces/{self._workspace}")
+                raw = data.get("slug")
+                # Anything that is not a short lowercase-slug string is a
+                # failure: the value is concatenated into a URL verbatim, so
+                # it must never carry path/query/control characters, and an
+                # over-long value would blow the deterministic fixed-header
+                # budget (truncation could silently mis-link, so it is a
+                # failure too).
+                slug = (raw if isinstance(raw, str) and 0 < len(raw) <= _MAX_SLUG_LEN
+                        and _SLUG_RE.fullmatch(raw) else None)
+            except MulticaApiError:
+                slug = None
+            self._store(("workspace", self._workspace), slug,
+                        POSITIVE_TTL_SECONDS if slug else NEGATIVE_TTL_SECONDS)
+        return slug or ""
+
+    def comment_link(self, identifier: str, comment_id: str) -> str:
+        """Web deep link for the notification title line (§SPEC-001/002);
+        "" degrades to the current unlinked header. Degradation chain: no
+        SEE-shaped identifier or no validated slug → "" (plain header);
+        comment uuid missing/invalid → issue-page link without an anchor;
+        otherwise the full #comment-<uuid> deep link. Every component is
+        validated locally (identifier regex, http(s) web root, bounded
+        length, canonical UUID) or by workspace_slug() — event-controlled
+        text never reaches the URL."""
+        if not isinstance(identifier, str) or not _LINK_IDENTIFIER_RE.fullmatch(identifier):
+            return ""
+        base = self._web_base
+        if not base.lower().startswith(("http://", "https://")):
+            return ""
+        if len(base) > _MAX_WEB_BASE_LEN:
+            return ""
+        slug = self.workspace_slug()
+        if not slug:
+            return ""
+        url = f"{base}/{slug}/issues/{identifier}"
+        if isinstance(comment_id, str) and looks_like_uuid(comment_id):
+            return f"{url}#comment-{comment_id}"
+        return url
 
     # --- internals ---
 

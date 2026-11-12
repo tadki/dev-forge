@@ -18,11 +18,21 @@ AGENT_ID = "22222222-2222-2222-2222-222222222222"
 ISSUE_ID = "11111111-1111-1111-1111-111111111111"
 WORKSPACE = "ws-1"
 PAT = "probe-pat-value-0001"
+# Canonical-UUID workspace/comment ids for the SEE-1572 deep-link surface;
+# the field shapes mirror the live wire capture (item.details.comment_id).
+WS_UUID = "33333333-3333-3333-3333-333333333333"
+COMMENT_ID = "44444444-4444-4444-4444-444444444444"
 
 
 def _resolver(server, timeout=2.0, clock=time.monotonic):
     return MetadataResolver(
         server_url=server.base_url, pat=PAT, workspace_id=WORKSPACE,
+        timeout=timeout, clock=clock)
+
+
+def _ws_resolver(server, timeout=2.0, clock=time.monotonic, workspace=WS_UUID):
+    return MetadataResolver(
+        server_url=server.base_url, pat=PAT, workspace_id=workspace,
         timeout=timeout, clock=clock)
 
 
@@ -318,6 +328,247 @@ class TestIssuePathSafety:
             assert resolver.issue_ref(123, "") == ("", "")
             assert resolver.issue_ref(None, "") == ("", "")
             assert server.requests == []
+        finally:
+            server.close()
+
+
+class TestWorkspaceSlugLookup:
+    """§SPEC-002: the workspace slug comes from a bounded read-only query
+    against /api/workspaces/<canonical-uuid>, with positive/negative TTL
+    caching and strict value validation — any odd shape degrades to ""."""
+
+    def test_slug_resolved_via_canonical_uuid_with_bearer(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server)
+            assert resolver.workspace_slug() == "seed"
+            assert server.requests == [
+                f"/api/workspaces/{WS_UUID}?workspace_id={WS_UUID}"]
+            assert server.auth_headers[0] == f"Bearer {PAT}"
+        finally:
+            server.close()
+
+    def test_positive_cache_skips_second_request(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            clock = _ManualClock()
+            resolver = _ws_resolver(server, clock=clock)
+            assert resolver.workspace_slug() == "seed"
+            assert resolver.workspace_slug() == "seed"
+            clock.now += 3600.0
+            assert resolver.workspace_slug() == "seed"
+            assert len(server.requests) == 1
+        finally:
+            server.close()
+
+    def test_cache_expires_after_positive_ttl(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            clock = _ManualClock()
+            resolver = _ws_resolver(server, clock=clock)
+            resolver.workspace_slug()
+            clock.now += 3600.0 * 7  # positive TTL is 6h
+            resolver.workspace_slug()
+            assert len(server.requests) == 2
+        finally:
+            server.close()
+
+    def test_negative_cache_bounds_repeated_failures(self):
+        server = FakeMulticaAPI(workspace_status=500)
+        try:
+            clock = _ManualClock()
+            resolver = _ws_resolver(server, clock=clock)
+            assert resolver.workspace_slug() == ""
+            assert resolver.workspace_slug() == ""
+            assert len(server.requests) == 1
+            clock.now += 120.0  # negative TTL is 60s
+            assert resolver.workspace_slug() == ""
+            assert len(server.requests) == 2
+        finally:
+            server.close()
+
+    def test_non_canonical_workspace_id_never_queries(self):
+        # FR-3 discipline: only a canonical UUID may become a REST path
+        # segment; anything else degrades locally with zero requests.
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server, workspace="../api/admin")
+            assert resolver.workspace_slug() == ""
+            assert resolver.workspace_slug() == ""
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_non_canonical_workspace_id_returns_empty_deterministically(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            assert _ws_resolver(server, workspace="ws-1").workspace_slug() == ""
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_expired_slug_entry_evicted_on_miss(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            clock = _ManualClock()
+            resolver = _ws_resolver(server, clock=clock)
+            resolver.workspace_slug()
+            assert len(resolver._cache) == 1
+            clock.now += 3600.0 * 7
+            resolver.workspace_slug()
+            assert len(resolver._cache) == 1
+            assert len(server.requests) == 2
+        finally:
+            server.close()
+
+
+class TestWorkspaceSlugValidation:
+    """Every slug that is not a non-empty [a-z0-9-]+ string of sane length is
+    a query failure: the value must never reach a URL unvalidated."""
+
+    @pytest.mark.parametrize("body", [
+        {},
+        {"slug": None},
+        {"slug": 123},
+        {"slug": ""},
+        {"slug": "Seed"},
+        {"slug": "see d"},
+        {"slug": "seed_x"},
+        {"slug": "seed/x"},
+        {"slug": "../etc"},
+        {"slug": "a" * 65},
+        {"slug": ["seed"]},
+    ])
+    def test_invalid_slug_shapes_degrade_to_empty(self, body):
+        server = FakeMulticaAPI(workspace_body=body)
+        try:
+            assert _ws_resolver(server).workspace_slug() == ""
+        finally:
+            server.close()
+
+    def test_max_length_slug_is_accepted(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "a" * 64})
+        try:
+            assert _ws_resolver(server).workspace_slug() == "a" * 64
+        finally:
+            server.close()
+
+    def test_malformed_body_degrades_to_empty(self):
+        server = FakeMulticaAPI(workspace_raw=b"{not valid json")
+        try:
+            assert _ws_resolver(server).workspace_slug() == ""
+        finally:
+            server.close()
+
+    def test_non_object_body_degrades_to_empty(self):
+        server = FakeMulticaAPI(workspace_body=["not", "an", "object"])
+        try:
+            assert _ws_resolver(server).workspace_slug() == ""
+        finally:
+            server.close()
+
+
+class TestCommentLink:
+    """§SPEC-001/002/004: the title-line deep link is composed ONLY from
+    validated components; any missing or invalid component degrades."""
+
+    def test_full_deep_link(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server)
+            assert resolver.comment_link("SEE-1567", COMMENT_ID) == (
+                f"{server.base_url}/seed/issues/SEE-1567#comment-{COMMENT_ID}")
+        finally:
+            server.close()
+
+    def test_missing_comment_id_links_issue_page_without_anchor(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server)
+            assert resolver.comment_link("SEE-1567", "") == (
+                f"{server.base_url}/seed/issues/SEE-1567")
+        finally:
+            server.close()
+
+    def test_non_uuid_comment_id_never_enters_url(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server)
+            injected = "x#frag?workspace_id=../admin"
+            url = resolver.comment_link("SEE-1567", injected)
+            assert url == f"{server.base_url}/seed/issues/SEE-1567"
+            assert injected not in url
+        finally:
+            server.close()
+
+    def test_non_string_comment_id_treated_as_missing(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = _ws_resolver(server)
+            assert resolver.comment_link("SEE-1567", 123) == (
+                f"{server.base_url}/seed/issues/SEE-1567")
+            assert resolver.comment_link("SEE-1567", None) == (
+                f"{server.base_url}/seed/issues/SEE-1567")
+        finally:
+            server.close()
+
+    @pytest.mark.parametrize("identifier", [
+        "", None, "优化排版", "ABC-12", "see-1567",
+        "SEE-", "SEE-abc", "SEE-1567/x", "SEE-1567?x",
+        "SEE-" + "9" * 13,  # over the digit bound: not a real identifier
+    ])
+    def test_identifier_must_be_see_shaped_to_link(self, identifier):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            assert _ws_resolver(server).comment_link(identifier, COMMENT_ID) == ""
+        finally:
+            server.close()
+
+    def test_max_digits_identifier_links(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            url = _ws_resolver(server).comment_link("SEE-" + "9" * 12, COMMENT_ID)
+            assert url.endswith("/issues/SEE-" + "9" * 12 + f"#comment-{COMMENT_ID}")
+        finally:
+            server.close()
+
+    def test_slug_failure_degrades_to_no_link(self):
+        server = FakeMulticaAPI(workspace_status=500)
+        try:
+            assert _ws_resolver(server).comment_link("SEE-1567", COMMENT_ID) == ""
+        finally:
+            server.close()
+
+    def test_oversized_web_base_degrades_without_querying(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = MetadataResolver(
+                server_url="http://" + "a" * 600, pat=PAT,
+                workspace_id=WS_UUID, timeout=2.0)
+            assert resolver.comment_link("SEE-1567", COMMENT_ID) == ""
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_non_http_web_base_degrades_without_querying(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = MetadataResolver(
+                server_url="ftp://127.0.0.1:1", pat=PAT,
+                workspace_id=WS_UUID, timeout=0.3)
+            assert resolver.comment_link("SEE-1567", COMMENT_ID) == ""
+            assert server.requests == []
+        finally:
+            server.close()
+
+    def test_web_base_prefers_explicit_override(self):
+        server = FakeMulticaAPI(workspace_body={"slug": "seed"})
+        try:
+            resolver = MetadataResolver(
+                server_url=server.base_url, pat=PAT, workspace_id=WS_UUID,
+                timeout=2.0, web_base="http://web.test")
+            assert resolver.comment_link("SEE-1567", COMMENT_ID) == (
+                f"http://web.test/seed/issues/SEE-1567#comment-{COMMENT_ID}")
         finally:
             server.close()
 
