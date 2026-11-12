@@ -338,6 +338,20 @@ class TestTitleDeepLink:
         assert not note.html.startswith("<a")
         assert "<a " not in note.html.split("\n", 1)[0]
 
+    def test_href_value_is_escaped_before_attribute_embedding(self):
+        # §SPEC-004 R2 defence: every validated URL component excludes the
+        # charset characters & < >", so on the live path escape_html(link) is
+        # identity and deleting it changes nothing observable. This synthetic
+        # resolver forces a link that carries those characters so the
+        # defence itself is pinned: removing escape_html(link) fails here.
+        link = "http://x.test/seed/issues/SEE-1567?a=1&b=<2>"
+        note = render_notification(_item(), _LinkResolver(link=link))
+        header = note.html.split("\n", 1)[0]
+        assert header == (
+            '<a href="http://x.test/seed/issues/SEE-1567?a=1&amp;b=&lt;2&gt;">'
+            "🤖 <b>Bachi</b> · <b>SEE-1567</b> 优化排版</a>")
+        assert "&amp;" in header and "a=1&b=" not in header
+
 
 class TestDeepLinkBudget:
     """§SPEC-004: the anchor wrapper is part of the fixed header budget —
