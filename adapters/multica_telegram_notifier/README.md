@@ -27,6 +27,9 @@
   分类与 SEE-1561 完全一致，同一通知不会重复成功投递。
 - **长度**：按 Telegram 4096 UTF-16 单位上限先收缩源文本再渲染，永不切断
   HTML 标签或实体，孤立代理字符一律清除；超长正文保留开头部分。
+- **取证**：`delivered` 日志事件记录实际出站 payload（`outbound_text`/
+  `parse_mode`/`text_units`），实机 probe 可直接从 JSONL 日志核验可读首部、
+  表格卡片与「无裸 UUID」；日志永不记录 PAT、bot token 或 chat ID 数值。
 
 ## 工作原理
 
@@ -121,8 +124,9 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 ## 密钥保护
 
 - PAT 与 bot token 只放在权限 600 的本地配置文件中，不进仓库、不进日志、不进
-  issue/评论；状态文件只存已投递通知 ID。元信息查询的 PAT 同样只出现在
-  Authorization 头里，错误消息刻意不含 URL/token。
+  issue/评论；状态文件只存已投递通知 ID；日志事件一律不记录 chat ID 数值。
+  元信息查询的 PAT 同样只出现在 Authorization 头里，错误消息刻意不含
+  URL/token。
 - 运行产物（`--log-json` 日志、状态文件）都应放在仓库外（默认
   `~/.local/state/dev-forge/...`）；仓库 `.gitignore` 另有 `live-probe*.jsonl`
   兜底，避免探针产物被误提交。

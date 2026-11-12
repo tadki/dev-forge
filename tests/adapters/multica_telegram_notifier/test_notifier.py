@@ -971,3 +971,87 @@ class TestParseEntityFallback:
                            for e in capture.events())
         finally:
             server.close()
+
+
+class TestFrameLevelActorFields:
+    """F6: frame top-level actor fields feed the readable header when the
+    item itself carries none; item-embedded fields keep precedence."""
+
+    def test_top_level_actor_used_when_item_lacks_it(self, tmp_path, fake_telegram):
+        frame = json.loads(make_inbox_frame(item_overrides={"actor_type": "", "actor_id": ""}))
+        server = FakeMulticaWS(script=[("text", json.dumps(frame)), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert "<b>actor-1</b>" in send_calls(fake_telegram)[0][1]["text"]
+        finally:
+            server.close()
+
+    def test_item_actor_wins_over_frame_actor(self, tmp_path, fake_telegram):
+        frame = json.loads(make_inbox_frame())  # item: agent-atlas-1, frame: actor-1
+        server = FakeMulticaWS(script=[("text", json.dumps(frame)), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            text = send_calls(fake_telegram)[0][1]["text"]
+            assert "<b>agent-atlas-1</b>" in text
+            assert "actor-1" not in text
+        finally:
+            server.close()
+
+
+class TestDeliveredOutboundEvidence:
+    """§SPEC-007 evidence gap: the delivered event must carry the exact
+    outbound payload so a real probe can verify header/table/no-UUID."""
+
+    def test_delivered_event_records_html_payload(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "body": "**粗** 文本"})), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            delivered = capture.events("delivered")
+            assert delivered[0]["parse_mode"] == "HTML"
+            assert "<b>粗</b>" in delivered[0]["outbound_text"]
+            assert delivered[0]["text_units"] == len(
+                delivered[0]["outbound_text"].encode("utf-16-le", errors="ignore")) // 2
+        finally:
+            server.close()
+
+    def test_delivered_event_records_plain_fallback_payload(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (400, {"ok": False, "error_code": 400,
+                   "description": "Bad Request: can't parse entities: Unsupported start tag"})]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            delivered = capture.events("delivered")
+            assert delivered[0]["parse_mode"] is None
+            assert "<b>" not in delivered[0]["outbound_text"]
+        finally:
+            server.close()
+
+
+class TestLogSecretSurface:
+    def test_logs_never_contain_numeric_chat_id(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"}),
+            (200, {"ok": True, "result": {"message_id": 4242}}),
+        ]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert capture.events("chat_id_reaffirmed")
+            all_log_text = "\n".join(capture.lines)
+            assert "987654" not in all_log_text
+            # Event names may mention "chat_id"; the VALUE must never appear.
+            assert '"chat_id":' not in all_log_text
+        finally:
+            server.close()

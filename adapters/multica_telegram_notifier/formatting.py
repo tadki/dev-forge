@@ -25,12 +25,20 @@ _IDENTIFIER_RE = re.compile(r"^\s*(SEE-\d+)\s*(.*)$", re.S)
 
 _CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _AUTOLINK_RE = re.compile(r"<(https?://[^<>\s]+)>")
-_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
-_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+# Link destinations keep one level of balanced parentheses (F7: wiki-style
+# https://x/Foo_(bar) must not be cut at the first ")").
+_LINK_DEST = r"((?:[^()\s]|\([^()\s]*\))*)"
+_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(" + _LINK_DEST + r"\)")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(" + _LINK_DEST + r"\)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.S)
 _ITALIC_STAR_RE = re.compile(r"(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)")
 _ITALIC_UNDER_RE = re.compile(r"(?<![\w_])_(?!\s)([^_\n]+?)(?<!\s)_(?![\w_])")
 _STRIKE_RE = re.compile(r"~~(.+?)~~", re.S)
+# Bare URLs in text are shielded from emphasis the same way (F1: dunder
+# segments in a URL must not become bold/italic markers); Telegram still
+# auto-links bare URLs in message text on its own.
+_BARE_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+_BARE_URL_TRAILING = ")]}.,;:!?'\""
 
 _FENCE_RE = re.compile(r"^\s*```\s*(\S*)\s*$")
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
@@ -38,7 +46,7 @@ _HR_RE = re.compile(r"^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$")
 _QUOTE_RE = re.compile(r"^\s{0,3}>\s?(.*)$")
 _LIST_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+(.*)$")
 
-_DELIM_CELL_RE = re.compile(r":?-{3,}:?")
+_DELIM_CELL_RE = re.compile(r":?-+:?")
 
 _MAX_TABLE_COLS = 6
 _FENCE_SENTINEL = "\x00"
@@ -65,16 +73,21 @@ def _looks_like_uuid(value: str) -> bool:
 # --- inline rendering ---
 
 
-def _anchor(text: str, url: str, mode: str, already_escaped: bool = False) -> str:
+def _sanitize(text: str) -> str:
+    # F5: literal NUL/SOH in upstream text must not bypass escaping (they are
+    # the sentinel/protection-key alphabet); they never appear in legitimate
+    # notification content, so they are removed outright.
+    return text.replace("\x00", "").replace("\x01", "")
+
+
+def _anchor(text: str, url: str, mode: str) -> str:
     url_ok = url.lower().startswith(("http://", "https://"))
     if mode != "html":
         return f"{text} ({url})" if url_ok else text
-    shown = text if already_escaped else escape_html(text)
     if not url_ok:
         # Neutralize dangerous schemes: render the label without any anchor.
-        return shown
-    href = url if already_escaped else escape_html(url)
-    return f'<a href="{href}">{shown}</a>'
+        return escape_html(text)
+    return f'<a href="{escape_html(url)}">{escape_html(text)}</a>'
 
 
 def _render_inline(text: str, mode: str) -> str:
@@ -89,22 +102,24 @@ def _render_inline(text: str, mode: str) -> str:
         content = escape_html(match.group(1)) if mode == "html" else match.group(1)
         return _protect(f"<code>{content}</code>" if mode == "html" else content)
 
-    def _autolink(match):
-        url = match.group(1)
-        return _protect(_anchor(url, url, mode))
-
-    def _image(match):
-        alt, url = match.group(1), match.group(2)
-        return _protect(_anchor(alt or url, url, mode))
+    def _bare_url(match):
+        url = match.group(0)
+        stripped = url.rstrip(_BARE_URL_TRAILING)
+        tail = url[len(stripped):]
+        shown = escape_html(stripped) if mode == "html" else stripped
+        return _protect(shown) + tail
 
     out = _CODE_SPAN_RE.sub(_code, text)
-    out = _AUTOLINK_RE.sub(_autolink, out)
-    out = _IMAGE_RE.sub(_image, out)
+    # Links, images, autolinks and bare URLs are fully resolved into the
+    # protected set BEFORE emphasis runs, so the emphasis regexes can never
+    # reach href attributes or URL text (F1).
+    out = _IMAGE_RE.sub(
+        lambda m: _protect(_anchor(m.group(1) or m.group(2), m.group(2), mode)), out)
+    out = _LINK_RE.sub(lambda m: _protect(_anchor(m.group(1), m.group(2), mode)), out)
+    out = _AUTOLINK_RE.sub(lambda m: _protect(_anchor(m.group(1), m.group(1), mode)), out)
+    out = _BARE_URL_RE.sub(_bare_url, out)
     if mode == "html":
         out = escape_html(out)
-    out = _LINK_RE.sub(
-        lambda m: _anchor(m.group(1), m.group(2), mode, already_escaped=mode == "html"),
-        out)
     if mode == "html":
         out = _BOLD_RE.sub(lambda m: f"<b>{m.group(1) or m.group(2)}</b>", out)
         out = _STRIKE_RE.sub(lambda m: f"<s>{m.group(1)}</s>", out)
@@ -149,6 +164,7 @@ def _split_fences(md: str, mode: str) -> list:
 
 
 def _render_blocks(md: str, mode: str) -> str:
+    md = _sanitize(md)
     lines = _split_fences(md, mode)
     blocks = []
     paragraph = []
@@ -166,10 +182,8 @@ def _render_blocks(md: str, mode: str) -> str:
             continue
         if "|" in line and i + 1 < len(lines) and _is_delimiter_row(lines[i + 1]):
             header, rows, consumed = _collect_table(lines, i)
-            cards = _table_cards(header, rows, mode)
-            if cards:
-                _flush_paragraph(blocks, paragraph)
-                blocks.append(cards)
+            _flush_paragraph(blocks, paragraph)
+            blocks.append(_table_cards(header, rows, mode))
             i += consumed
             continue
         if _HR_RE.match(line):
@@ -266,6 +280,12 @@ def _table_cards(header: list, rows: list, mode: str) -> str:
         return ""
     if width > _MAX_TABLE_COLS:
         return f"（表格过宽，已省略：{width} 列 × {len(rows)} 行）"
+    if not rows:
+        # F3: a header-only table still carries its column data.
+        names = [_render_inline(h, mode) for h in header]
+        if mode == "html":
+            names = [f"<b>{n}</b>" for n in names]
+        return " · ".join(names)
     cards = []
     for cells in rows:
         cells = _normalize_row(cells, width)
@@ -301,7 +321,9 @@ class _StaticResolver:
             return ("", "")
         m = _IDENTIFIER_RE.match(item_title)
         if m:
-            return m.group(1), m.group(2).strip() or item_title
+            # F4: an identifier-only title ("SEE-100") must not repeat as both
+            # identifier and title.
+            return m.group(1), m.group(2).strip()
         return ("", item_title)
 
 
@@ -361,6 +383,9 @@ def fit_html_text(body_md: str, header: str = "", footer: str = "",
 
 
 def render_notification(item: dict, resolver=None) -> Notification:
+    # F5: control chars are stripped from every string field before they can
+    # reach the renderer, the resolver or the header labels.
+    item = {k: _sanitize(v) if isinstance(v, str) else v for k, v in item.items()}
     resolver = resolver if resolver is not None else _StaticResolver()
     header_html, header_plain = _compose_header(item, resolver)
     footer_html, footer_plain = _compose_footer(item)

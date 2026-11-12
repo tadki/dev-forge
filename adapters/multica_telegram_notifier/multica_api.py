@@ -88,7 +88,9 @@ class MetadataResolver:
         if item_title:
             m = _IDENTIFIER_RE.match(item_title)
             if m:
-                return m.group(1), m.group(2).strip() or item_title
+                # F4: identifier-only title must not duplicate the identifier
+                # as the title.
+                return m.group(1), m.group(2).strip()
             if not issue_id:
                 return "", item_title
             # Title exists but carries no SEE identifier: look one up.
