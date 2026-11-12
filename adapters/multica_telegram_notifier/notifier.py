@@ -40,9 +40,11 @@ from multica_telegram_notifier.protocol import (
 from multica_telegram_notifier.redact import Redactor
 from multica_telegram_notifier.state import DedupState
 from multica_telegram_notifier.telegram import (
+    MAX_TEXT_LENGTH,
     TelegramClient,
     TelegramError,
     is_parse_entity_error,
+    truncate_utf16,
 )
 from multica_telegram_notifier.wsclient import WSClient, WebSocketError
 
@@ -286,6 +288,13 @@ class Notifier:
         return self.once
 
     def _send_notification(self, html: str, plain: str) -> tuple:
+        # FR-2: both payloads pass the same boundary truncation BEFORE the
+        # client, so the recorded outbound evidence (outbound_text/text_units)
+        # equals the bytes actually sent. The HTML fitting already guarantees
+        # ≤4096 here, so this pass is a no-op for it; the plain fallback can
+        # be longer and must be truncated identically to the client's own cut.
+        html = truncate_utf16(html, MAX_TEXT_LENGTH)
+        plain = truncate_utf16(plain, MAX_TEXT_LENGTH)
         try:
             return self._send_with_stale_chat_retry(html, parse_mode="HTML"), html, "HTML"
         except TelegramError as exc:
