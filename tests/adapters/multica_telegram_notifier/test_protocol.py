@@ -110,5 +110,3 @@ class TestInboxItemId:
         fallback = inbox_item_id(item)
         assert isinstance(fallback, str) and len(fallback) == 16
         assert inbox_item_id(item) == fallback
-
-
