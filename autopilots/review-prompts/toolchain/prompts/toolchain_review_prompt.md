@@ -170,7 +170,7 @@ multica issue comment add <本执行IssueID> \
 
 ## 7. 主题素材 D · GQT 库架构（第 4 / 8 / 12 ... 期注入）
 
-关注独立仓 `tadki/godot-qa-toolkit`（GQT，经 `scripts/install.sh` 全局 pip editable 安装、被 CI 与 dev-forge 工具链消费）的架构健康。核心方向——各检查器（doctor / gherkin / complexity / coverage / mutation / timing 等）职责边界是否清晰、结果契约是否一致（退出码 / 输出结构）；重复或功能相近的检查器与实现是否存在、该合并或清理的代码；扩展新检查器的接入成本与既有范式的一致性；与消费方（本仓库 CI workflow、dev-forge 脚本）之间的耦合面是否稳定。
+关注独立仓 `tadki/godot-qa-toolkit`（GQT，经 `scripts/install.sh` 全局 pip editable 安装、被 CI 与 dev-forge 工具链消费）的架构健康。核心方向——各检查器（doctor / gherkin / complexity / coverage / mutation / timing 等）职责边界是否清晰、结果契约是否一致（退出码 / 输出结构）；质量与风险信号统一用 CRAP 分数排序（`CRAP = cc²×(1−c)³+cc`，c 取 raw 0–1 行覆盖率、禁预取整，无有效覆盖分母不出分；score ≥ 30 或 cc ≥ 15 = high risk），coverage / complexity 仅作 CRAP 输入与诊断，不再以覆盖率百分比或复杂度阈值作独立质量门；重复或功能相近的检查器与实现是否存在、该合并或清理的代码；扩展新检查器的接入成本与既有范式的一致性；与消费方（本仓库 CI workflow、dev-forge 脚本）之间的耦合面是否稳定。
 
 本期对标参考（按需引用，不要硬套）：pytest 插件体系的入口注册与结果契约、mypy 的 checker 分层与公共诊断结构、CLI 工具的统一退出码约定（如 syft / trivy 的扫描器结果 schema）、Google Testing Blog 对测试工具分层职责的论述。
 
