@@ -29,16 +29,16 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck -S warning $(find bootstrap launch adapters -name "*.sh")
-      # gqt complexity gate（SEE-1463 §SPEC-009）：CI 守护复杂度治理回归。
-      # 安装行 pin git tag v0.1.0——tag 由 GQT PR 合并后补打（SEE-1463
-      # §SPEC-006 时序）。
+      # gqt measure complexity gate（SEE-1463 §SPEC-009；SEE-1583 四入口
+      # 更名）：CI 守护复杂度治理回归。安装行 pin git tag v0.3.0（SEE-1583
+      # Stage B bump，原 v0.1.0）。
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: gqt complexity gate
+      - name: gqt measure complexity gate
         run: |
-          pip install -q "git+https://github.com/tadki/godot-qa-toolkit.git@v0.1.0"
-          gqt complexity . --warn 10 --max 15
+          pip install -q "git+https://github.com/tadki/godot-qa-toolkit.git@v0.3.0"
+          gqt measure complexity . --warn 10 --max 15
   engine-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
