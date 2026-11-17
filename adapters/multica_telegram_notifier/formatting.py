@@ -12,6 +12,7 @@ text — never to broken markup.
 import re
 from typing import NamedTuple
 
+from multica_telegram_notifier.config import DEFAULT_MAX_PARTS
 from multica_telegram_notifier.telegram import MAX_TEXT_LENGTH, truncate_utf16
 
 SEPARATOR = "──────────"
@@ -68,6 +69,17 @@ _MAX_IDENTIFIER_UNITS = 16
 _MAX_TITLE_UNITS = 256
 _MAX_CREATED_UNITS = 64
 _MAX_KIND_UNITS = 32
+
+# Multi-part split (§SPEC-001): the `i/N` marker line and its joining newline
+# are budgeted at a generous fixed width so packing arithmetic never depends
+# on N itself (N is only known after packing).
+_PART_MARKER_RESERVE = 16
+_PART_FOOTER_SLACK = 8
+# Escape growth is bounded ×5 (`&` → `&amp;`); the slack covers the tag
+# overhead a worst-case rendered line can carry on top of its escaped text.
+_SPLIT_ESCAPE_FACTOR = 5
+_SPLIT_TAG_SLACK = 64
+_TRUNCATION_BANNER = "⚠️ 已达分段上限，末尾内容已截断"
 
 
 class Notification(NamedTuple):
@@ -470,6 +482,15 @@ def render_notification(item: dict, resolver=None) -> Notification:
     body_md = _text(item.get("body"))
     head_html = f"{header_html}\n{SEPARATOR}\n" if header_html else ""
     head_plain = f"{header_plain}\n{SEPARATOR}\n" if header_plain else ""
+    return _notification_fitting(body_md, head_html, head_plain, footer_html, footer_plain)
+
+
+def _notification_fitting(body_md: str, head_html: str, head_plain: str,
+                          footer_html: str, footer_plain: str) -> Notification:
+    """The single-message assembly exactly as it shipped before multi-part
+    splitting (§SPEC-001 zero-regression): fit-shrunk HTML plus the unchanged
+    plain assembly. Both render paths route through this so a fitting
+    notification stays byte-identical regardless of the caller."""
     html = _collapse_blank_runs(fit_html_text(
         body_md, header=head_html, footer=f"\n\n{footer_html}" if footer_html else ""))
     plain_sections = [s for s in (head_plain, _render_blocks(body_md, "plain")) if s]
@@ -477,6 +498,163 @@ def render_notification(item: dict, resolver=None) -> Notification:
     if footer_plain:
         plain = f"{plain}\n\n{footer_plain}" if plain else footer_plain
     return Notification(html=html, plain=plain)
+
+
+def render_notification_parts(item: dict, resolver=None,
+                              max_parts: int = DEFAULT_MAX_PARTS) -> list:
+    """§SPEC-001: renders the notification as one message when it fits
+    (byte-identical with render_notification), otherwise splits it into
+    numbered parts of at most max_parts messages (§SPEC-003 cap, last part
+    truncated with an explicit banner)."""
+    item = {k: _sanitize(v) if isinstance(v, str) else v for k, v in item.items()}
+    resolver = resolver if resolver is not None else _StaticResolver()
+    header_html, header_plain = _compose_header(item, resolver)
+    footer_html, footer_plain = _compose_footer(item)
+    body_md = _text(item.get("body"))
+    head_html = f"{header_html}\n{SEPARATOR}\n" if header_html else ""
+    head_plain = f"{header_plain}\n{SEPARATOR}\n" if header_plain else ""
+    full_html = head_html + _render_blocks(body_md, "html") + (
+        f"\n\n{footer_html}" if footer_html else "")
+    if utf16_len(full_html) <= MAX_TEXT_LENGTH:
+        return [_notification_fitting(body_md, head_html, head_plain,
+                                      footer_html, footer_plain)]
+    return _split_parts(body_md, head_html, head_plain,
+                        footer_html, footer_plain, max_parts)
+
+
+def _split_parts(body_md: str, head_html: str, head_plain: str,
+                 footer_html: str, footer_plain: str, max_parts: int) -> list:
+    foot_units = utf16_len(f"\n\n{footer_html}") if footer_html else 0
+    # Footer space is reserved on every part (not only the last) so packing
+    # arithmetic stays independent of which part turns out to be last.
+    budget = MAX_TEXT_LENGTH - utf16_len(head_html) - _PART_MARKER_RESERVE \
+        - foot_units - _PART_FOOTER_SLACK
+    budget = max(budget, _SPLIT_TAG_SLACK * 4)
+    groups, truncated = _pack_chunks(_source_chunks(body_md, budget), budget, max_parts)
+    total = len(groups)
+    out = []
+    for i, group in enumerate(groups, 1):
+        last = i == total
+        marker = f"{i}/{total}"
+        part_head_html = f"{head_html}{marker}\n"
+        part_head_plain = f"{head_plain}{marker}\n"
+        if last and truncated:
+            # The banner lives in the `header` argument so fit-shrink can only
+            # eat body text, never the marker or the truncation notice.
+            part_head_html += f"{_TRUNCATION_BANNER}\n"
+            part_head_plain += f"{_TRUNCATION_BANNER}\n"
+        body_html = "\n\n".join(_render_blocks(c, "html") for c in group)
+        html = _collapse_blank_runs(fit_html_text(
+            body_html, header=part_head_html,
+            footer=f"\n\n{footer_html}" if last and footer_html else ""))
+        body_plain = "\n\n".join(_render_blocks(c, "plain") for c in group)
+        plain_sections = [s for s in (part_head_plain + body_plain if body_plain
+                                      else part_head_plain.rstrip("\n"),) if s]
+        plain = "\n".join(plain_sections)
+        if last and footer_plain:
+            plain = f"{plain}\n\n{footer_plain}" if plain else footer_plain
+        out.append(Notification(html=html, plain=truncate_utf16(plain, MAX_TEXT_LENGTH)))
+    return out
+
+
+def _pack_chunks(chunks: list, budget: int, max_parts: int) -> tuple:
+    """Greedy first-fit packing; returns (groups, truncated). Chunks are
+    measured by their rendered HTML length, which structurally dominates the
+    plain rendering (escaping grows HTML, tags only add to it)."""
+    lengths = [utf16_len(_render_blocks(c, "html")) for c in chunks]
+    groups = []
+    current, current_len = [], 0
+    for chunk, length in zip(chunks, lengths):
+        extra = utf16_len("\n\n") if current else 0
+        if current and current_len + extra + length > budget:
+            groups.append(current)
+            current, current_len, extra = [], 0, 0
+        current.append(chunk)
+        current_len += extra + length
+    if current:
+        groups.append(current)
+    if len(groups) <= max_parts:
+        return groups, False
+    # Cap exceeded (§SPEC-003): the last allowed part swallows the remainder
+    # and fit-shrink truncates it under an explicit banner.
+    head_groups = groups[:max_parts - 1]
+    packed = sum(len(g) for g in head_groups)
+    tail_chunks = chunks[packed:]
+    if not tail_chunks:
+        tail_chunks = [chunks[-1]]
+        head_groups = groups[:max_parts - 1]
+    return head_groups + [tail_chunks], True
+
+
+def _source_chunks(md: str, budget: int) -> list:
+    """Splits the source at blank-line boundaries so tables, fences and lists
+    (contiguous non-blank line runs) are never broken by the first-level
+    split; blocks still over budget are hard-split at line or, unavoidably,
+    character granularity — content stays complete and in order."""
+    chunks = []
+    for block in _blank_line_blocks(md):
+        if utf16_len(_render_blocks(block, "html")) <= budget:
+            chunks.append(block)
+            continue
+        for line in block.split("\n"):
+            if utf16_len(_render_blocks(line, "html")) <= budget:
+                chunks.append(line)
+            else:
+                chunks.extend(_split_rendered_line(line, budget))
+    return chunks
+
+
+def _blank_line_blocks(md: str) -> list:
+    blocks, current = [], []
+    for line in md.split("\n"):
+        if line.strip() == "":
+            if current:
+                blocks.append("\n".join(current))
+                current = []
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current))
+    return blocks or [""]
+
+
+def _split_rendered_line(line: str, budget: int) -> list:
+    pieces, rest = [], line
+    while utf16_len(_render_blocks(rest, "html")) > budget:
+        cut = _max_cut_within_budget(rest, budget)
+        if cut <= 0:
+            # Unreachable with a sane budget (budget ≥ 256 renders any single
+            # character); abort loudly rather than loop forever.
+            raise ValueError(f"split budget too small to fit one character: {budget}")
+        pieces.append(rest[:cut])
+        rest = rest[cut:]
+    pieces.append(rest)
+    return pieces
+
+
+def _max_cut_within_budget(text: str, budget: int) -> int:
+    # Escape amplification caps the rendered length of any prefix at
+    # ×5 + tag slack, so the conservative cut is a guaranteed starting point;
+    # exponential doubling then binary search finds the exact longest prefix
+    # whose rendered form fits (O(log n) renders instead of a linear scan).
+    low = min(len(text), max(1, (budget - _SPLIT_TAG_SLACK) // _SPLIT_ESCAPE_FACTOR))
+    best, probe = low, low
+    while probe < len(text):
+        nxt = min(len(text), probe * 2)
+        if utf16_len(_render_blocks(text[:nxt], "html")) <= budget:
+            best, probe = nxt, nxt
+        else:
+            break
+    else:
+        return best
+    low, high = best, probe
+    while low < high:
+        mid = (low + high + 1) // 2
+        if utf16_len(_render_blocks(text[:mid], "html")) <= budget:
+            low = mid
+        else:
+            high = mid - 1
+    return low
 
 
 def markdown_to_html(md: str) -> str:

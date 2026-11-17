@@ -10,6 +10,8 @@ from multica_telegram_notifier.formatting import (
     fit_html_text,
     markdown_to_html,
     render_notification,
+    render_notification_parts,
+    utf16_len,
 )
 
 
@@ -711,3 +713,126 @@ class TestClampBounds:
         out = fit_html_text("&" * 2000, header="H" * 10, footer="F" * 10, limit=100)
         assert len(out.encode("utf-16-le", errors="strict")) // 2 <= 100
         assert not re.search(r"&(?!amp;|lt;|gt;)", out)
+
+
+class TestNotificationParts:
+    """§SPEC-001: over-budget notifications split into N numbered messages.
+
+    Each part stays ≤4096 UTF-16 units, repeats the original header plus the
+    separator, carries the `i/N` marker on the first body line, keeps the
+    footer only on the last part, and the parts' bodies concatenated in order
+    restore the full content (no loss, no duplication). Content that fits
+    today must remain byte-identical (zero regression)."""
+
+    def _render(self, body, resolver=None, **overrides):
+        return render_notification_parts(
+            _item(body=body, **overrides), resolver)
+
+    def _header_lines(self, note_html):
+        return note_html.split("\n", 3)[:2]
+
+    def test_fitting_content_single_part_byte_identical(self):
+        body = "普通正文\n\n第二段 with **bold** and `code`"
+        note = render_notification(_item(body=body), _FixedResolver())
+        parts = self._render(body, _FixedResolver())
+        assert parts == [note]
+
+    def test_fitting_content_with_emoji_single_part_byte_identical(self):
+        body = "🎉 表情正文 🎉\n\n- 列表 🚀"
+        note = render_notification(_item(body=body), _FixedResolver())
+        parts = self._render(body, _FixedResolver())
+        assert parts == [note]
+
+    def test_exactly_4096_is_single_part_without_marker(self):
+        base = self._render("x", _FixedResolver())[0].html
+        # full = header line + separator + body rendered + footer; build a
+        # body whose rendered output lands the whole message exactly on 4096.
+        head = base.split(SEPARATOR, 1)[0] + SEPARATOR + "\n"
+        tail = "\n\n" + base.rsplit("\n\n", 1)[1]
+        room = 4096 - utf16_len(head) - utf16_len(tail)
+        body = "x" * room
+        parts = self._render(body, _FixedResolver())
+        assert len(parts) == 1
+        assert utf16_len(parts[0].html) == 4096
+        assert parts[0] == render_notification(_item(body=body), _FixedResolver())
+        assert "1/1" not in parts[0].html
+
+    def test_oversized_body_splits_with_markers_header_and_footer_last(self):
+        body = "\n\n".join(f"chunk{i} " + "a" * 400 for i in range(20))
+        parts = self._render(body, _FixedResolver())
+        assert len(parts) >= 2
+        footer_token = "issue_assigned"
+        for i, part in enumerate(parts, 1):
+            assert utf16_len(part.html) <= 4096
+            assert utf16_len(part.plain) <= 4096
+            lines = part.html.split("\n")
+            assert lines[1] == SEPARATOR
+            assert lines[2] == f"{i}/{len(parts)}"
+            plain_lines = part.plain.split("\n")
+            assert plain_lines[1] == SEPARATOR
+            assert plain_lines[2] == f"{i}/{len(parts)}"
+            if i < len(parts):
+                assert footer_token not in part.html
+                assert footer_token not in part.plain
+        assert footer_token in parts[-1].html
+        assert footer_token in parts[-1].plain
+
+    def test_parts_reconstruct_all_content_in_order(self):
+        chunks = [f"tok{i:02d} " + "b" * 300 for i in range(30)]
+        body = "\n\n".join(chunks)
+        parts = self._render(body, _FixedResolver())
+        joined_html = "\n".join(p.html for p in parts)
+        joined_plain = "\n".join(p.plain for p in parts)
+        for i in range(30):
+            assert joined_html.count(f"tok{i:02d}") == 1
+            assert joined_plain.count(f"tok{i:02d}") == 1
+
+    def test_over_double_limit_yields_three_or_more_parts(self):
+        body = "Ж" * 9000
+        parts = self._render(body, _FixedResolver())
+        assert len(parts) >= 3
+        joined = "\n".join(p.html for p in parts)
+        assert joined.count("Ж") == 9000
+        for i, part in enumerate(parts, 1):
+            assert utf16_len(part.html) <= 4096
+            assert f"{i}/{len(parts)}" in part.html
+
+    def test_non_bmp_emoji_counts_two_units_and_splits(self):
+        body = "🎉" * 2500  # 5000 UTF-16 units > 4096
+        parts = self._render(body, _FixedResolver())
+        assert len(parts) >= 2
+        joined = "\n".join(p.html for p in parts)
+        assert joined.count("🎉") == 2500
+        for part in parts:
+            assert utf16_len(part.html) <= 4096
+
+    def test_plain_fallback_parts_follow_same_marker_rules(self):
+        body = "\n\n".join(f"段落{i} " + "c" * 400 for i in range(20))
+        parts = self._render(body, _FixedResolver())
+        for i, part in enumerate(parts, 1):
+            plain_lines = part.plain.split("\n")
+            assert plain_lines[2] == f"{i}/{len(parts)}"
+
+    def test_max_parts_cap_truncates_last_part_with_banner(self):
+        body = "\n\n".join(f"cap{i} " + "d" * 900 for i in range(40))
+        parts = render_notification_parts(_item(body=body), _FixedResolver(), max_parts=3)
+        assert len(parts) == 3
+        for i, part in enumerate(parts, 1):
+            assert utf16_len(part.html) <= 4096
+            assert part.html.split("\n")[2] == f"{i}/3"
+        assert "已截断" in parts[-1].html
+        assert "已截断" not in parts[0].html
+        assert "已截断" not in parts[1].html
+        # Content preserved in order up to the cap: earlier chunks all survive.
+        joined = "\n".join(p.html for p in parts)
+        assert "cap0" in joined
+        assert "cap1" in joined
+
+    def test_max_parts_one_over_budget_gets_marker_and_banner(self):
+        body = "e" * 6000
+        parts = render_notification_parts(_item(body=body), _FixedResolver(), max_parts=1)
+        assert len(parts) == 1
+        assert utf16_len(parts[0].html) <= 4096
+        assert "1/1" in parts[0].html
+        assert "已截断" in parts[0].html
+        assert parts[0].plain.split("\n")[2] == "1/1"
