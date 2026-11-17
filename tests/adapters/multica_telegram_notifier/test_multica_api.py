@@ -758,3 +758,103 @@ class TestCacheEviction:
             assert ("agent", AGENT_ID) not in resolver._cache
         finally:
             server.close()
+
+
+class TestPostComment:
+    """§SPEC-006: the adapter's single write path — creating a reply comment
+    under the mapped parent comment, PAT Bearer authenticated. The endpoint
+    shape is pinned from upstream contract evidence in post_comment's
+    docstring; tests only assert against that pinned shape."""
+
+    def test_posts_reply_to_issue_scoped_comments_endpoint(self):
+        server = FakeMulticaAPI()
+        try:
+            resolver = _resolver(server)
+            comment_id = resolver.post_comment(ISSUE_ID, COMMENT_ID, "收到，已排期处理")
+            path, body = server.post_requests[0]
+            assert path == f"/api/issues/{ISSUE_ID}/comments?workspace_id={WORKSPACE}"
+            assert body == {"content": "收到，已排期处理", "parent_id": COMMENT_ID}
+            auth, content_type = server.post_auth_headers[0]
+            assert auth == f"Bearer {PAT}"
+            assert content_type == "application/json"
+            assert comment_id == "55555555-5555-5555-5555-555555555555"
+        finally:
+            server.close()
+
+    def test_workspace_id_is_urlencoded(self):
+        server = FakeMulticaAPI()
+        try:
+            resolver = MetadataResolver(
+                server_url=server.base_url, pat=PAT,
+                workspace_id="ws id/odd", timeout=2.0)
+            resolver.post_comment(ISSUE_ID, COMMENT_ID, "text")
+            path, _ = server.post_requests[0]
+            assert path == (f"/api/issues/{ISSUE_ID}/comments"
+                            "?workspace_id=ws%20id%2Fodd")
+        finally:
+            server.close()
+
+    @pytest.mark.parametrize("issue_id,parent,content", [
+        ("not-a-uuid", COMMENT_ID, "text"),
+        (ISSUE_ID, "short-parent", "text"),
+        (ISSUE_ID, COMMENT_ID, "   "),
+        (ISSUE_ID, COMMENT_ID, None),
+        (None, COMMENT_ID, "text"),
+    ])
+    def test_invalid_arguments_refuse_without_any_request(
+            self, issue_id, parent, content):
+        server = FakeMulticaAPI()
+        try:
+            resolver = _resolver(server)
+            with pytest.raises(MulticaApiError) as exc:
+                resolver.post_comment(issue_id, parent, content)
+            assert server.post_requests == []
+            assert PAT not in str(exc.value)
+        finally:
+            server.close()
+
+    def test_http_failure_raises_safe_error(self):
+        server = FakeMulticaAPI(comment_status=500,
+                                comment_body={"error": "boom"})
+        try:
+            resolver = _resolver(server)
+            with pytest.raises(MulticaApiError) as exc:
+                resolver.post_comment(ISSUE_ID, COMMENT_ID, "text")
+            message = str(exc.value)
+            assert PAT not in message
+            assert server.base_url not in message
+            # No URL survives (the exception type name itself is allowed and
+            # matches the GET path's "metadata query failed: HTTPError").
+            assert "://" not in message
+        finally:
+            server.close()
+
+    def test_invalid_json_body_raises_safe_error(self):
+        server = FakeMulticaAPI(comment_raw=b"{not json")
+        try:
+            resolver = _resolver(server)
+            with pytest.raises(MulticaApiError):
+                resolver.post_comment(ISSUE_ID, COMMENT_ID, "text")
+        finally:
+            server.close()
+
+    def test_response_without_comment_id_raises_safe_error(self):
+        server = FakeMulticaAPI(comment_body={"content": "no id field"})
+        try:
+            resolver = _resolver(server)
+            with pytest.raises(MulticaApiError) as exc:
+                resolver.post_comment(ISSUE_ID, COMMENT_ID, "text")
+            assert PAT not in str(exc.value)
+        finally:
+            server.close()
+
+    def test_network_failure_raises_safe_error(self):
+        # Port 1 on localhost refuses everything: the network path must raise
+        # the same safe error type, never leak the URL or crash differently.
+        resolver = MetadataResolver(
+            server_url="http://127.0.0.1:1", pat=PAT, workspace_id=WORKSPACE,
+            timeout=1.0)
+        with pytest.raises(MulticaApiError) as exc:
+            resolver.post_comment(ISSUE_ID, COMMENT_ID, "text")
+        assert PAT not in str(exc.value)
+        assert "127.0.0.1" not in str(exc.value)

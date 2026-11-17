@@ -187,22 +187,29 @@ class FakeMulticaAPI:
 
     def __init__(self, agent_body=None, issue_body=None, agent_status=200,
                  issue_status=200, delay=0.0, agent_raw=None, issue_raw=None,
-                 workspace_body=None, workspace_status=200, workspace_raw=None):
+                 workspace_body=None, workspace_status=200, workspace_raw=None,
+                 comment_body=None, comment_status=200, comment_raw=None):
         self.agent_body = agent_body if agent_body is not None else {"name": "Bachi"}
         self.issue_body = issue_body if issue_body is not None else {
             "identifier": "SEE-1567", "title": "优化 Telegram 排版"}
         self.workspace_body = workspace_body if workspace_body is not None else {"slug": "seed"}
+        self.comment_body = comment_body if comment_body is not None else {
+            "id": "55555555-5555-5555-5555-555555555555"}
         self.agent_status = agent_status
         self.issue_status = issue_status
         self.workspace_status = workspace_status
+        self.comment_status = comment_status
         self.delay = delay
         # Raw byte bodies bypass json.dumps so tests can feed malformed/odd
         # payloads (e.g. invalid JSON) that the resolver must degrade on.
         self.agent_raw = agent_raw
         self.issue_raw = issue_raw
         self.workspace_raw = workspace_raw
+        self.comment_raw = comment_raw
         self.requests = []
         self.auth_headers = []
+        self.post_requests = []  # (path, parsed json body)
+        self.post_auth_headers = []
         self._lock = threading.Lock()
 
         server = self
@@ -225,6 +232,26 @@ class FakeMulticaAPI:
                     raw = server.issue_raw
                 payload = raw if raw is not None else json.dumps(body).encode("utf-8")
                 self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                raw_bytes = self.rfile.read(length) if length else b"{}"
+                try:
+                    parsed = json.loads(raw_bytes.decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    parsed = None
+                with server._lock:
+                    server.post_requests.append((self.path, parsed))
+                    server.post_auth_headers.append(
+                        (self.headers.get("Authorization", ""),
+                         self.headers.get("Content-Type", "")))
+                payload = (server.comment_raw if server.comment_raw is not None
+                           else json.dumps(server.comment_body).encode("utf-8"))
+                self.send_response(server.comment_status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
