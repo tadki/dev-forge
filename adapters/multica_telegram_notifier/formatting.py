@@ -552,9 +552,13 @@ def _assemble_part(group: list, index: int, total: int, truncated: bool,
         # eat body text, never the marker or the truncation notice.
         part_head_html += f"{_TRUNCATION_BANNER}\n"
         part_head_plain += f"{_TRUNCATION_BANNER}\n"
-    body_html = "\n\n".join(_render_blocks(c, "html") for c in group)
+    # D1 (SEE-1598 QA): fit_html_text renders its input itself, so it gets
+    # the RAW source chunks — feeding pre-rendered HTML here re-escaped every
+    # tag/entity (`&lt;b&gt;`, `A&amp;amp;B`) and shrank rendered output,
+    # breaking the shrink-the-source contract on the part path.
+    body_md = "\n\n".join(group)
     html = _collapse_blank_runs(fit_html_text(
-        body_html, header=part_head_html,
+        body_md, header=part_head_html,
         footer=f"\n\n{footer_html}" if last and footer_html else ""))
     body_plain = "\n\n".join(_render_blocks(c, "plain") for c in group)
     plain_sections = [s for s in (part_head_plain + body_plain if body_plain
