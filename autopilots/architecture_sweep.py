@@ -1632,51 +1632,64 @@ def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
                 }
             )
 
-    # D1 (SEE-1226): per-directory validation. A passing global total can hide
-    # a whole configured dir that never ran (e.g. aidomain missing from the
-    # junit while other dirs over-deliver), so each dir is checked on its own:
-    # actual_dir == 0 → dir missing from the run; 0 < actual_dir < threshold →
-    # dir partially run. Only evaluated when a junit report was actually read.
+    # D1 (SEE-1226): per-directory validation — only when a junit was read.
     if junit_path and actual > 0:
-        for rel_dir, expected_dir in expected_by_dir.items():
-            if expected_dir == 0:
-                continue
-            actual_dir = actual_by_dir.get(rel_dir, 0)
-            threshold_dir = int(expected_dir * GUT_PARTIAL_RUN_TOLERANCE)
-            # SEE-1476 SPEC-2: encode the dir into the dedup key (via `file`)
-            # so a whole-dir finding can never collide with the global
-            # `.gutconfig.json:0:GUT_SILENT_SKIP:error` key and be swallowed
-            # by the baseline — a real dir-level skip must reach
-            # new_findings and the escalation path.
-            dir_file = f".gutconfig.json#dir={rel_dir}"
-            if actual_dir == 0:
-                findings.append(
-                    {
-                        "rule_id": "GUT_SILENT_SKIP",
-                        "severity": SEVERITY_ERROR,
-                        "file": dir_file,
-                        "line": 0,
-                        "message": (
-                            f"GUT silent skip (dir): {rel_dir}/ expected "
-                            f"{expected_dir} tests, junit reports 0 executed "
-                            f"(whole directory missing from run)"
-                        ),
-                    }
-                )
-            elif actual_dir < threshold_dir:
-                findings.append(
-                    {
-                        "rule_id": "GUT_SILENT_SKIP",
-                        "severity": SEVERITY_ERROR,
-                        "file": dir_file,
-                        "line": 0,
-                        "message": (
-                            f"GUT silent skip (dir): {rel_dir}/ expected "
-                            f"{expected_dir} tests, junit reports {actual_dir} "
-                            f"executed (below 95% per-dir tolerance)"
-                        ),
-                    }
-                )
+        findings.extend(
+            _gut_dir_silent_skip_findings(expected_by_dir, actual_by_dir)
+        )
+    return findings
+
+
+def _gut_dir_silent_skip_findings(expected_by_dir: dict,
+                                  actual_by_dir: dict) -> list[dict]:
+    """D1 (SEE-1226) per-directory silent-skip findings.
+
+    A passing global total can hide a whole configured dir that never ran
+    (e.g. aidomain missing from the junit while other dirs over-deliver), so
+    each dir is checked on its own: actual_dir == 0 -> dir missing from the
+    run; 0 < actual_dir < threshold -> dir partially run. Only called when a
+    junit report was actually read (junit_path and actual > 0).
+    """
+    findings = []
+    for rel_dir, expected_dir in expected_by_dir.items():
+        if expected_dir == 0:
+            continue
+        actual_dir = actual_by_dir.get(rel_dir, 0)
+        threshold_dir = int(expected_dir * GUT_PARTIAL_RUN_TOLERANCE)
+        # SEE-1476 SPEC-2: encode the dir into the dedup key (via `file`) so a
+        # whole-dir finding can never collide with the global
+        # `.gutconfig.json:0:GUT_SILENT_SKIP:error` key and be swallowed by
+        # the baseline — a real dir-level skip must reach new_findings and the
+        # escalation path.
+        dir_file = f".gutconfig.json#dir={rel_dir}"
+        if actual_dir == 0:
+            findings.append(
+                {
+                    "rule_id": "GUT_SILENT_SKIP",
+                    "severity": SEVERITY_ERROR,
+                    "file": dir_file,
+                    "line": 0,
+                    "message": (
+                        f"GUT silent skip (dir): {rel_dir}/ expected "
+                        f"{expected_dir} tests, junit reports 0 executed "
+                        f"(whole directory missing from run)"
+                    ),
+                }
+            )
+        elif actual_dir < threshold_dir:
+            findings.append(
+                {
+                    "rule_id": "GUT_SILENT_SKIP",
+                    "severity": SEVERITY_ERROR,
+                    "file": dir_file,
+                    "line": 0,
+                    "message": (
+                        f"GUT silent skip (dir): {rel_dir}/ expected "
+                        f"{expected_dir} tests, junit reports {actual_dir} "
+                        f"executed (below 95% per-dir tolerance)"
+                    ),
+                }
+            )
     return findings
 
 
