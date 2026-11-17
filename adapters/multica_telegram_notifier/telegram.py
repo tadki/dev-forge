@@ -109,9 +109,27 @@ class TelegramClient:
                 sleep(retries[attempt])
         raise TelegramError("sendMessage: retries exhausted", retryable=True)
 
+    def get_updates(self, offset=None, timeout: int = 0,
+                    allowed_updates=None) -> list:
+        """§SPEC-004 inbound receive: long-poll getUpdates. `timeout` is the
+        Telegram long-poll seconds; the HTTP request timeout grows with it so
+        the poll is not killed by the short connect timeout."""
+        payload = {"timeout": int(timeout)}
+        if offset is not None:
+            payload["offset"] = offset
+        if allowed_updates is not None:
+            payload["allowed_updates"] = allowed_updates
+        body = self._call("getUpdates", payload, request_timeout=self.timeout + timeout + 5)
+        result = body.get("result")
+        if not isinstance(result, list):
+            raise TelegramError(
+                "telegram getUpdates returned a non-list result: "
+                f"{type(result).__name__}", retryable=True)
+        return result
+
     # --- internals ---
 
-    def _call(self, method: str, payload: dict) -> dict:
+    def _call(self, method: str, payload: dict, request_timeout=None) -> dict:
         url = f"{self.api_base}/bot{self.bot_token}/{method}"
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -120,7 +138,10 @@ class TelegramClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(
+                    request,
+                    timeout=self.timeout if request_timeout is None else request_timeout,
+            ) as response:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
             # exc and its __context__ embed the token-bearing URL; `from None`
@@ -171,3 +192,13 @@ def is_parse_entity_error(exc: BaseException) -> bool:
     return (isinstance(exc, TelegramError)
             and exc.error_code == 400
             and "can't parse entities" in str(exc).lower())
+
+
+def is_get_updates_conflict(exc: BaseException) -> bool:
+    # §SPEC-007: one bot token admits exactly one getUpdates consumer; if the
+    # built-in bidirectional channel is ever re-enabled on the same token,
+    # Telegram answers 409 "terminated by other getUpdates request". The
+    # receiver degrades to inbound-disabled on this and only this condition.
+    return (isinstance(exc, TelegramError)
+            and (exc.error_code == 409
+                 or "terminated by other getUpdates request" in str(exc).lower()))
