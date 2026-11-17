@@ -83,7 +83,6 @@ def _stub_bin(tmp_path):
     godot.write_text(
         "#!/usr/bin/env bash\n"
         'printf \'godot %s\\n\' "$*" >> "$STUB_LOG"\n'
-        'for a in "$@"; do :; done\n'
         'case " $* " in\n'
         '  *" --import "*)\n'
         '    exit "${STUB_IMPORT_RC:-0}"\n'

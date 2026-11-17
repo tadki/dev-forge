@@ -73,12 +73,7 @@ def _write_junit(repo, cases_by_dir):
            _junit_xml(cases_by_dir))
 
 
-@pytest.fixture(autouse=True)
-def _isolate_state(tmp_path, monkeypatch):
-    """Never read or write the machine's real arch-patrol state."""
-    monkeypatch.setattr(sweep, "REPORT_FILE", str(tmp_path / "arch" / "last_report.json"))
-    monkeypatch.setattr(sweep, "BASELINE_FILE", str(tmp_path / "arch" / "baseline.jsonl"))
-    yield
+pytestmark = pytest.mark.usefixtures("isolate_arch_patrol_state")
 
 
 def _write_prev_report(metrics):
