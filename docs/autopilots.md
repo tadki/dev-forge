@@ -169,7 +169,7 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 | `--l1` | 无 | 强制开启 L1 周检（默认周一 UTC，脚本内部判定基准，自动开启） |
 | `--execution-issue-id` | 空 | 本执行 Issue ID |
 
-环境变量： `DRY_RUN=true`、`ARCH_SWEEP_L1=true`、`MULTICA_WORKTREE_HASH=<hash>`（wrapper 用）；`ARCH_SWEEP_CONFIG=<path>`（wrapper 物化步用的巡逻 config 覆盖）；`ARCH_SWEEP_MIRROR_ROOT=<path>`（wrapper 物化回退的平台镜像根覆盖，默认按 daemon 布局解析，见「物化取件依赖」）。
+环境变量： `DRY_RUN=true`、`ARCH_SWEEP_L1=true`、`MULTICA_WORKTREE_HASH=<hash>`（wrapper 用）；`ARCH_SWEEP_CONFIG=<path>`（wrapper 物化步用的巡逻 config 覆盖）；`ARCH_SWEEP_MIRROR_ROOT=<path>`（wrapper 物化回退的平台镜像根覆盖，默认按 daemon 布局解析，见「物化取件依赖」）；`GODOT=<bin>`（L1 自产 junit 使用的 Godot 二进制，默认 `godot`）；`ARCH_SWEEP_GUT_IMPORT_TIMEOUT_SECONDS`（默认 900）、`ARCH_SWEEP_GUT_TIMEOUT_SECONDS`（默认 3600）（L1 GUT 导入/跑批超时护栏，见「检查维度」L1）。
 
 ### 检查维度
 
@@ -186,7 +186,10 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 - `GDLINT_NEW` — gdlint 警告增量（baseline diff；`--fast` 时跳过）
 
 **L1 每周一（或 `--l1`）追加**：
-- `GUT_SILENT_SKIP` — `.gutconfig.json` 预期测试数 vs `tests/reports/junit_report.xml` 实跑数差值
+- **自产 junit（SEE-1593）**：L1 轮次（非 `--dry-run`/`--fast`、kill switch 关闭）由 wrapper 先在本次被检检出内执行 `godot --headless --import` 与 `tests/run_tests.sh --all`，产出 `tests/reports/junit_report.xml` 供现有 local 取源分支消费；输入与巡逻同一 HEAD，不依赖会被平台回收的 sibling slot。跑批带超时护栏（`ARCH_SWEEP_GUT_IMPORT_TIMEOUT_SECONDS` 默认 900s、`ARCH_SWEEP_GUT_TIMEOUT_SECONDS` 默认 3600s）；import/跑批失败、超时或未产出 junit 均显式记录到 stderr 且**不阻断**后续静态巡检（输入缺失由下方规则表达）
+- `GUT_UNVERIFIED`（warn；连续 ≥2 个 L1 轮次无输入时升级为 error）— 本轮完全没有 junit 输入：属「未验证」而非产品信号，`gut_verified=false`。连续次数写 `gut_unverified_streak`；状态来源为上一 L1 轮（`last_report.json`；若被工作日 L0 覆盖则回退 `baseline.jsonl` 中最近含 `gut_verified` 的记录）
+- `GUT_SILENT_SKIP`（error）— 有 junit 但执行异常：全局实际执行数为 0、全局低于 95% 容差，或任一配置目录整体缺失/低于目录容差（D1 语义与 dedup 键不变）；已配置 stable 源却 miss/stale 仍为 error 并非零退出（SEE-1499 契约不放宽）
+- 度量：`junit_source` 在命中本地/槽位/稳定源时为 `local`/`slot:<slot>`/`stable:<path>`，未解析到任何 junit 时为 `none`；`gut_verified` 仅在 L1 轮次写入（有 junit 且 `actual_tests>0` 为 true）
 - 测试/代码比例趋势： `test_to_code_ratio`（test .gd 行数 / 非 test .gd 行数）
 - autoload 引用矩阵与兼容桥趋势： 通过 baseline `metrics` 字段自然形成时序
 
@@ -196,6 +199,7 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 - `~/.multica/arch-patrol/heartbeat.jsonl` — 心跳： `{ts, status, summary}`
 - `~/.multica/arch-patrol/redline.manifest` — `addons/godot_mcp/` SHA256 manifest
 - `~/.multica/arch-patrol/last_report.json` — 最近一次执行的结构化报告
+- `~/.multica/arch-patrol/gut-last-run.log` — L1 自产 junit 的 import/跑批完整输出（每次 L1 覆盖）
 
 ### 防疲劳
 

@@ -21,6 +21,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilo
 import architecture_sweep as sweep
 
 
+@pytest.fixture(autouse=True)
+def _isolate_arch_patrol_state(tmp_path, monkeypatch):
+    # SEE-1593: check_gut_silent_skip consults the previous L1 report for
+    # no-input escalation — never let tests read the machine's real state.
+    monkeypatch.setattr(sweep, "REPORT_FILE", str(tmp_path / "last_report.json"))
+    monkeypatch.setattr(sweep, "BASELINE_FILE", str(tmp_path / "baseline.jsonl"))
+
+
 GUTCONFIG = {
     "dirs": ["res://tests/unit/"],
     "junit_xml_file": "res://tests/reports/junit_report.xml",
@@ -136,10 +144,13 @@ class TestGutSilentSkipS1:
         old = time.time() - (sweep.JUNIT_MAX_AGE_DAYS + 1) * 86400
         os.utime(str(cross / "junit_report_1.0.xml"), (old, old))
         findings, metrics = sweep.check_gut_silent_skip(str(repo), str(ws))
-        # Stale product must NOT satisfy the check → finding fires.
+        # A stale product is no usable input, so this is "unverified" (input
+        # missing) rather than a product silent-skip — SEE-1593 §SPEC-002.
         assert len(findings) == 1
-        assert findings[0]["rule_id"] == "GUT_SILENT_SKIP"
+        assert findings[0]["rule_id"] == "GUT_UNVERIFIED"
+        assert findings[0]["severity"] == "warn"
         assert metrics["actual_tests"] == 0
+        assert metrics["junit_source"] == "none"
 
     def test_cross_slot_prefers_newest_full_run_over_probe(self, tmp_path):
         repo = _make_repo(tmp_path)
