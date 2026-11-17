@@ -728,8 +728,15 @@ class TestNotificationParts:
         return render_notification_parts(
             _item(body=body, **overrides), resolver)
 
-    def _header_lines(self, note_html):
-        return note_html.split("\n", 3)[:2]
+    def _assert_part_markers(self, part, index, total):
+        assert utf16_len(part.html) <= 4096
+        assert utf16_len(part.plain) <= 4096
+        lines = part.html.split("\n")
+        assert lines[1] == SEPARATOR
+        assert lines[2] == f"{index}/{total}"
+        plain_lines = part.plain.split("\n")
+        assert plain_lines[1] == SEPARATOR
+        assert plain_lines[2] == f"{index}/{total}"
 
     def test_fitting_content_single_part_byte_identical(self):
         body = "普通正文\n\n第二段 with **bold** and `code`"
@@ -763,14 +770,7 @@ class TestNotificationParts:
         assert len(parts) >= 2
         footer_token = "issue_assigned"
         for i, part in enumerate(parts, 1):
-            assert utf16_len(part.html) <= 4096
-            assert utf16_len(part.plain) <= 4096
-            lines = part.html.split("\n")
-            assert lines[1] == SEPARATOR
-            assert lines[2] == f"{i}/{len(parts)}"
-            plain_lines = part.plain.split("\n")
-            assert plain_lines[1] == SEPARATOR
-            assert plain_lines[2] == f"{i}/{len(parts)}"
+            self._assert_part_markers(part, i, len(parts))
             if i < len(parts):
                 assert footer_token not in part.html
                 assert footer_token not in part.plain

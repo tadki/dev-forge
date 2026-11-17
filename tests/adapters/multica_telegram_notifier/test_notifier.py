@@ -1229,15 +1229,11 @@ class TestOutboundEvidenceExactness:
             first_plain = delivered[0]
             assert first_plain["part"] == 1 and first_plain["parse_mode"] is None
             assert "1/" in calls[1][1]["text"].split("\n")[2]
-            assert first_plain["outbound_text"] == calls[1][1]["text"]
-            assert first_plain["text_units"] == self._utf16_units(calls[1][1]["text"])
-            assert first_plain["text_units"] <= 4096
+            _assert_payload_exact(first_plain, calls[1][1]["text"])
             assert "<b>" not in first_plain["outbound_text"]
             for event, call in zip(delivered[1:], calls[2:]):
                 assert event["parse_mode"] == "HTML"
-                assert event["outbound_text"] == call[1]["text"]
-                assert event["text_units"] == self._utf16_units(call[1]["text"])
-                assert event["text_units"] <= 4096
+                _assert_payload_exact(event, call[1]["text"])
         finally:
             server.close()
 
@@ -1259,6 +1255,13 @@ class TestOutboundEvidenceExactness:
 
 def _utf16(text):
     return len(text.encode("utf-16-le", errors="ignore")) // 2
+
+
+def _assert_payload_exact(event, sent_text):
+    """FR-2: a delivered event's recorded payload equals the bytes sent."""
+    assert event["outbound_text"] == sent_text
+    assert event["text_units"] == _utf16(sent_text)
+    assert event["text_units"] <= 4096
 
 
 def _oversized_body(chunks=24, size=420):
@@ -1322,9 +1325,7 @@ class TestMultiPartDelivery:
         assert [e["message_id"] for e in delivered] == [100 + i for i in range(1, len(texts) + 1)]
         # Evidence exactness per part: logged payload == bytes actually sent.
         for i, event in enumerate(delivered):
-            assert event["outbound_text"] == texts[i]
-            assert event["text_units"] == _utf16(texts[i])
-            assert event["text_units"] <= 4096
+            _assert_payload_exact(event, texts[i])
 
     def test_retryable_failure_midway_keeps_item_pending(self, tmp_path, fake_telegram):
         # Part 1 succeeds, part 2 fails retryably until the once-bound fires:
