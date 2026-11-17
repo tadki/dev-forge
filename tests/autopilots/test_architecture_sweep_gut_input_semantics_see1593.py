@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -183,6 +184,44 @@ class TestMetricsHonesty:
                              all_findings=[], metrics=metrics)
         assert "gut_verified" not in metrics
         assert "junit_source" not in metrics
+
+
+# =============================================================================
+# §SPEC-010 — stale local input must not be read back as this round's verdict
+# =============================================================================
+
+
+class TestStaleLocalInput:
+    def test_stale_local_junit_is_not_accepted(self, tmp_path):
+        # Final Review HIGH-1 probe: an 8-day-old local junit (beyond the
+        # 7-day window) used to be accepted as junit_source=local /
+        # gut_verified=True. It must now read as "no usable input".
+        repo = _make_repo(tmp_path)
+        _write_junit(repo, {"tests/unit": 10, "tests/aidomain": 5})
+        junit = os.path.join(str(repo), "tests", "reports", "junit_report.xml")
+        old = time.time() - (sweep.JUNIT_MAX_AGE_DAYS + 1) * 86400
+        os.utime(junit, (old, old))
+
+        findings, metrics = sweep.check_gut_silent_skip(str(repo), "", junit_stable_path="")
+
+        assert metrics["actual_tests"] == 0
+        assert metrics["gut_verified"] is False
+        assert metrics["junit_source"] == "none"
+        assert metrics["gut_unverified_streak"] == 1
+        assert [f for f in findings if f["rule_id"] == "GUT_UNVERIFIED"]
+        assert [f for f in findings if f["rule_id"] == "GUT_SILENT_SKIP"] == []
+
+    def test_local_junit_within_window_still_accepted(self, tmp_path):
+        # Boundary sanity: inside the window it is still this round's input.
+        repo = _make_repo(tmp_path)
+        _write_junit(repo, {"tests/unit": 10, "tests/aidomain": 5})
+        junit = os.path.join(str(repo), "tests", "reports", "junit_report.xml")
+        recent = time.time() - (sweep.JUNIT_MAX_AGE_DAYS - 1) * 86400
+        os.utime(junit, (recent, recent))
+
+        _, metrics = sweep.check_gut_silent_skip(str(repo), "", junit_stable_path="")
+        assert metrics["junit_source"] == "local"
+        assert metrics["gut_verified"] is True
 
 
 # =============================================================================

@@ -1505,8 +1505,18 @@ def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
 
     junit_path = ""
     for cand in candidates:
-        if os.path.isfile(cand):
-            junit_path = cand  # local candidates only; glob order is fine
+        if not os.path.isfile(cand):
+            continue
+        # SEE-1593 §SPEC-010 (Final Review HIGH-1): a reused checkout keeps
+        # tests/reports/ across rounds. Freshness was enforced for the
+        # cross-slot and stable tiers but not this local one, so a previous
+        # round's local junit could survive a failed self-production and be
+        # read back as "verified". Anything older than the 7-day window is not
+        # this round's input — decline it (the wrapper also clears the local
+        # product before attempting, so operational failures leave none).
+        if _junit_age_days(os.path.getmtime(cand)) > JUNIT_MAX_AGE_DAYS:
+            continue
+        junit_path = cand  # local candidates only; glob order is fine
 
     # SEE-1593 §SPEC-003: report "none" when nothing resolved — the old
     # unconditional "local" label claimed a local report had been read even

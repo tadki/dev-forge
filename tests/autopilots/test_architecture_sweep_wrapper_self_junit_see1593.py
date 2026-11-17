@@ -23,9 +23,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilots"))
+
+import architecture_sweep as sweep
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_SRC = REPO_ROOT / "autopilots" / "architecture_sweep.sh"
@@ -56,6 +61,12 @@ def _make_patrol_repo(ws):
         "junit_xml_file": "res://tests/reports/junit_report.xml",
         "junit_xml_timestamp": False,
     }))
+    # One test file so expected_tests > 0 (needed for the downstream
+    # GUT_UNVERIFIED assertion in the stale-input guard).
+    _write(repo / "tests" / "unit" / "test_x.gd",
+           "func test_a() -> void:\n\tpass\n"
+           "func test_b() -> void:\n\tpass\n"
+           "func test_c() -> void:\n\tpass\n")
     _write(repo / "tests" / "reports" / ".gitkeep", "")
     # Same shape as the real runner: cd to repo root, exec "$GODOT".
     _write(repo / "tests" / "run_tests.sh",
@@ -262,3 +273,80 @@ def test_success_without_junit_is_explicit(env):
     assert proc.returncode == 0, proc.stderr
     assert "junit" in proc.stderr.lower()
     assert "architecture_sweep.py" in _log(env)
+
+
+# =============================================================================
+# §SPEC-010 — a failed/skipped self-production must not leave a stale junit
+# =============================================================================
+
+_STALE_XML = (
+    "<testsuite>"
+    '<testcase name="t0" classname="tests/unit/test_x.gd">'
+    '<testcase name="t1" classname="tests/unit/test_x.gd">'
+    "</testsuite>"
+)
+
+
+def _seed_stale_junit(repo):
+    junit = repo / "tests" / "reports" / "junit_report.xml"
+    junit.write_text(_STALE_XML, encoding="utf-8")
+    return junit
+
+
+@pytest.mark.parametrize("failure", [
+    "godot_missing",   # binary lookup fails
+    "import_fail",     # godot --import returns non-zero
+    "run_fail",        # tests/run_tests.sh returns non-zero
+    "timeout",         # batch exceeds ARCH_SWEEP_GUT_TIMEOUT_SECONDS
+])
+def test_failed_self_production_removes_stale_junit(env, failure):
+    stale = _seed_stale_junit(env["repo"])
+    extra = {}
+    if failure == "godot_missing":
+        extra["GODOT"] = str(env["stub"]["bin"] / "no-such-godot")
+    elif failure == "import_fail":
+        extra["STUB_IMPORT_RC"] = "2"
+    elif failure == "run_fail":
+        extra["STUB_RUN_RC"] = "3"
+    else:
+        extra.update({"STUB_RUN_SLEEP": "5",
+                      "ARCH_SWEEP_GUT_TIMEOUT_SECONDS": "1"})
+
+    proc = _run(env, extra_args=["--l1"], env_extra=extra)
+
+    assert proc.returncode == 0, proc.stderr
+    assert not stale.exists(), (
+        f"stale junit survived a {failure} self-production; it would be "
+        f"misread as this round's verified input (SPEC-010)"
+    )
+    assert "architecture_sweep.py" in _log(env)  # sweep still runs
+
+
+def test_failed_self_production_report_is_gut_unverified(
+        env, isolate_arch_patrol_state):
+    # End-to-end shape of the Final Review probe: a leftover junit + a failed
+    # self-production must surface as actual=0 / gut_verified=false /
+    # GUT_UNVERIFIED, never a stale wrong-pass.
+    stale = _seed_stale_junit(env["repo"])
+    proc = _run(env, extra_args=["--l1"], env_extra={"STUB_IMPORT_RC": "2"})
+    assert proc.returncode == 0, proc.stderr
+    assert not stale.exists()
+
+    findings, metrics = sweep.check_gut_silent_skip(
+        str(env["repo"]), "", junit_stable_path="")
+    assert metrics["actual_tests"] == 0
+    assert metrics["gut_verified"] is False
+    assert metrics["junit_source"] == "none"
+    assert [f for f in findings if f["rule_id"] == "GUT_UNVERIFIED"]
+    assert [f for f in findings if f["rule_id"] == "GUT_SILENT_SKIP"] == []
+
+
+def test_stale_timestamped_variants_also_cleared(env):
+    # Python globs timestamped variants too; those must not survive either.
+    reports = env["repo"] / "tests" / "reports"
+    _write(reports / "junit_report_1788253530.xml", _STALE_XML)
+    _write(reports / "junit_report.xml_1788253530.xml", _STALE_XML)
+    proc = _run(env, extra_args=["--l1"], env_extra={"STUB_IMPORT_RC": "2"})
+    assert proc.returncode == 0, proc.stderr
+    assert not (reports / "junit_report_1788253530.xml").exists()
+    assert not (reports / "junit_report.xml_1788253530.xml").exists()
