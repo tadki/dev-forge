@@ -836,3 +836,32 @@ class TestNotificationParts:
         assert "1/1" in parts[0].html
         assert "已截断" in parts[0].html
         assert parts[0].plain.split("\n")[2] == "1/1"
+
+    def test_multi_part_payload_is_single_escaped_not_double(self):
+        # Revy D1 oracle (SEE-1598 QA): the part path renders the source
+        # exactly once — markdown tags survive as tags and entities stay
+        # single-escaped; re-rendering already-rendered HTML would produce
+        # `&lt;b&gt;` / `A&amp;amp;B` literal garbage.
+        chunks = ["**Heading line** 结论"] + [f"A&B 数据{i} " + "t" * 300
+                                              for i in range(20)]
+        parts = render_notification_parts(
+            _item(body="\n\n".join(chunks)), _FixedResolver())
+        assert len(parts) >= 2
+        joined = "\n".join(p.html for p in parts)
+        assert "<b>Heading line</b>" in joined
+        assert "A&amp;B" in joined
+        assert "&lt;b&gt;" not in joined
+        assert "A&amp;amp;B" not in joined
+
+    def test_capped_part_shrinks_source_not_rendered_html(self):
+        # Revy D1 second face: the fit-shrink contract (shrink the SOURCE,
+        # re-render, tags never cut mid-token) must hold on the capped path
+        # too — shrinking rendered output would leave double-escaped or
+        # mid-tag artifacts instead of a clean render.
+        parts = render_notification_parts(
+            _item(body="**加粗开头** " + "f" * 6000), _FixedResolver(), max_parts=1)
+        assert len(parts) == 1
+        html = parts[0].html
+        assert "&lt;b&gt;" not in html
+        assert "A&amp;amp;" not in html
+        assert "&lt;/b&gt;" not in html

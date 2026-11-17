@@ -1682,3 +1682,29 @@ class TestReplySyncWiring:
             assert capture.events("reply_sync_started") == []
         finally:
             server.close()
+
+
+class TestMultiPartPayloadEscaping:
+    """Revy D1 end-to-end oracle (SEE-1598 QA): payloads captured from the
+    real send path must carry rendered tags and single-escaped entities —
+    the part path must never re-render already-rendered HTML."""
+
+    def test_multi_part_outbound_payload_single_escaped(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [_ok_send(100 + i) for i in range(1, 7)]
+        chunks = ["**Heading line** 开头"] + [f"A&B 第{i}段 " + "x" * 300
+                                              for i in range(24)]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "body": "\n\n".join(chunks)})), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            texts = [c[1]["text"] for c in send_calls(fake_telegram)]
+            assert len(texts) >= 2
+            joined = "\n".join(texts)
+            assert "<b>Heading line</b>" in joined
+            assert "A&amp;B" in joined
+            assert "&lt;b&gt;" not in joined
+            assert "A&amp;amp;B" not in joined
+        finally:
+            server.close()
