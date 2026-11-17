@@ -150,7 +150,6 @@ def _render_inline(text: str, mode: str) -> str:
     out = _BARE_URL_RE.sub(_bare_url, out)
     if mode == "html":
         out = escape_html(out)
-    if mode == "html":
         out = _BOLD_RE.sub(lambda m: f"<b>{m.group(1) or m.group(2)}</b>", out)
         out = _STRIKE_RE.sub(lambda m: f"<s>{m.group(1)}</s>", out)
         out = _ITALIC_STAR_RE.sub(lambda m: f"<i>{m.group(1)}</i>", out)
@@ -524,37 +523,46 @@ def render_notification_parts(item: dict, resolver=None,
 
 def _split_parts(body_md: str, head_html: str, head_plain: str,
                  footer_html: str, footer_plain: str, max_parts: int) -> list:
+    budget = _split_budget(head_html, footer_html)
+    groups, truncated = _pack_chunks(_source_chunks(body_md, budget), budget, max_parts)
+    total = len(groups)
+    return [_assemble_part(group, index, total, truncated, head_html, head_plain,
+                           footer_html, footer_plain)
+            for index, group in enumerate(groups, 1)]
+
+
+def _split_budget(head_html: str, footer_html: str) -> int:
     foot_units = utf16_len(f"\n\n{footer_html}") if footer_html else 0
     # Footer space is reserved on every part (not only the last) so packing
     # arithmetic stays independent of which part turns out to be last.
     budget = MAX_TEXT_LENGTH - utf16_len(head_html) - _PART_MARKER_RESERVE \
         - foot_units - _PART_FOOTER_SLACK
-    budget = max(budget, _SPLIT_TAG_SLACK * 4)
-    groups, truncated = _pack_chunks(_source_chunks(body_md, budget), budget, max_parts)
-    total = len(groups)
-    out = []
-    for i, group in enumerate(groups, 1):
-        last = i == total
-        marker = f"{i}/{total}"
-        part_head_html = f"{head_html}{marker}\n"
-        part_head_plain = f"{head_plain}{marker}\n"
-        if last and truncated:
-            # The banner lives in the `header` argument so fit-shrink can only
-            # eat body text, never the marker or the truncation notice.
-            part_head_html += f"{_TRUNCATION_BANNER}\n"
-            part_head_plain += f"{_TRUNCATION_BANNER}\n"
-        body_html = "\n\n".join(_render_blocks(c, "html") for c in group)
-        html = _collapse_blank_runs(fit_html_text(
-            body_html, header=part_head_html,
-            footer=f"\n\n{footer_html}" if last and footer_html else ""))
-        body_plain = "\n\n".join(_render_blocks(c, "plain") for c in group)
-        plain_sections = [s for s in (part_head_plain + body_plain if body_plain
-                                      else part_head_plain.rstrip("\n"),) if s]
-        plain = "\n".join(plain_sections)
-        if last and footer_plain:
-            plain = f"{plain}\n\n{footer_plain}" if plain else footer_plain
-        out.append(Notification(html=html, plain=truncate_utf16(plain, MAX_TEXT_LENGTH)))
-    return out
+    return max(budget, _SPLIT_TAG_SLACK * 4)
+
+
+def _assemble_part(group: list, index: int, total: int, truncated: bool,
+                   head_html: str, head_plain: str,
+                   footer_html: str, footer_plain: str) -> Notification:
+    last = index == total
+    marker = f"{index}/{total}"
+    part_head_html = f"{head_html}{marker}\n"
+    part_head_plain = f"{head_plain}{marker}\n"
+    if last and truncated:
+        # The banner lives in the `header` argument so fit-shrink can only
+        # eat body text, never the marker or the truncation notice.
+        part_head_html += f"{_TRUNCATION_BANNER}\n"
+        part_head_plain += f"{_TRUNCATION_BANNER}\n"
+    body_html = "\n\n".join(_render_blocks(c, "html") for c in group)
+    html = _collapse_blank_runs(fit_html_text(
+        body_html, header=part_head_html,
+        footer=f"\n\n{footer_html}" if last and footer_html else ""))
+    body_plain = "\n\n".join(_render_blocks(c, "plain") for c in group)
+    plain_sections = [s for s in (part_head_plain + body_plain if body_plain
+                                  else part_head_plain.rstrip("\n"),) if s]
+    plain = "\n".join(plain_sections)
+    if last and footer_plain:
+        plain = f"{plain}\n\n{footer_plain}" if plain else footer_plain
+    return Notification(html=html, plain=truncate_utf16(plain, MAX_TEXT_LENGTH))
 
 
 def _pack_chunks(chunks: list, budget: int, max_parts: int) -> tuple:
