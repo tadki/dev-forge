@@ -24,6 +24,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilo
 import architecture_sweep as sweep
 
 
+@pytest.fixture(autouse=True)
+def _isolate_arch_patrol_state(tmp_path, monkeypatch):
+    # SEE-1593: check_gut_silent_skip consults the previous L1 report for
+    # no-input escalation — never let tests read the machine's real state.
+    monkeypatch.setattr(sweep, "REPORT_FILE", str(tmp_path / "last_report.json"))
+    monkeypatch.setattr(sweep, "BASELINE_FILE", str(tmp_path / "baseline.jsonl"))
+
+
 def _write(path, content):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -230,11 +238,15 @@ class TestDirDedupKey:
         assert any("tests/aidomain" in k for k in current_keys)
 
     def test_global_finding_key_unchanged(self, tmp_path):
-        # The global finding keeps its historical key so the baseline cleanup
+        # A report that exists but executed nothing is still a real silent
+        # skip (SEE-1593 only turns a *missing* report into GUT_UNVERIFIED),
+        # and it keeps the historical global key so the baseline cleanup
         # (SPEC-1476-3) targets exactly one stale key.
         repo = _make_multi_dir_repo(tmp_path)
+        _write(str(repo / "tests" / "reports" / "junit_report_1.0.xml"),
+               _junit_xml_with_dirs({}))
         findings, _ = sweep.check_gut_silent_skip(str(repo))
-        assert findings, "expected>0 with no junit must fire the global finding"
+        assert findings, "zero-execution junit must fire the global finding"
         key = sweep.dedup_key(
             findings[0]["file"], findings[0]["line"],
             findings[0]["rule_id"], findings[0]["severity"],

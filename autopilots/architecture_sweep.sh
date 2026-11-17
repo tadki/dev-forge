@@ -296,7 +296,98 @@ sweep_materialize() {
   fi
 }
 
+# SEE-1593 §SPEC-001 (route A2): L1 self-produced GUT junit.
+#
+# The GUT dimension used to read a junit borrowed from a sibling workspace
+# slot; the platform reclaims done-issue slots, so the source vanished and the
+# dimension went blind (SEE-1593). On an L1 round the patrol now runs a full
+# GUT pass in the checkout it is sweeping, so the junit shares the sweep's
+# HEAD and depends on nothing GC-volatile.
+#
+# Failure discipline: this is a best-effort input producer, never a gate.
+# Import failure, run failure, timeout and a missing report are each reported
+# explicitly on stderr, then the static sweep still runs — the Python layer
+# surfaces the missing input (GUT_UNVERIFIED, escalating on repetition) rather
+# than the wrapper swallowing the error or aborting the whole patrol.
+sweep_gut_timeout() {
+  local value="${1:-}" default="${2:-60}"
+  case "$value" in
+    ''|*[!0-9]*) printf '%s\n' "$default" ;;
+    *) printf '%s\n' "$value" ;;
+  esac
+}
+
+sweep_self_produce_junit() {
+  local run_l1=0
+  if [ -n "$L1_ARG" ] || [ "$(date -u +%u)" = "1" ]; then
+    run_l1=1
+  fi
+  [ "$run_l1" = "1" ] || return 0
+  [ -z "$DRY_RUN_ARG" ] || return 0
+  [ -z "$FAST_ARG" ] || return 0
+  [ "$KILL_SWITCH" != "true" ] || return 0
+  # Paused-file fuse is the canonical machine-level stop (kill_switch.py);
+  # skip the write-side GUT batch when it is present.
+  if [ -e "${DEV_FORGE_PAUSED_FILE:-$HOME/.multica/toolchain-reports/DISABLED}" ]; then
+    return 0
+  fi
+
+  local config_file="${ARCH_SWEEP_CONFIG:-$SCRIPT_DIR/configs/kol.json}"
+  local repo_name kol_repo
+  repo_name="$(sweep_config_value "repo_name" "$config_file")"
+  [ -n "$repo_name" ] || return 0
+  kol_repo="$(sweep_locate_repo "$repo_name" "$WORKSPACE_ROOT" "$CURRENT_HASH")" || return 0
+
+  local godot_bin="${GODOT:-godot}"
+  if ! command -v "$godot_bin" >/dev/null 2>&1; then
+    echo "[arch-sweep] ERROR: L1 GUT self-production skipped: godot binary not found (GODOT=$godot_bin); GUT dimension will be unverified this round" >&2
+    return 0
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "[arch-sweep] ERROR: L1 GUT self-production skipped: 'timeout' not found (timeout guard required); GUT dimension will be unverified this round" >&2
+    return 0
+  fi
+
+  local import_timeout run_timeout
+  import_timeout="$(sweep_gut_timeout "${ARCH_SWEEP_GUT_IMPORT_TIMEOUT_SECONDS:-}" 900)"
+  run_timeout="$(sweep_gut_timeout "${ARCH_SWEEP_GUT_TIMEOUT_SECONDS:-}" 3600)"
+
+  local log_dir="${MULTICA_HOME:-$HOME/.multica}/arch-patrol"
+  mkdir -p "$log_dir" 2>/dev/null || true
+  local log="$log_dir/gut-last-run.log"
+
+  echo "[arch-sweep] L1 GUT self-production: repo=$kol_repo import_timeout=${import_timeout}s run_timeout=${run_timeout}s log=$log" >&2
+
+  local rc=0
+  timeout -k 10 "$import_timeout" "$godot_bin" --headless --path "$kol_repo" --import >"$log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "[arch-sweep] ERROR: L1 GUT import failed (rc=$rc) in $kol_repo; continuing static sweep without a self-produced junit (log: $log)" >&2
+    return 0
+  fi
+
+  rc=0
+  # run_tests.sh cds to the repo root, so run it from anywhere with GODOT set.
+  GODOT="$godot_bin" timeout -k 10 "$run_timeout" bash "$kol_repo/tests/run_tests.sh" --all >>"$log" 2>&1 || rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "[arch-sweep] ERROR: L1 GUT run timed out after ${run_timeout}s in $kol_repo; continuing static sweep (log: $log)" >&2
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "[arch-sweep] ERROR: L1 GUT run failed (rc=$rc) in $kol_repo; continuing static sweep (log: $log)" >&2
+    return 0
+  fi
+
+  local junit="$kol_repo/tests/reports/junit_report.xml"
+  if [ -f "$junit" ]; then
+    echo "[arch-sweep] L1 GUT junit produced: $junit" >&2
+  else
+    echo "[arch-sweep] ERROR: L1 GUT run exited 0 but produced no junit at $junit; GUT dimension will be unverified this round (log: $log)" >&2
+  fi
+  return 0
+}
+
 sweep_materialize || exit 1
+sweep_self_produce_junit
 
 # D8: omit --workspace-root / --current-hash when unknown so the python script
 # auto-detects them instead of receiving an empty override.

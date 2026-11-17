@@ -196,6 +196,13 @@ JUNIT_STABLE_PATH = ""
 # while still catching a partial run that executes far fewer tests.
 GUT_PARTIAL_RUN_TOLERANCE = 0.95
 
+# SEE-1593 §SPEC-002/§SPEC-004: a missing junit is "unverified", not a product
+# signal. On the Nth consecutive L1 round without input the warn-level
+# GUT_UNVERIFIED finding escalates to error, so a channel that stays blind
+# cannot remain quiet behind a single warn (SEE-1128). The rule_id is stable
+# across the severity change; only the dedup severity segment differs.
+GUT_UNVERIFIED_ESCALATE_STREAK = 2
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
@@ -1501,7 +1508,10 @@ def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
         if os.path.isfile(cand):
             junit_path = cand  # local candidates only; glob order is fine
 
-    junit_source_slot = "local"
+    # SEE-1593 §SPEC-003: report "none" when nothing resolved — the old
+    # unconditional "local" label claimed a local report had been read even
+    # when there was none, making the metrics untrustworthy.
+    junit_source_slot = "local" if junit_path else "none"
     if not junit_path and workspace_root and os.path.isdir(workspace_root):
         # S1: clean checkout fallback — best junit across sibling slots,
         # preferring the most recent plausibly-full run (mtime-newest within
@@ -1545,28 +1555,82 @@ def _read_junit_actuals(junit_path: str, expected_by_dir: dict) -> tuple:
 
 
 def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
-                              expected_by_dir: dict, actual_by_dir: dict) -> list[dict]:
+                              expected_by_dir: dict, actual_by_dir: dict,
+                              junit_source: str = "none",
+                              unverified_streak: int = 1) -> list[dict]:
+    """Build GUT findings, separating "no input" from "genuinely skipped".
+
+    SEE-1593 §SPEC-002: `expected > 0` with no junit at all means the patrol
+    received no input this round — reported as ``GUT_UNVERIFIED`` (warn),
+    explicitly "input missing, not a product signal". Only a junit that exists
+    but shows zero execution, a global count below tolerance, or a whole/short
+    directory is a real D1 silent skip (``GUT_SILENT_SKIP:error``, dedup keys
+    unchanged).
+
+    A configured-but-missing/stale stable source is exempt from the warn
+    downgrade: ``_resolve_junit_source`` already logged the broken operator
+    designation and returns ``stable:<path>``, and the SEE-1499 fail-loud
+    contract is not relaxed by this split.
+
+    SEE-1593 §SPEC-004: when no input repeats (streak >=
+    GUT_UNVERIFIED_ESCALATE_STREAK) the same GUT_UNVERIFIED finding escalates
+    to error and names the streak.
+    """
     findings = []
-    # D2: trigger when (a) expected>0 but no junit report exists, or
-    # (b) expected>0 and actual==0 (report present but nothing executed), or
-    # (c) expected>0 and actual below expected beyond the S1 tolerance
-    # (same-unit partial-run detection).
-    partial = actual < int(expected * GUT_PARTIAL_RUN_TOLERANCE)
-    if expected > 0 and (not junit_path or actual == 0 or partial):
-        detail = (
-            "no junit report found"
-            if not junit_path
-            else f"junit reports {actual} executed"
-        )
-        findings.append(
-            {
-                "rule_id": "GUT_SILENT_SKIP",
-                "severity": SEVERITY_ERROR,
-                "file": ".gutconfig.json",
-                "line": 0,
-                "message": f"GUT silent skip: expected {expected} tests, {detail}",
-            }
-        )
+    if expected > 0 and not junit_path:
+        if junit_source.startswith("stable:"):
+            findings.append(
+                {
+                    "rule_id": "GUT_SILENT_SKIP",
+                    "severity": SEVERITY_ERROR,
+                    "file": ".gutconfig.json",
+                    "line": 0,
+                    "message": (
+                        f"GUT silent skip: expected {expected} tests, "
+                        f"configured stable junit source unavailable "
+                        f"({junit_source})"
+                    ),
+                }
+            )
+        else:
+            escalated = unverified_streak >= GUT_UNVERIFIED_ESCALATE_STREAK
+            streak_detail = (
+                f"escalated after {unverified_streak} consecutive unverified "
+                f"L1 rounds"
+                if escalated
+                else f"consecutive unverified L1 rounds: {unverified_streak}"
+            )
+            findings.append(
+                {
+                    "rule_id": "GUT_UNVERIFIED",
+                    "severity": SEVERITY_ERROR if escalated else SEVERITY_WARN,
+                    "file": ".gutconfig.json",
+                    "line": 0,
+                    "message": (
+                        f"GUT unverified: expected {expected} tests, no junit "
+                        f"input this round (input missing — not a product "
+                        f"signal); {streak_detail}"
+                    ),
+                }
+            )
+
+    # (b) junit present but actual==0, or (c) global count below the S1
+    # tolerance: a real silent skip. D1 semantics and dedup key unchanged.
+    if junit_path:
+        partial = actual < int(expected * GUT_PARTIAL_RUN_TOLERANCE)
+        if expected > 0 and (actual == 0 or partial):
+            findings.append(
+                {
+                    "rule_id": "GUT_SILENT_SKIP",
+                    "severity": SEVERITY_ERROR,
+                    "file": ".gutconfig.json",
+                    "line": 0,
+                    "message": (
+                        f"GUT silent skip: expected {expected} tests, "
+                        f"junit reports {actual} executed"
+                    ),
+                }
+            )
 
     # D1 (SEE-1226): per-directory validation. A passing global total can hide
     # a whole configured dir that never ran (e.g. aidomain missing from the
@@ -1616,6 +1680,51 @@ def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
     return findings
 
 
+def _gut_state_from_metrics(metrics: dict) -> tuple:
+    verified = bool(metrics.get("gut_verified"))
+    streak = metrics.get("gut_unverified_streak", 0)
+    if not isinstance(streak, int) or streak < 0:
+        streak = 0
+    return True, verified, streak
+
+
+def _read_previous_l1_gut_state() -> tuple:
+    """(had_prior_l1, verified, streak) from the most recent L1 round.
+
+    ``last_report.json`` is overwritten by EVERY run, so it only carries an L1
+    state when the immediately-previous run was itself L1; the daily L0 runs
+    in between hold no ``gut_verified`` key. In that case the append-only
+    baseline ledger is consulted newest-first for the last record that does —
+    i.e. the previous L1 round across intervening L0 days. Read-only, so a
+    ``--dry-run`` never writes state (SEE-1593 §SPEC-004).
+    """
+    try:
+        with open(REPORT_FILE, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        report_metrics = (report.get("summary") or {}).get("metrics") or {}
+        if "gut_verified" in report_metrics:
+            return _gut_state_from_metrics(report_metrics)
+    except (OSError, ValueError):
+        pass
+    for rec in reversed(read_jsonl(BASELINE_FILE)):
+        metrics = rec.get("metrics", {})
+        if isinstance(metrics, dict) and "gut_verified" in metrics:
+            return _gut_state_from_metrics(metrics)
+    return False, None, 0
+
+
+def _gut_unverified_streak(verified: bool) -> int:
+    """Consecutive-L1-no-input counter (SEE-1593 §SPEC-004)."""
+    if verified:
+        return 0
+    had_prior, prev_verified, prev_streak = _read_previous_l1_gut_state()
+    if had_prior and not prev_verified:
+        # `max(..., 1)` counts a pre-feature unverified record (no streak key)
+        # as already one round, so the second consecutive no-input escalates.
+        return max(prev_streak, 1) + 1
+    return 1
+
+
 def check_gut_silent_skip(repo_root: str, workspace_root: str = "",
                           junit_stable_path: str = "") -> tuple:
     """Compare .gutconfig.json expected test count vs junit actual count.
@@ -1623,8 +1732,11 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "",
     D2: the junit path is read from the `junit_xml_file` config key (falling
     back to tests/reports/junit_report.xml), and `junit_xml_timestamp: true`
     produces `junit_report_<ts>.xml` files — resolved via glob on the base
-    stem. A missing junit report OR a report with actual==0 (nothing executed)
-    is itself a silent-skip signal and triggers a finding.
+    stem. SEE-1593 splits the old single "no junit" signal: a *missing* report
+    is an input-availability problem (``GUT_UNVERIFIED``, warn, escalating to
+    error on repeated L1 rounds); only a report that exists while showing
+    actual==0 or a below-tolerance count is a real silent skip
+    (``GUT_SILENT_SKIP``, error).
 
     S1 (SEE-1226): the sweep runs in a clean checkout slot whose
     tests/reports/ is empty by construction, so when no local report exists
@@ -1659,10 +1771,18 @@ def check_gut_silent_skip(repo_root: str, workspace_root: str = "",
     )
     actual, actual_by_dir, junit_mtime = _read_junit_actuals(junit_path, expected_by_dir)
 
+    verified = bool(junit_path and actual > 0)
+    streak = _gut_unverified_streak(verified)
+
     metrics["junit_source"] = junit_source_slot
     metrics["junit_mtime"] = junit_mtime
+    # §SPEC-003: gut_verified is only ever written by an L1 GUT round (this
+    # function is called exclusively from _run_l1_checks), never by L0.
+    metrics["gut_verified"] = verified
+    metrics["gut_unverified_streak"] = streak
     findings = _gut_silent_skip_findings(
-        expected, junit_path, actual, expected_by_dir, actual_by_dir
+        expected, junit_path, actual, expected_by_dir, actual_by_dir,
+        junit_source=junit_source_slot, unverified_streak=streak,
     )
 
     metrics["expected_tests"] = expected
