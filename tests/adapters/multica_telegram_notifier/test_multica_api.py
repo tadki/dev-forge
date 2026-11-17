@@ -829,6 +829,24 @@ class TestPostComment:
         finally:
             server.close()
 
+    def test_http_failure_severs_exception_context(self):
+        # `from None` must sever the original exception's cause chain: the
+        # HTTPError carries the token-bearing URL, and a renderer that prints
+        # an explicit __cause__ would expose that URL (and the PAT) even
+        # though __suppress_context__ hides the implicit context — Python sets
+        # __suppress_context__ True for BOTH `from None` and `from exc`, so
+        # `__cause__ is None` is the discriminating assertion.
+        server = FakeMulticaAPI(comment_status=500,
+                                comment_body={"error": "boom"})
+        try:
+            resolver = _resolver(server)
+            with pytest.raises(MulticaApiError) as exc:
+                resolver.post_comment(ISSUE_ID, COMMENT_ID, "text")
+            assert exc.value.__cause__ is None
+            assert exc.value.__suppress_context__ is True
+        finally:
+            server.close()
+
     def test_invalid_json_body_raises_safe_error(self):
         server = FakeMulticaAPI(comment_raw=b"{not json")
         try:
