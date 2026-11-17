@@ -19,6 +19,9 @@ DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_READ_TIMEOUT = 90.0
 # Bounded metadata lookups (agent/issue names) must never stall delivery.
 DEFAULT_QUERY_TIMEOUT = 5.0
+# Ceiling on the number of messages one oversized notification may be split
+# into (§SPEC-003): bounds the burst a single inbox item can produce.
+DEFAULT_MAX_PARTS = 10
 
 REQUIRED_KEYS = (
     "NOTIFIER_MULTICA_PAT",
@@ -52,6 +55,11 @@ class Config:
     # unset, which disables deep links entirely; the API/WS origin is never
     # used as a fallback because the deployments differ (QA H1).
     web_base_url: str
+    # Multi-part split ceiling (§SPEC-003) and the inbound reply-sync switch
+    # (§SPEC-008, default on — a Telegram reply under a delivered message is
+    # synced back as a Multica comment).
+    max_parts: int
+    reply_sync: bool
 
 
 def parse_env_text(text: str) -> dict:
@@ -115,6 +123,18 @@ def _parse_positive_int(raw: str, key: str) -> int:
     return value
 
 
+def _parse_bool_flag(raw: str, key: str) -> bool:
+    # Deliberately no truthy-guessing: "off"/"yes"/"2" spell a typo'd intent,
+    # and silently enabling or disabling the reply loop on a guess would be
+    # worse than refusing to start (fail-loud config discipline).
+    lowered = raw.strip().lower()
+    if lowered in ("0", "false"):
+        return False
+    if lowered in ("1", "true"):
+        return True
+    raise ConfigError(f"{key} must be 0/false or 1/true, got: {raw!r}")
+
+
 def load_config(env: Mapping) -> Config:
     def required(key: str) -> str:
         value = env.get(key)
@@ -160,6 +180,10 @@ def load_config(env: Mapping) -> Config:
             optional("NOTIFIER_QUERY_TIMEOUT", str(DEFAULT_QUERY_TIMEOUT)),
             "NOTIFIER_QUERY_TIMEOUT"),
         web_base_url=optional("NOTIFIER_WEB_BASE_URL", "").rstrip("/"),
+        max_parts=_parse_positive_int(
+            optional("NOTIFIER_MAX_PARTS", str(DEFAULT_MAX_PARTS)), "NOTIFIER_MAX_PARTS"),
+        reply_sync=_parse_bool_flag(
+            optional("NOTIFIER_REPLY_SYNC", "1"), "NOTIFIER_REPLY_SYNC"),
     )
 
 

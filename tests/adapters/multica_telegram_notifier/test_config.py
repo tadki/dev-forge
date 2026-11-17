@@ -289,3 +289,56 @@ class TestWebBaseConfig:
         # must stay green so notifications keep flowing unlinked.
         cfg = load_config(dict(self.BASE_ENV, NOTIFIER_WEB_BASE_URL="not a url"))
         assert cfg.web_base_url == "not a url"
+
+
+class TestMaxPartsConfig:
+    """§SPEC-003: the multi-part split ceiling. An illegal value must fail
+    loudly — silently falling back to 1 part would re-introduce the content
+    loss this knob exists to bound."""
+
+    def test_default_is_10(self):
+        cfg = load_config(REQUIRED)
+        assert cfg.max_parts == 10
+
+    def test_override_positive_int(self):
+        cfg = load_config(dict(REQUIRED, NOTIFIER_MAX_PARTS="3"))
+        assert cfg.max_parts == 3
+
+    @pytest.mark.parametrize("raw", ["0", "-2", "abc", "1.5"])
+    def test_illegal_value_fails_loudly_naming_key(self, raw):
+        env = dict(REQUIRED, NOTIFIER_MAX_PARTS=raw)
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert "NOTIFIER_MAX_PARTS" in str(exc.value)
+
+    def test_blank_value_treated_as_unset(self):
+        # Blank means "not set" everywhere else in this file (see
+        # TestWebBaseConfig); the split ceiling follows the same convention.
+        assert load_config(dict(REQUIRED, NOTIFIER_MAX_PARTS="  ")).max_parts == 10
+
+
+class TestReplySyncConfig:
+    """§SPEC-008: the inbound reply-sync switch. Default on; only the exact
+    off spellings disable it; anything else fails loudly rather than being
+    guessed (a typo'd "off " silently enabling the loop would fight the
+    getUpdates exclusivity contract)."""
+
+    def test_default_enabled(self):
+        assert load_config(REQUIRED).reply_sync is True
+
+    @pytest.mark.parametrize("raw", ["0", "false", "False", "FALSE"])
+    def test_off_spellings_disable(self, raw):
+        cfg = load_config(dict(REQUIRED, NOTIFIER_REPLY_SYNC=raw))
+        assert cfg.reply_sync is False
+
+    @pytest.mark.parametrize("raw", ["1", "true", "True", "TRUE"])
+    def test_on_spellings_enable(self, raw):
+        cfg = load_config(dict(REQUIRED, NOTIFIER_REPLY_SYNC=raw))
+        assert cfg.reply_sync is True
+
+    @pytest.mark.parametrize("raw", ["off", "yes", "no", "2", " enable"])
+    def test_unknown_value_fails_loudly_naming_key(self, raw):
+        env = dict(REQUIRED, NOTIFIER_REPLY_SYNC=raw)
+        with pytest.raises(ConfigError) as exc:
+            load_config(env)
+        assert "NOTIFIER_REPLY_SYNC" in str(exc.value)
