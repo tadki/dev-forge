@@ -23,9 +23,13 @@ if __name__ == "__main__" and _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from multica_telegram_notifier.config import Config, ConfigError, load_config_file, ws_url
-from multica_telegram_notifier.formatting import render_notification, utf16_len
+from multica_telegram_notifier.formatting import render_notification_parts, utf16_len
 from multica_telegram_notifier.jsonlog import JsonLogger
-from multica_telegram_notifier.multica_api import MetadataResolver
+from multica_telegram_notifier.multica_api import (
+    MetadataResolver,
+    MulticaApiError,
+    looks_like_uuid,
+)
 from multica_telegram_notifier.protocol import (
     EVENT_INBOX_NEW,
     auth_error_message,
@@ -43,6 +47,7 @@ from multica_telegram_notifier.telegram import (
     MAX_TEXT_LENGTH,
     TelegramClient,
     TelegramError,
+    is_get_updates_conflict,
     is_parse_entity_error,
     truncate_utf16,
 )
@@ -55,6 +60,12 @@ EXIT_AUTH_REJECTED = 4
 EXIT_CHANNEL_FAILED = 5
 EXIT_DELIVERY_FAILED = 6
 EXIT_INTERRUPTED = 130
+
+# Inbound reply-sync loop (§SPEC-004): long-poll seconds handed to Telegram;
+# the fake-friendly client-side pauses only apply after failed/empty polls.
+REPLY_POLL_TIMEOUT_SECONDS = 25
+REPLY_POLL_ERROR_SLEEP = 1.0
+REPLY_IDLE_SLEEP = 0.05
 
 
 class SessionError(Exception):
@@ -91,6 +102,107 @@ def build_resolver(config: Config) -> MetadataResolver:
         timeout=config.query_timeout, web_base=config.web_base_url)
 
 
+class ReplyReceiver:
+    """Inbound reply-sync loop (§SPEC-004/006/007): long-polls getUpdates on
+    its own thread and syncs Telegram replies — to messages this notifier
+    delivered — back to Multica as comments under the original comment.
+
+    Filters, in order: only the configured chat (D-1's inbound twin — any
+    other chat is a leak surface, not a feature), only private chats, only
+    replies, only replies whose reply_to_message_id is in the persisted
+    mapping. A 409 getUpdates conflict (another consumer on the same bot
+    token) disables inbound only — outbound delivery is untouched.
+    """
+
+    def __init__(self, config, logger, telegram, state, resolver,
+                 sleep=time.sleep, stop_event: threading.Event = None,
+                 poll_timeout=REPLY_POLL_TIMEOUT_SECONDS,
+                 error_sleep=REPLY_POLL_ERROR_SLEEP,
+                 idle_sleep=REPLY_IDLE_SLEEP):
+        self.config = config
+        self.logger = logger
+        self.telegram = telegram
+        self.state = state
+        self.resolver = resolver
+        self.sleep = sleep
+        self.stop_event = stop_event
+        self.poll_timeout = poll_timeout
+        self.error_sleep = error_sleep
+        self.idle_sleep = idle_sleep
+        self.disabled = False
+
+    def run(self) -> None:
+        while not self._stopped() and not self.disabled:
+            self.poll_once()
+
+    def poll_once(self) -> None:
+        try:
+            updates = self.telegram.get_updates(
+                self.state.offset or None, timeout=self.poll_timeout,
+                allowed_updates=["message"])
+        except TelegramError as exc:
+            if is_get_updates_conflict(exc):
+                self.disabled = True
+                self.logger.warning("reply_sync_conflict_disabled", error=str(exc))
+            else:
+                self.logger.warning("reply_sync_poll_failed", error=str(exc))
+                self.sleep(self.error_sleep)
+            return
+        for update in updates:
+            self._process_update(update)
+            update_id = update.get("update_id") if isinstance(update, dict) else None
+            if isinstance(update_id, int):
+                self.state.advance_offset(update_id + 1)
+        if not updates and not self._stopped() and self.idle_sleep:
+            # Real Telegram long-polls server-side; this only keeps the loop
+            # honest against fakes/proxies that answer instantly.
+            self.sleep(self.idle_sleep)
+
+    def _process_update(self, update) -> None:
+        if not isinstance(update, dict):
+            return
+        message = update.get("message")
+        if not isinstance(message, dict):
+            return
+        chat = message.get("chat")
+        if not isinstance(chat, dict):
+            return
+        if chat.get("id") != self.config.telegram_chat_id or chat.get("type") != "private":
+            self.logger.debug("reply_other_chat_ignored")
+            return
+        reply_to = message.get("reply_to_message")
+        reply_message_id = (reply_to.get("message_id")
+                            if isinstance(reply_to, dict) else None)
+        if not isinstance(reply_message_id, int):
+            self.logger.debug("reply_non_reply_ignored")
+            return
+        target = self.state.lookup_reply(reply_message_id)
+        if target is None:
+            # Not our delivery (or its mapping aged out of the FIFO ring):
+            # the reply cannot be attributed, so it is never posted.
+            self.logger.debug("reply_without_mapping_ignored",
+                              reply_to_message_id=reply_message_id)
+            return
+        text = message.get("text")
+        if not (isinstance(text, str) and text.strip()):
+            self.logger.debug("reply_empty_text_ignored")
+            return
+        issue_id, comment_id = target
+        try:
+            created = self.resolver.post_comment(issue_id, comment_id, text)
+        except MulticaApiError as exc:
+            # Safe error (no token/URL): log and keep looping; the offset
+            # still advances so one broken update cannot wedge the queue.
+            self.logger.error("comment_sync_failed", issue_id=issue_id,
+                              parent_comment_id=comment_id, error=str(exc))
+            return
+        self.logger.info("comment_synced", issue_id=issue_id,
+                         parent_comment_id=comment_id, comment_id=created)
+
+    def _stopped(self) -> bool:
+        return self.stop_event is not None and self.stop_event.is_set()
+
+
 class Notifier:
     def __init__(self, config, logger, telegram, state, ws_factory,
                  sleep=time.sleep, stop_event: threading.Event = None, once: bool = False,
@@ -114,6 +226,7 @@ class Notifier:
         self._total_failures = 0
 
     def run(self) -> int:
+        self._start_reply_receiver()
         attempt = 0
         while not self._stopped():
             delivered = False
@@ -145,6 +258,22 @@ class Notifier:
             attempt += 1
         self.logger.info("stopped")
         return EXIT_STOPPED
+
+    def _start_reply_receiver(self) -> None:
+        # §SPEC-004/008: the inbound loop is a steady-mode-only side thread;
+        # --once is a bounded live probe and must never poll getUpdates.
+        if not self.config.reply_sync or self.once:
+            return
+        if self.resolver is None:
+            self.logger.warning("reply_sync_unavailable", reason="no resolver")
+            return
+        receiver = ReplyReceiver(self.config, self.logger, self.telegram,
+                                 self.state, self.resolver,
+                                 stop_event=self.stop_event)
+        thread = threading.Thread(target=receiver.run, name="reply-sync",
+                                  daemon=True)
+        thread.start()
+        self.logger.info("reply_sync_started")
 
     def _session_failure_exit(self, exc: Exception) -> int | None:
         """Counts a session outcome toward the --once bounds; returns the exit
@@ -264,9 +393,16 @@ class Notifier:
         if self.state.is_seen(item_id):
             self.logger.debug("duplicate_skipped", item_id=item_id)
             return False
-        note = render_notification(item, self.resolver)
+        parts = render_notification_parts(item, self.resolver,
+                                          max_parts=self.config.max_parts)
+        sends = []
+        message_ids = []
         try:
-            result, sent_text, sent_mode = self._send_notification(note.html, note.plain)
+            for part in parts:
+                result, sent_text, sent_mode = self._send_notification(
+                    part.html, part.plain)
+                sends.append((result, sent_text, sent_mode))
+                message_ids.append(result.get("message_id"))
         except TelegramError as exc:
             if exc.retryable or exc.is_channel_error:
                 # Transient or channel-level failure: the item stays pending
@@ -280,16 +416,42 @@ class Notifier:
             self.logger.error("delivery_failed_permanent", item_id=item_id, error=str(exc))
             return False
         self.state.mark_seen(item_id)
-        # §SPEC-007 evidence: record the exact outbound payload (already
-        # surrogate-safe and ≤4096 UTF-16 units) so a real probe can verify
-        # the readable header, table cards and the no-bare-UUID guarantee
-        # straight from the JSONL log; values still pass the Redactor.
-        self.logger.info(
-            "delivered", item_id=item_id, message_id=result.get("message_id"),
-            inbox_type=str(item.get("type")), title=str(item.get("title")),
-            parse_mode=sent_mode, text_units=utf16_len(sent_text),
-            outbound_text=sent_text)
+        self._record_reply_mapping(item, message_ids)
+        # §SPEC-007 evidence per part: each delivered event records the exact
+        # outbound payload of its own message (surrogate-safe, ≤4096 UTF-16
+        # units) so a real probe can verify readability and the no-bare-UUID
+        # guarantee straight from the JSONL log; values still pass the Redactor.
+        total = len(sends)
+        for index, (result, sent_text, sent_mode) in enumerate(sends, 1):
+            self.logger.info(
+                "delivered", item_id=item_id, message_id=result.get("message_id"),
+                part=index, part_count=total,
+                inbox_type=str(item.get("type")), title=str(item.get("title")),
+                parse_mode=sent_mode, text_units=utf16_len(sent_text),
+                outbound_text=sent_text)
         return self.once
+
+    @staticmethod
+    def _reply_target(item: dict):
+        """(issue_id, comment_id) when both are canonical UUIDs (§SPEC-005) —
+        anything else can never be attributed to a comment, so no mapping is
+        written (the post_comment gates would refuse it anyway)."""
+        details = item.get("details")
+        comment_id = details.get("comment_id") if isinstance(details, dict) else None
+        issue_id = item.get("issue_id")
+        if (isinstance(issue_id, str) and looks_like_uuid(issue_id)
+                and isinstance(comment_id, str) and looks_like_uuid(comment_id)):
+            return issue_id, comment_id
+        return None
+
+    def _record_reply_mapping(self, item: dict, message_ids: list) -> None:
+        target = self._reply_target(item)
+        if target is None:
+            return
+        issue_id, comment_id = target
+        for message_id in message_ids:
+            if isinstance(message_id, int):
+                self.state.record_reply(message_id, issue_id, comment_id)
 
     def _send_notification(self, html: str, plain: str) -> tuple:
         # FR-2: both payloads pass the same boundary truncation BEFORE the

@@ -44,11 +44,31 @@
 - **降级**：仅当 Telegram 明确返回 400「can't parse entities」时，才以无
   `parse_mode` 的纯文本重发一次；其余 400、stale chat、通道/可重试错误
   分类与 SEE-1561 完全一致，同一通知不会重复成功投递。
-- **长度**：按 Telegram 4096 UTF-16 单位上限先收缩源文本再渲染，永不切断
-  HTML 标签或实体，孤立代理字符一律清除；超长正文保留开头部分。
-- **取证**：`delivered` 日志事件记录实际出站 payload（`outbound_text`/
-  `parse_mode`/`text_units`），实机 probe 可直接从 JSONL 日志核验可读首部、
-  表格卡片与「无裸 UUID」；日志永不记录 PAT、bot token 或 chat ID 数值。
+- **长度与多段拆分（SEE-1598）**：内容（含固定首部/尾部）在 Telegram 的
+  4096 UTF-16 单位预算内时，按原口径先收缩源文本再渲染，永不切断 HTML 标签
+  或实体，孤立代理字符一律清除；超预算正文改为**拆成多条编号消息**：每段
+  ≤4096 UTF-16、保留原首部与分隔线、段标记 `i/N`（如 `1/3`）位于分隔线下
+  正文首行、footer 仅末段，各段正文按序可还原全部内容。拆分在源文本空行
+  边界进行（表格/代码块/列表不被切断；单块仍超预算时退到行/字符级硬拆），
+  段数达到 `NOTIFIER_MAX_PARTS`（默认 10）上限后，末段吸收剩余内容并带
+  显式截断标记。与旧版字节级兼容：能装进单条的内容输出与拆分前完全一致。
+- **取证**：`delivered` 日志事件按段记录实际出站 payload（`outbound_text`/
+  `parse_mode`/`text_units`/`part`/`part_count`），实机 probe 可直接从
+  JSONL 日志核验可读首部、表格卡片与「无裸 UUID」；日志永不记录 PAT、
+  bot token 或 chat ID 数值。
+- **回复回传（SEE-1598）**：长按某条 Bot 消息 reply 时，通知器通过
+  `getUpdates` 收到该回复，并在 reply 目标 message_id 命中持久映射
+  （多段投递成功后写入 state 文件的 message_id→issue/comment 映射）时，
+  以 PAT 调 `POST /api/issues/<issue uuid>/comments?workspace_id=…`
+  （body `{"content": <回复文本原样>, "parent_id": <原 comment uuid>}`）
+  在原 comment 下创建回复评论——即通过 Telegram 实现 Multica 的双向操作。
+  只受理配置 chat 的私聊 reply；非 reply、未命中映射、空文本一律忽略；
+  同步失败只记 `comment_sync_failed` 日志事件，不影响主循环与出站投递。
+  `--once` 探针模式不启动接收循环；`NOTIFIER_REPLY_SYNC=0` 可整体关闭。
+  **同 token 约束**：一个 bot token 只允许一个 `getUpdates` 消费者——若
+  以同一 token 重新启用 Multica 内建 Telegram 渠道，通知器会收到 409
+  冲突并记 `reply_sync_conflict_disabled` 事件、停用本进程回传（出站通知
+  不受影响）；停用内建渠道或换 token 后重启通知器即恢复。
 
 ## 工作原理
 
@@ -67,6 +87,11 @@
    不丢失，通道恢复（如重新 `/start`、换 token）后自动补投。
 5. 断线自动重连（指数退避），malformed 帧忽略，已投递通知持久化在本地状态文件，
    重启/重连不会重复发送。
+6. （SEE-1598）常驻模式下另有一条回传接收循环（独立线程，长轮询
+   `getUpdates`，仅订阅 `message`）：受理配置 chat 私聊中对已投递消息的
+   reply，命中持久映射后以 PAT 在原 comment 下创建回复评论；getUpdates
+   offset 持久化，重启不重处理；409 冲突（同 token 另有消费者）时停用
+   本进程回传，出站投递不受影响。`--once` 探针不启动该循环。
 
 ## 准备凭据（Owner 操作）
 
@@ -139,6 +164,8 @@ python3 adapters/multica_telegram_notifier/notifier.py \
 | `NOTIFIER_API_BASE` | 否 | 同 `NOTIFIER_MULTICA_SERVER_URL` | 元信息只读查询（Agent 显示名/issue 标识符）根地址 |
 | `NOTIFIER_QUERY_TIMEOUT` | 否 | `5` | 单次元信息查询超时秒数；失败自动降级，不阻断投递 |
 | `NOTIFIER_WEB_BASE_URL` | 否 | —（未设置则标题行无深链） | 深链 Web UI 根地址（http/https、≤512、字符集 `[A-Za-z0-9.:/_-]`）。注意与 API 地址区分：真实部署 Web UI 与 API/WS 端口不同。未设置或非法时标题行降级为非链接纯文本，绝不回退 API 地址；已部署环境启用深链需在 env 中补设此键（重启由 Owner 受控 rollout） |
+| `NOTIFIER_MAX_PARTS` | 否 | `10` | 超长通知拆分段数上限（正整数）；超出后末段截断并带显式截断标记 |
+| `NOTIFIER_REPLY_SYNC` | 否 | `1`（开启） | 回复回传开关；仅接受 `0`/`false` 关闭、`1`/`true` 开启，其他值启动即报错（fail-loud） |
 
 配置文件里已有的值优先于同名进程环境变量；进程环境变量再作为缺省回退。
 

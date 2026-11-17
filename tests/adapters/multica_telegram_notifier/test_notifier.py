@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from multica_telegram_notifier.config import load_config
+from multica_telegram_notifier.formatting import SEPARATOR
 from multica_telegram_notifier.jsonlog import JsonLogger
 from multica_telegram_notifier.notifier import (
     EXIT_AUTH_REJECTED,
@@ -24,6 +25,7 @@ from multica_telegram_notifier.notifier import (
     EXIT_OK,
     EXIT_STOPPED,
     Notifier,
+    ReplyReceiver,
     SessionError,
     build_components,
 )
@@ -1205,6 +1207,11 @@ class TestOutboundEvidenceExactness:
         return len(text.encode("utf-16-le", errors="ignore")) // 2
 
     def test_long_plain_fallback_evidence_matches_actual_payload(self, tmp_path, fake_telegram):
+        # SEE-1598 §SPEC-001: an oversized body now ships as numbered parts.
+        # The FIRST part hits the scripted parse-entity rejection and goes out
+        # as plain; later parts keep HTML. The exactness contract (FR-2) is
+        # per part: every delivered event's payload equals the bytes actually
+        # sent for that part.
         fake_telegram.responses = [
             (400, {"ok": False, "error_code": 400,
                    "description": "Bad Request: can't parse entities: Unsupported start tag"})]
@@ -1216,12 +1223,21 @@ class TestOutboundEvidenceExactness:
             _thread, result = run_in_thread(notifier)
             assert result.get("code") == EXIT_OK, result
             calls = send_calls(fake_telegram)
-            assert len(calls) == 2 and "parse_mode" not in calls[1][1]
-            sent_text = calls[1][1]["text"]
-            delivered = capture.events("delivered")[0]
-            assert delivered["outbound_text"] == sent_text
-            assert delivered["text_units"] == self._utf16_units(sent_text)
-            assert delivered["text_units"] <= 4096
+            delivered = capture.events("delivered")
+            assert len(delivered) >= 2
+            assert len(calls) == len(delivered) + 1  # one extra: the rejected HTML attempt
+            first_plain = delivered[0]
+            assert first_plain["part"] == 1 and first_plain["parse_mode"] is None
+            assert "1/" in calls[1][1]["text"].split("\n")[2]
+            assert first_plain["outbound_text"] == calls[1][1]["text"]
+            assert first_plain["text_units"] == self._utf16_units(calls[1][1]["text"])
+            assert first_plain["text_units"] <= 4096
+            assert "<b>" not in first_plain["outbound_text"]
+            for event, call in zip(delivered[1:], calls[2:]):
+                assert event["parse_mode"] == "HTML"
+                assert event["outbound_text"] == call[1]["text"]
+                assert event["text_units"] == self._utf16_units(call[1]["text"])
+                assert event["text_units"] <= 4096
         finally:
             server.close()
 
@@ -1237,5 +1253,411 @@ class TestOutboundEvidenceExactness:
             assert delivered["outbound_text"] == sent_text
             assert delivered["text_units"] == self._utf16_units(sent_text)
             assert delivered["text_units"] <= 4096
+        finally:
+            server.close()
+
+
+def _utf16(text):
+    return len(text.encode("utf-16-le", errors="ignore")) // 2
+
+
+def _oversized_body(chunks=24, size=420):
+    return "\n\n".join(f"split-probe-{i:02d} " + "t" * size for i in range(chunks))
+
+
+def _ok_send(mid):
+    return (200, {"ok": True, "result": {"message_id": mid}})
+
+
+class TestMultiPartDelivery:
+    """§SPEC-002: over-budget items go out as ordered numbered parts; the
+    at-least-once / quarantine semantics apply to the item as a whole; each
+    part records its own delivered evidence."""
+
+    def test_oversized_item_delivers_ordered_numbered_parts(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [_ok_send(100 + i) for i in range(1, 7)]
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "body": _oversized_body()})), ("sleep", 5)])
+        try:
+            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            calls = send_calls(fake_telegram)
+            n = len(calls)
+            assert n >= 2
+            texts = [c[1]["text"] for c in calls]
+            for idx, text in enumerate(texts, 1):
+                lines = text.split("\n")
+                assert lines[1] == SEPARATOR
+                assert lines[2] == f"{idx}/{n}"
+            # Footer only on the last part (footer carries the inbox kind).
+            assert all("issue_assigned" not in t for t in texts[:-1])
+            assert "issue_assigned" in texts[-1]
+            delivered = capture.events("delivered")
+            assert len(delivered) == n
+            assert [e["message_id"] for e in delivered] == [100 + i for i in range(1, n + 1)]
+            assert [e["part"] for e in delivered] == list(range(1, n + 1))
+            assert all(e["part_count"] == n for e in delivered)
+            # Evidence exactness per part: logged payload == bytes actually sent.
+            for i, event in enumerate(delivered):
+                assert event["outbound_text"] == texts[i]
+                assert event["text_units"] == _utf16(texts[i])
+                assert event["text_units"] <= 4096
+        finally:
+            server.close()
+
+    def test_retryable_failure_midway_keeps_item_pending(self, tmp_path, fake_telegram):
+        # Part 1 succeeds, part 2 fails retryably until the once-bound fires:
+        # the item stays pending (never quarantined) and a fresh session
+        # re-sends the whole item starting from part 1 (at-least-once).
+        fake_telegram.responses = [_ok_send(101)] + [
+            (500, {"ok": False, "description": "boom"})] * 30
+        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
+            "body": _oversized_body()})), ("sleep", 5)])
+        try:
+            notifier, cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_DELIVERY_FAILED, result
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert not state.is_seen("item-1")
+            assert capture.events("delivered") == []
+            texts = [c[1]["text"] for c in send_calls(fake_telegram)]
+            first_markers = [t.split("\n")[2] for t in texts]
+            assert first_markers.count("1/2") + first_markers.count("1/3") \
+                + first_markers.count("1/4") >= 2, "redelivery must restart from part 1"
+        finally:
+            server.close()
+
+    def test_permanent_rejection_midway_quarantines_item(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [
+            _ok_send(101),
+            (400, {"ok": False, "error_code": 400, "description": "Bad Request: rejected part"}),
+        ]
+        server = FakeMulticaWS(script=[
+            ("text", make_inbox_frame(item_id="bad-oversized", item_overrides={
+                "body": _oversized_body()})),
+            ("text", make_inbox_frame(item_id="good-item")),
+            ("sleep", 5),
+        ])
+        try:
+            notifier, cfg, capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.is_seen("bad-oversized")
+            assert state.is_seen("good-item")
+            assert len(capture.events("delivery_failed_permanent")) == 1
+            # Sends ever: part 1 (ok), part 2 (rejected), then the good item
+            # — the quarantined oversized item is never re-attempted.
+            calls = send_calls(fake_telegram)
+            assert len(calls) == 3
+            assert "split-probe-00" in calls[0][1]["text"]
+            assert "Atlas 分配了 code 任务" in calls[2][1]["text"]
+        finally:
+            server.close()
+
+
+class TestReplyMappingOnDelivery:
+    """§SPEC-005: delivered message ids land in the persistent reply mapping
+    so a Telegram reply can be attributed to its source comment."""
+
+    def _frame_with_comment(self, item_id="item-1", **overrides):
+        return make_inbox_frame(item_id=item_id, item_overrides={
+            "issue_id": UUID_ISSUE, "details": {"comment_id": COMMENT_UUID},
+            **overrides})
+
+    def test_single_part_delivery_writes_mapping(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("text", self._frame_with_comment()), ("sleep", 5)])
+        try:
+            notifier, cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.lookup_reply(4242) == (UUID_ISSUE, COMMENT_UUID)
+        finally:
+            server.close()
+
+    def test_multi_part_delivery_writes_all_part_ids(self, tmp_path, fake_telegram):
+        fake_telegram.responses = [_ok_send(100 + i) for i in range(1, 7)]
+        server = FakeMulticaWS(script=[("text", self._frame_with_comment(item_overrides={
+            "body": _oversized_body()})), ("sleep", 5)])
+        try:
+            notifier, cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            n = len(send_calls(fake_telegram))
+            state = DedupState(cfg.state_file)
+            state.load()
+            written = [mid for mid in range(101, 101 + n)
+                       if state.lookup_reply(mid) is not None]
+            assert written == list(range(101, 101 + n))
+            assert all(state.lookup_reply(mid) == (UUID_ISSUE, COMMENT_UUID)
+                       for mid in written)
+        finally:
+            server.close()
+
+    def test_delivery_without_comment_id_writes_no_mapping(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            notifier, cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            state = DedupState(cfg.state_file)
+            state.load()
+            assert state.replies == {}
+        finally:
+            server.close()
+
+
+def reply_update(update_id, reply_to, text="收到，已排期", chat_id=987654,
+                 chat_type="private", message_id=6000):
+    return {"update_id": update_id, "message": {
+        "message_id": message_id, "date": 1700000000,
+        "chat": {"id": chat_id, "type": chat_type, "first_name": "Jerry"},
+        "reply_to_message": {"message_id": reply_to,
+                             "chat": {"id": chat_id, "type": chat_type}},
+        "text": text}}
+
+
+class TestReplyReceiver:
+    """§SPEC-004/006/007: the getUpdates receive loop — chat/reply/mapping
+    filters, comment sync, failure logging and the 409 conflict degrade."""
+
+    def build_receiver(self, tmp_path, fake_telegram, api, stop_event=None):
+        dummy_ws = FakeMulticaWS()
+        try:
+            cfg = load_config(make_env(dummy_ws, fake_telegram, tmp_path, api=api))
+        finally:
+            dummy_ws.close()
+        capture = EventCapture()
+        logger = JsonLogger(Redactor([cfg.multica_pat, cfg.telegram_bot_token]),
+                            stream=capture)
+        from multica_telegram_notifier.telegram import TelegramClient
+        telegram_client = TelegramClient(
+            cfg.telegram_api_base, cfg.telegram_bot_token, timeout=cfg.connect_timeout)
+        state = DedupState(cfg.state_file)
+        state.load()
+        receiver = ReplyReceiver(cfg, logger, telegram_client, state,
+                                 build_resolver(cfg), stop_event=stop_event,
+                                 poll_timeout=0, error_sleep=0.001, idle_sleep=0)
+        return receiver, state, capture
+
+    def test_reply_to_mapped_message_creates_comment(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, capture = self.build_receiver(tmp_path, fake_telegram, api)
+            state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
+            fake_telegram.responses = [
+                (200, {"ok": True, "result": [reply_update(11, 4242)]})]
+            receiver.poll_once()
+            path, body = api.post_requests[0]
+            assert path == (f"/api/issues/{UUID_ISSUE}/comments"
+                            "?workspace_id=ws-target")
+            assert body == {"content": "收到，已排期",
+                            "parent_id": COMMENT_UUID}
+            auth, _ = api.post_auth_headers[0]
+            assert auth == "Bearer test-pat-value-0123456789"
+            synced = capture.events("comment_synced")
+            assert len(synced) == 1
+            assert synced[0]["issue_id"] == UUID_ISSUE
+            assert synced[0]["parent_comment_id"] == COMMENT_UUID
+            assert state.offset == 12
+        finally:
+            api.close()
+
+    def test_reply_from_other_chat_ignored(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, capture = self.build_receiver(tmp_path, fake_telegram, api)
+            state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
+            fake_telegram.responses = [
+                (200, {"ok": True, "result": [reply_update(11, 4242, chat_id=111)]})]
+            receiver.poll_once()
+            assert api.post_requests == []
+            assert capture.events("comment_synced") == []
+            assert state.offset == 12, "filtered updates still advance the offset"
+        finally:
+            api.close()
+
+    def test_group_chat_reply_ignored(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, _capture = self.build_receiver(tmp_path, fake_telegram, api)
+            state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
+            fake_telegram.responses = [
+                (200, {"ok": True,
+                       "result": [reply_update(11, 4242, chat_type="group")]})]
+            receiver.poll_once()
+            assert api.post_requests == []
+            assert state.offset == 12
+        finally:
+            api.close()
+
+    def test_non_reply_message_ignored(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, _capture = self.build_receiver(tmp_path, fake_telegram, api)
+            update = reply_update(11, 4242)
+            del update["message"]["reply_to_message"]
+            fake_telegram.responses = [(200, {"ok": True, "result": [update]})]
+            receiver.poll_once()
+            assert api.post_requests == []
+            assert state.offset == 12
+        finally:
+            api.close()
+
+    def test_unmapped_reply_ignored(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, capture = self.build_receiver(tmp_path, fake_telegram, api)
+            fake_telegram.responses = [
+                (200, {"ok": True, "result": [reply_update(11, 9999)]})]
+            receiver.poll_once()
+            assert api.post_requests == []
+            assert capture.events("comment_synced") == []
+            assert state.offset == 12
+        finally:
+            api.close()
+
+    def test_blank_text_reply_ignored(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, _capture = self.build_receiver(tmp_path, fake_telegram, api)
+            state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
+            fake_telegram.responses = [
+                (200, {"ok": True, "result": [reply_update(11, 4242, text="   ")]})]
+            receiver.poll_once()
+            assert api.post_requests == []
+            assert state.offset == 12
+        finally:
+            api.close()
+
+    def test_sync_failure_logged_and_offset_still_advances(self, tmp_path, fake_telegram):
+        # A failing sync must neither crash the loop nor wedge the queue: the
+        # safe error is logged, the offset advances past the poison update.
+        api = FakeMulticaAPI(comment_status=500, comment_body={"error": "boom"})
+        try:
+            receiver, state, capture = self.build_receiver(tmp_path, fake_telegram, api)
+            state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
+            fake_telegram.responses = [
+                (200, {"ok": True, "result": [reply_update(11, 4242)]})]
+            receiver.poll_once()
+            failed = capture.events("comment_sync_failed")
+            assert len(failed) == 1
+            assert "test-pat-value" not in failed[0]["error"]
+            assert state.offset == 12
+            assert receiver.disabled is False
+        finally:
+            api.close()
+
+    def test_conflict_disables_inbound_only(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, capture = self.build_receiver(tmp_path, fake_telegram, api)
+            state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
+            fake_telegram.responses = [
+                (409, {"ok": False, "error_code": 409,
+                       "description": "Conflict: terminated by other getUpdates request"})]
+            receiver.poll_once()
+            assert receiver.disabled is True
+            assert capture.events("reply_sync_conflict_disabled")
+            assert api.post_requests == []
+            # run() must now return instead of polling forever.
+            receiver.run()
+            assert len([p for p in fake_telegram.requests
+                        if p[0].endswith("/getUpdates")]) == 1
+        finally:
+            api.close()
+
+    def test_batch_of_updates_processed_in_order(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            receiver, state, capture = self.build_receiver(tmp_path, fake_telegram, api)
+            state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
+            state.record_reply(4243, UUID_ISSUE, COMMENT_UUID)
+            fake_telegram.responses = [
+                (200, {"ok": True, "result": [
+                    reply_update(21, 4242, text="第一条"),
+                    reply_update(22, 4243, message_id=6001),
+                ]})]
+            receiver.poll_once()
+            assert len(api.post_requests) == 2
+            assert api.post_requests[0][1]["content"] == "第一条"
+            assert api.post_requests[1][1]["content"] == "收到，已排期"
+            assert state.offset == 23
+            assert len(capture.events("comment_synced")) == 2
+        finally:
+            api.close()
+
+    def test_stopped_event_ends_run_loop(self, tmp_path, fake_telegram):
+        api = FakeMulticaAPI()
+        try:
+            stop = threading.Event()
+            receiver, _state, _capture = self.build_receiver(
+                tmp_path, fake_telegram, api, stop_event=stop)
+            stop.set()
+            receiver.run()  # must return immediately, not poll
+            assert fake_telegram.requests == []
+        finally:
+            api.close()
+
+
+class TestReplySyncWiring:
+    """The reply loop's lifecycle: never in --once mode; on in steady mode
+    unless NOTIFIER_REPLY_SYNC disables it."""
+
+    def _get_update_calls(self, telegram):
+        return [p for p in telegram.requests if p[0].endswith("/getUpdates")]
+
+    def test_once_mode_never_polls_getupdates(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("text", make_inbox_frame()), ("sleep", 5)])
+        try:
+            notifier, _cfg, _capture = build(tmp_path, server, fake_telegram)
+            _thread, result = run_in_thread(notifier)
+            assert result.get("code") == EXIT_OK, result
+            assert self._get_update_calls(fake_telegram) == []
+        finally:
+            server.close()
+
+    def test_steady_mode_starts_reply_loop(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("close",)])
+        try:
+            notifier, cfg, capture = build(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
+            notifier.resolver = build_resolver(cfg)
+            notifier.once = False
+            stop = threading.Event()
+            notifier.stop_event = stop
+            stopper = threading.Timer(2.0, stop.set)
+            stopper.start()
+            _thread, result = run_in_thread(notifier)
+            stopper.cancel()
+            assert result.get("code") == EXIT_STOPPED, result
+            assert len(self._get_update_calls(fake_telegram)) >= 1
+            assert capture.events("reply_sync_started")
+        finally:
+            server.close()
+
+    def test_reply_sync_off_starts_no_loop(self, tmp_path, fake_telegram):
+        server = FakeMulticaWS(script=[("close",)])
+        try:
+            notifier, _cfg, capture = build(
+                tmp_path, server, fake_telegram,
+                env_over={"NOTIFIER_REPLY_SYNC": "0",
+                          "NOTIFIER_RECONNECT_BACKOFF": "0.02,0.05"})
+            notifier.once = False
+            stop = threading.Event()
+            notifier.stop_event = stop
+            stopper = threading.Timer(0.8, stop.set)
+            stopper.start()
+            _thread, result = run_in_thread(notifier)
+            stopper.cancel()
+            assert result.get("code") == EXIT_STOPPED, result
+            assert self._get_update_calls(fake_telegram) == []
+            assert capture.events("reply_sync_started") == []
         finally:
             server.close()
