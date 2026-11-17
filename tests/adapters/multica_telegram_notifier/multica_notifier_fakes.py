@@ -283,6 +283,10 @@ class FakeTelegram:
     def _next_response(self, path):
         if self.responses:
             return self.responses.pop(0)
+        if path.endswith("/getUpdates"):
+            # Unscripted polls must keep a receiver loop quiet, not raise on a
+            # non-list result.
+            return 200, {"ok": True, "result": []}
         return 200, {"ok": True, "result": {"message_id": 4242}}
 
     @property

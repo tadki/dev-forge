@@ -12,6 +12,7 @@ from multica_telegram_notifier.telegram import (
     TelegramClient,
     TelegramError,
     _error_detail,
+    is_get_updates_conflict,
     is_parse_entity_error,
 )
 
@@ -377,3 +378,76 @@ class TestParseEntityDetection:
 
     def test_unrelated_exception_not_detected(self):
         assert not is_parse_entity_error(ValueError("can't parse entities"))
+
+
+class TestGetUpdates:
+    """§SPEC-004 client surface: call shape, list-result validation and the
+    409 single-consumer conflict classification (§SPEC-007)."""
+
+    CONFLICT_BODY = {
+        "ok": False, "error_code": 409,
+        "description": "Conflict: terminated by other getUpdates request; "
+                       "make sure that only one bot instance is running",
+    }
+
+    def test_call_shape_offset_timeout_allowed_updates(self, fake_telegram):
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        client.get_updates(offset=100, timeout=25, allowed_updates=["message"])
+        path, body = fake_telegram.requests[0]
+        assert path == f"/bot{BOT}/getUpdates"
+        assert body == {"offset": 100, "timeout": 25, "allowed_updates": ["message"]}
+
+    def test_unset_offset_omitted_from_payload(self, fake_telegram):
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        client.get_updates(offset=None, timeout=0, allowed_updates=["message"])
+        _, body = fake_telegram.requests[0]
+        assert "offset" not in body
+        assert body["timeout"] == 0
+
+    def test_empty_result_list_default(self, fake_telegram):
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        assert client.get_updates(offset=1, timeout=0, allowed_updates=["message"]) == []
+
+    def test_returns_result_list(self, fake_telegram):
+        fake_telegram.responses = [
+            (200, {"ok": True, "result": [{"update_id": 7}, {"update_id": 8}]})]
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        assert client.get_updates(offset=6, timeout=0, allowed_updates=["message"]) == [
+            {"update_id": 7}, {"update_id": 8}]
+
+    def test_non_list_result_raises(self, fake_telegram):
+        fake_telegram.responses = [(200, {"ok": True, "result": {"message_id": 1}})]
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        with pytest.raises(TelegramError):
+            client.get_updates(offset=1, timeout=0, allowed_updates=["message"])
+
+    def test_conflict_error_classification(self, fake_telegram):
+        fake_telegram.responses = [(409, self.CONFLICT_BODY)]
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        with pytest.raises(TelegramError) as exc:
+            client.get_updates(offset=1, timeout=0, allowed_updates=["message"])
+        assert exc.value.error_code == 409
+        assert exc.value.retryable is False
+        assert exc.value.is_channel_error is False
+        assert is_get_updates_conflict(exc.value)
+
+    def test_conflict_ok_false_path_also_detected(self, fake_telegram):
+        # HTTP 200 + ok:false must land in the same classification (same table
+        # as the HTTP-status path).
+        fake_telegram.responses = [(200, self.CONFLICT_BODY)]
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        with pytest.raises(TelegramError) as exc:
+            client.get_updates(offset=1, timeout=0, allowed_updates=["message"])
+        assert is_get_updates_conflict(exc.value)
+
+    def test_conflict_error_message_carries_no_token(self, fake_telegram):
+        fake_telegram.responses = [(409, self.CONFLICT_BODY)]
+        client = TelegramClient(fake_telegram.base_url, BOT, timeout=5.0)
+        with pytest.raises(TelegramError) as exc:
+            client.get_updates(offset=1, timeout=0, allowed_updates=["message"])
+        assert BOT not in str(exc.value)
+
+    def test_is_get_updates_conflict_rejects_other_errors(self):
+        plain = TelegramError("boom", retryable=True)
+        assert not is_get_updates_conflict(plain)
+        assert not is_get_updates_conflict(ValueError("terminated by other getUpdates request"))
