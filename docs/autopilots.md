@@ -118,12 +118,12 @@ wrapper 负责共享环境变量转换、PID/lock 约定与 Kill Switch 透传�
 
 ## 4. 架构日检 Daily Architecture Check（Architecture Sweep）
 
-> 每日 04:00（Asia/Hong_Kong，= 工具链日检 03:30 + 30 分钟）只读静态巡检，零写入共享分支；周一自动附加 L1 深度检查。
+> 每日 04:00（Asia/Hong_Kong，= 工具链日检 03:30 + 30 分钟）巡检，零写入共享分支：L0 为只读静态检查，周一附加的 L1 先在检出内自产全量 GUT junit 再跑静态检查。
 
 - **Autopilot ID**: `5a40f7e4-2d76-46e8-821f-a3c0d7544235`
 - **Assignee**: Chekky（agent `b2384294-919a-4a91-9f35-2c45848577aa`）
 - **调度**: cron `0 4 * * *` Asia/Hong_Kong（trigger id `72c55517-7362-4a91-b396-6e0aad2e56e1`）
-- **脚本路径**: `autopilots/architecture_sweep.sh`（wrapper，**唯一执行入口**：调用 Python 前对 KOL worktree 物化 submodule；内部委托 `autopilots/architecture_sweep.py` 执行巡检）
+- **脚本路径**: `autopilots/architecture_sweep.sh`（wrapper，**唯一执行入口**：调用 Python 前对 KOL worktree 物化 submodule，L1 轮次另先自产全量 GUT junit；内部委托 `autopilots/architecture_sweep.py` 执行巡检）
 - **执行方式**（一律经 wrapper，不直调 `.py`）:
 
 ```bash
@@ -186,8 +186,8 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 - `GDLINT_NEW` — gdlint 警告增量（baseline diff；`--fast` 时跳过）
 
 **L1 每周一（或 `--l1`）追加**：
-- **自产 junit（SEE-1593）**：L1 轮次（非 `--dry-run`/`--fast`、kill switch 关闭）由 wrapper 先在本次被检检出内执行 `godot --headless --import` 与 `tests/run_tests.sh --all`，产出 `tests/reports/junit_report.xml` 供现有 local 取源分支消费；输入与巡逻同一 HEAD，不依赖会被平台回收的 sibling slot。跑批带超时护栏（`ARCH_SWEEP_GUT_IMPORT_TIMEOUT_SECONDS` 默认 900s、`ARCH_SWEEP_GUT_TIMEOUT_SECONDS` 默认 3600s）；import/跑批失败、超时或未产出 junit 均显式记录到 stderr 且**不阻断**后续静态巡检（输入缺失由下方规则表达）
-- `GUT_UNVERIFIED`（warn；连续 ≥2 个 L1 轮次无输入时升级为 error）— 本轮完全没有 junit 输入：属「未验证」而非产品信号，`gut_verified=false`。连续次数写 `gut_unverified_streak`；状态来源为上一 L1 轮（`last_report.json`；若被工作日 L0 覆盖则回退 `baseline.jsonl` 中最近含 `gut_verified` 的记录）
+- **自产 junit（SEE-1593）**：L1 轮次（非 `--dry-run`/`--fast`、kill switch 关闭）由 wrapper 先在本次被检检出内执行 `godot --headless --import` 与 `tests/run_tests.sh --all`，产出 `tests/reports/junit_report.xml` 供现有 local 取源分支消费；输入与巡逻同一 HEAD，不依赖会被平台回收的 sibling slot。跑批前先清除本地 junit 及其时间戳变体，Python 层 local 候选同样只接受 7 天内的报告——上一轮残留不得被当作本轮输入（§SPEC-010）。跑批带超时护栏（`ARCH_SWEEP_GUT_IMPORT_TIMEOUT_SECONDS` 默认 900s、`ARCH_SWEEP_GUT_TIMEOUT_SECONDS` 默认 3600s）；import/跑批失败、超时或未产出 junit 均显式记录到 stderr 且**不阻断**后续静态巡检（输入缺失由下方规则表达）
+- `GUT_UNVERIFIED`（warn；连续 ≥2 个 L1 轮次无有效输入时升级为 error）— 「无有效输入」= 未解析到 junit、junit 零执行（`actual_tests==0`）或 stable 源 miss/stale，三类都推进 `gut_unverified_streak`，本轮 `actual_tests>0` 则归零。规则本身只在完全没有 junit 输入且未配置 stable 源时产出，属「未验证」而非产品信号（`gut_verified=false`）；junit 存在但零执行仍为下方 `GUT_SILENT_SKIP:error`，stable miss/stale 亦维持 error。连续次数写 `gut_unverified_streak`；状态来源为上一 L1 轮（`last_report.json`；若被工作日 L0 覆盖则回退 `baseline.jsonl` 中最近含 `gut_verified` 的记录）
 - `GUT_SILENT_SKIP`（error）— 有 junit 但执行异常：全局实际执行数为 0、全局低于 95% 容差，或任一配置目录整体缺失/低于目录容差（D1 语义与 dedup 键不变）；已配置 stable 源却 miss/stale 仍为 error 并非零退出（SEE-1499 契约不放宽）
 - 度量：`junit_source` 在命中本地/槽位/稳定源时为 `local`/`slot:<slot>`/`stable:<path>`，未解析到任何 junit 时为 `none`；`gut_verified` 仅在 L1 轮次写入（有 junit 且 `actual_tests>0` 为 true）
 - 测试/代码比例趋势： `test_to_code_ratio`（test .gd 行数 / 非 test .gd 行数）
@@ -210,7 +210,7 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 ### 严禁行为（脚本内部保证）
 
 - 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程、不开 PR、不 @ 任何成员
-- 所有写操作仅落在 `~/.multica/arch-patrol/`（唯一例外：wrapper 层 `git submodule update --init --recursive` 物化——按 gitlink pinned commit 恢复 `addons/godot_mcp/` 内容，属覆盖性恢复而非改动）
+- 所有写操作仅落在 `~/.multica/arch-patrol/`（例外：① wrapper 层 `git submodule update --init --recursive` 物化——按 gitlink pinned commit 恢复 `addons/godot_mcp/` 内容，属覆盖性恢复而非改动；② L1 自产 junit——写入被检检出内 gitignored 的 `tests/reports/` 与 `.godot` 导入缓存，不触碰受版本控制文件、不写共享分支）
 
 ### 退出码
 
