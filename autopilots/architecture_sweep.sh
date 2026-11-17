@@ -338,6 +338,27 @@ sweep_self_produce_junit() {
   [ -n "$repo_name" ] || return 0
   kol_repo="$(sweep_locate_repo "$repo_name" "$WORKSPACE_ROOT" "$CURRENT_HASH")" || return 0
 
+  # SEE-1593 §SPEC-010 (Final Review HIGH-1): a reused checkout keeps
+  # tests/reports/ (gitignored) across rounds, so a previous round's junit
+  # would be read back as this round's verification if the batch below fails.
+  # Remove stale local products BEFORE any attempt, so every failure/skip exit
+  # below — godot missing, timeout missing, import fail, run fail, timeout, no
+  # output — leaves the Python layer with no local junit (GUT_UNVERIFIED),
+  # never a stale wrong-pass. Covers both timestamp conventions the Python
+  # resolver globs (`<stem>_*.xml` and `<base>_*.xml`).
+  local junit_rel junit_path reports_dir junit_name
+  junit_rel="$(sweep_config_value "junit_xml_file" "$kol_repo/.gutconfig.json")"
+  junit_rel="${junit_rel#res://}"
+  [ -n "$junit_rel" ] || junit_rel="tests/reports/junit_report.xml"
+  junit_path="$kol_repo/$junit_rel"
+  reports_dir="$(dirname "$junit_path")"
+  junit_name="$(basename "$junit_path")"
+  if ! rm -f "$junit_path" \
+      "$reports_dir/${junit_name}"_*.xml \
+      "$reports_dir/${junit_name%.xml}"_*.xml; then
+    echo "[arch-sweep] ERROR: L1 GUT could not remove stale junit under $reports_dir; a stale report could be misread as verified this round (SEE-1593 §SPEC-010)" >&2
+  fi
+
   local godot_bin="${GODOT:-godot}"
   if ! command -v "$godot_bin" >/dev/null 2>&1; then
     echo "[arch-sweep] ERROR: L1 GUT self-production skipped: godot binary not found (GODOT=$godot_bin); GUT dimension will be unverified this round" >&2
@@ -353,8 +374,14 @@ sweep_self_produce_junit() {
   run_timeout="$(sweep_gut_timeout "${ARCH_SWEEP_GUT_TIMEOUT_SECONDS:-}" 3600)"
 
   local log_dir="${MULTICA_HOME:-$HOME/.multica}/arch-patrol"
-  mkdir -p "$log_dir" 2>/dev/null || true
   local log="$log_dir/gut-last-run.log"
+  if ! mkdir -p "$log_dir"; then
+    # LOW-1 (Final Review): surface why the log dir could not be created
+    # instead of swallowing it; fall back to /dev/null so the batch can still
+    # run and produce a junit.
+    echo "[arch-sweep] ERROR: L1 GUT cannot create log dir $log_dir; using /dev/null for the batch log" >&2
+    log="/dev/null"
+  fi
 
   echo "[arch-sweep] L1 GUT self-production: repo=$kol_repo import_timeout=${import_timeout}s run_timeout=${run_timeout}s log=$log" >&2
 
@@ -377,11 +404,10 @@ sweep_self_produce_junit() {
     return 0
   fi
 
-  local junit="$kol_repo/tests/reports/junit_report.xml"
-  if [ -f "$junit" ]; then
-    echo "[arch-sweep] L1 GUT junit produced: $junit" >&2
+  if [ -f "$junit_path" ]; then
+    echo "[arch-sweep] L1 GUT junit produced: $junit_path" >&2
   else
-    echo "[arch-sweep] ERROR: L1 GUT run exited 0 but produced no junit at $junit; GUT dimension will be unverified this round (log: $log)" >&2
+    echo "[arch-sweep] ERROR: L1 GUT run exited 0 but produced no junit at $junit_path; GUT dimension will be unverified this round (log: $log)" >&2
   fi
   return 0
 }
