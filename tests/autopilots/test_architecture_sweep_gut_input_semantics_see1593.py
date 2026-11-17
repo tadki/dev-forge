@@ -127,6 +127,18 @@ class TestSemanticSplit:
         assert dir_findings[0]["rule_id"] == "GUT_SILENT_SKIP"
         assert dir_findings[0]["severity"] == "error"
         assert "tests/aidomain" in dir_findings[0]["message"]
+        # A whole directory that never ran must be reported as missing, not
+        # merely "below tolerance" — the two are distinct D1 signals.
+        assert "whole directory missing from run" in dir_findings[0]["message"]
+
+    def test_global_count_at_tolerance_is_not_a_shortfall(self, tmp_path):
+        # ≤ 95% tolerance means strictly *below* is an error: a global count
+        # exactly at the computed threshold is a full-enough run.
+        repo = _make_repo(tmp_path, unit_funcs=100, aidomain_funcs=0)
+        _write_junit(repo, {"tests/unit": 95})  # threshold int(100*0.95) == 95
+        findings, metrics = sweep.check_gut_silent_skip(str(repo), "", junit_stable_path="")
+        assert metrics["actual_tests"] == 95
+        assert findings == []
 
     def test_configured_stable_miss_stays_error_not_unverified(self, tmp_path, monkeypatch):
         logged = []
@@ -231,6 +243,81 @@ class TestConsecutiveEscalation:
         assert metrics["gut_verified"] is True
         assert metrics["gut_unverified_streak"] == 0
         assert findings == []
+
+    def test_zero_execution_report_counts_as_unverified_input(self, tmp_path):
+        # §SPEC-007: a junit that executed nothing is still "no valid input",
+        # so it must advance the streak rather than reset it.
+        repo = _make_repo(tmp_path)
+        _write_junit(repo, {})
+        _write_prev_report({"gut_verified": False, "gut_unverified_streak": 1})
+        _, metrics = sweep.check_gut_silent_skip(str(repo), "", junit_stable_path="")
+        assert metrics["actual_tests"] == 0
+        assert metrics["gut_verified"] is False
+        assert metrics["gut_unverified_streak"] == 2
+
+    def test_pre_feature_unverified_record_counts_as_one_round(self, tmp_path):
+        # §SPEC-004: a pre-feature record with gut_verified=False but no
+        # streak key still counts as one prior unverified round, so the next
+        # no-input round escalates immediately.
+        repo = _make_repo(tmp_path)
+        _write_prev_report({"gut_verified": False})
+        findings, metrics = sweep.check_gut_silent_skip(str(repo), "", junit_stable_path="")
+        assert metrics["gut_unverified_streak"] == 2
+        unverified = [f for f in findings if f["rule_id"] == "GUT_UNVERIFIED"]
+        assert len(unverified) == 1
+        assert unverified[0]["severity"] == "error"
+
+
+# =============================================================================
+# §SPEC-007 — actual>0 resets the streak even while emitting real errors
+# =============================================================================
+
+
+class TestSpec007ActualInputResetsStreak:
+    """A round that executed tests obtained usable input and is verified.
+
+    §SPEC-007: the streak counts L1 rounds with NO VALID INPUT (no junit,
+    zero executed, or a broken stable source). Any round with actual > 0 must
+    reset it to 0 — even when the round also reports a real product error
+    (a global shortfall or a D1 directory skip). A prior unverified streak is
+    seeded so a missing reset is observable rather than masked by the
+    from-scratch default.
+    """
+
+    def test_global_error_with_actual_keeps_streak_zero(self, tmp_path):
+        repo = _make_repo(tmp_path)  # expected unit 10 + aidomain 5 = 15
+        # unit 9 >= 95% of 10 and aidomain 4 >= 95% of 5 -> no dir finding,
+        # but 13 < 95% of 15 -> a genuine global shortfall error.
+        _write_junit(repo, {"tests/unit": 9, "tests/aidomain": 4})
+        _write_prev_report({"gut_verified": False, "gut_unverified_streak": 3})
+
+        findings, metrics = sweep.check_gut_silent_skip(str(repo), "", junit_stable_path="")
+
+        assert metrics["actual_tests"] == 13
+        assert metrics["gut_verified"] is True
+        assert metrics["gut_unverified_streak"] == 0
+        errors = [f for f in findings if f["severity"] == "error"]
+        assert len(errors) == 1
+        assert errors[0]["rule_id"] == "GUT_SILENT_SKIP"
+        assert "(dir)" not in errors[0]["message"]
+        assert [f for f in findings if "(dir)" in f["message"]] == []
+
+    def test_dir_missing_error_with_actual_keeps_streak_zero(self, tmp_path):
+        repo = _make_repo(tmp_path)  # expected unit 10 + aidomain 5 = 15
+        # 15 executed clears the global tolerance, but aidomain never ran ->
+        # a genuine D1 whole-directory error.
+        _write_junit(repo, {"tests/unit": 15})
+        _write_prev_report({"gut_verified": False, "gut_unverified_streak": 3})
+
+        findings, metrics = sweep.check_gut_silent_skip(str(repo), "", junit_stable_path="")
+
+        assert metrics["actual_tests"] == 15
+        assert metrics["gut_verified"] is True
+        assert metrics["gut_unverified_streak"] == 0
+        dir_errors = [f for f in findings if "(dir)" in f["message"]]
+        assert len(dir_errors) == 1
+        assert dir_errors[0]["rule_id"] == "GUT_SILENT_SKIP"
+        assert "tests/aidomain" in dir_errors[0]["message"]
 
 
 # =============================================================================
