@@ -201,4 +201,4 @@ def is_get_updates_conflict(exc: BaseException) -> bool:
     # receiver degrades to inbound-disabled on this and only this condition.
     return (isinstance(exc, TelegramError)
             and (exc.error_code == 409
-                 or "terminated by other getUpdates request" in str(exc).lower()))
+                 or "terminated by other getupdates request" in str(exc).lower()))
