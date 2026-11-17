@@ -451,3 +451,11 @@ class TestGetUpdates:
         plain = TelegramError("boom", retryable=True)
         assert not is_get_updates_conflict(plain)
         assert not is_get_updates_conflict(ValueError("terminated by other getUpdates request"))
+
+    def test_conflict_description_only_error_detected(self):
+        # Revy D2 oracle: the description fallback must match — the needle is
+        # compared case-insensitively on BOTH sides, so a TelegramError whose
+        # text carries the canonical conflict description (with error_code
+        # absent) is still a conflict.
+        exc = TelegramError("terminated by other getUpdates request")
+        assert is_get_updates_conflict(exc)
