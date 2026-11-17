@@ -1546,13 +1546,32 @@ class TestReplyReceiver:
     def test_blank_text_reply_ignored(self, tmp_path, fake_telegram):
         api = FakeMulticaAPI()
         try:
-            receiver, state, _capture = self.build_receiver(tmp_path, fake_telegram, api)
+            receiver, state, capture = self.build_receiver(tmp_path, fake_telegram, api)
             state.record_reply(4242, UUID_ISSUE, COMMENT_UUID)
             fake_telegram.responses = [
                 (200, {"ok": True, "result": [reply_update(11, 4242, text="   ")]})]
             receiver.poll_once()
+            # The empty-text gate rejects at the receiver boundary (debug
+            # event, zero resolver traffic) — it must not lean on the
+            # API-side empty-content refusal to stay safe.
+            assert capture.events("reply_empty_text_ignored")
             assert api.post_requests == []
             assert state.offset == 12
+        finally:
+            api.close()
+
+    def test_fresh_state_first_poll_omits_offset(self, tmp_path, fake_telegram):
+        # §SPEC-004: until an offset exists the poll must omit the key
+        # entirely (offset=None), never send offset=0.
+        api = FakeMulticaAPI()
+        try:
+            receiver, _state, _capture = self.build_receiver(tmp_path, fake_telegram, api)
+            fake_telegram.responses = [(200, {"ok": True, "result": []})]
+            receiver.poll_once()
+            polls = [body for path, body in fake_telegram.requests
+                     if path.endswith("/getUpdates")]
+            assert len(polls) == 1
+            assert "offset" not in polls[0]
         finally:
             api.close()
 

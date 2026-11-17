@@ -459,3 +459,10 @@ class TestGetUpdates:
         # absent) is still a conflict.
         exc = TelegramError("terminated by other getUpdates request")
         assert is_get_updates_conflict(exc)
+
+    def test_conflict_by_error_code_alone(self):
+        # §SPEC-007 primary branch: error_code=409 alone (description without
+        # the canonical fingerprint) must classify as a getUpdates conflict.
+        exc = TelegramError("telegram getUpdates failed: HTTP 409",
+                            retryable=False, error_code=409)
+        assert is_get_updates_conflict(exc)

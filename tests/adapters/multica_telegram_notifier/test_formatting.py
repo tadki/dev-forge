@@ -7,12 +7,17 @@ import pytest
 from multica_telegram_notifier.formatting import (
     SEPARATOR,
     Notification,
+    _PART_FOOTER_SLACK,
+    _PART_MARKER_RESERVE,
+    _pack_chunks,
+    _split_budget,
     fit_html_text,
     markdown_to_html,
     render_notification,
     render_notification_parts,
     utf16_len,
 )
+from multica_telegram_notifier.telegram import MAX_TEXT_LENGTH
 
 
 class _FixedResolver:
@@ -865,3 +870,63 @@ class TestNotificationParts:
         assert "&lt;b&gt;" not in html
         assert "A&amp;amp;" not in html
         assert "&lt;/b&gt;" not in html
+
+    def test_exactly_max_parts_yields_no_truncation_banner(self):
+        # Cap boundary: content packing into exactly max_parts groups stays
+        # on the normal path — no banner, no truncation, nothing swallowed.
+        body = "\n\n".join(["p1 " + "a" * 3000, "p2 " + "b" * 3000])
+        parts = render_notification_parts(
+            _item(body=body), _FixedResolver(), max_parts=2)
+        assert len(parts) == 2
+        for i, part in enumerate(parts, 1):
+            assert utf16_len(part.html) <= 4096
+            assert part.html.split("\n")[2] == f"{i}/2"
+            assert "已截断" not in part.html
+            assert "已截断" not in part.plain
+        joined = "\n".join(p.html for p in parts)
+        assert "p1" in joined
+        assert "p2" in joined
+
+
+class TestFitShrinkLadder:
+    """The fit-shrink ladder contract: the SOURCE is shrunk and re-rendered
+    across the halving ladder; only past the ladder's depth does rendering
+    degrade to escaped raw text."""
+
+    def test_deep_shrink_within_ladder_keeps_rendered_tags(self):
+        body = "**标题行**\n\n" + "x" * 100000
+        html = fit_html_text(body)
+        assert utf16_len(html) <= 4096
+        assert "<b>标题行</b>" in html
+        assert "&lt;b&gt;" not in html
+
+    def test_beyond_ladder_degrades_to_escaped_raw_text(self):
+        # 1M units stays ~4x beyond the six-halving ladder's reach, so the
+        # escaped last resort is unambiguous (the 500k variant sits closer to
+        # the boundary).
+        body = "**标题行**\n\n" + "x" * 1000000
+        html = fit_html_text(body)
+        assert utf16_len(html) <= 4096
+        assert "<b>" not in html
+        assert "**标题行**" in html
+
+
+class TestSplitArithmeticPins:
+    """White-box pins for the packing arithmetic the part contract leans on
+    (§SPEC-001): the per-part footer reserve and the exact-fit grouping
+    boundary."""
+
+    def test_split_budget_reserves_footer_units_on_every_part(self):
+        head, footer = "H" * 120, "F" * 100
+        budget = _split_budget(head, footer)
+        assert budget == (MAX_TEXT_LENGTH - utf16_len(head)
+                          - _PART_MARKER_RESERVE
+                          - utf16_len("\n\n" + footer)
+                          - _PART_FOOTER_SLACK)
+
+    def test_exact_fit_chunk_joins_current_group(self):
+        # Greedy first-fit: a chunk landing exactly on the remaining budget
+        # (49 + separator 2 + 49 = 100) joins the current group.
+        groups, truncated = _pack_chunks(["x" * 49, "y" * 49], 100, 10)
+        assert truncated is False
+        assert len(groups) == 1

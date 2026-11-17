@@ -164,6 +164,37 @@ class TestReplyMapping:
         assert state.lookup_reply(4) == ("i2", "c2")
         assert state.offset == 0
 
+    def test_non_string_comment_id_entry_dropped(self, tmp_path):
+        # Every reply field must be a string: a numeric comment_id cannot
+        # attribute a reply, so the entry is dropped at load time.
+        path = tmp_path / "state.json"
+        path.write_text(json.dumps({
+            "delivered": [],
+            "replies": {"9": {"issue_id": "i9", "comment_id": 123}},
+            "offset": 0,
+        }), encoding="utf-8")
+        state = DedupState(str(path))
+        state.load()
+        assert not state.corrupt
+        assert state.replies == {}
+
+    def test_load_side_fifo_trim_keeps_newest(self, tmp_path):
+        # Oversized on-disk maps trim at load time under the same FIFO rule:
+        # the oldest entries go, the newest replies stay resolvable.
+        path = tmp_path / "state.json"
+        replies = {str(i): {"issue_id": f"i{i}", "comment_id": f"c{i}"}
+                   for i in range(5)}
+        path.write_text(json.dumps({"delivered": [], "replies": replies,
+                                    "offset": 0}), encoding="utf-8")
+        state = DedupState(str(path), reply_capacity=3)
+        state.load()
+        assert not state.corrupt
+        assert "0" not in state.replies
+        assert "1" not in state.replies
+        assert state.replies["2"] == {"issue_id": "i2", "comment_id": "c2"}
+        assert state.replies["3"] == {"issue_id": "i3", "comment_id": "c3"}
+        assert state.replies["4"] == {"issue_id": "i4", "comment_id": "c4"}
+
 
 class TestOffsetPersistence:
     """§SPEC-004: the getUpdates offset is persisted so a restart never
@@ -184,3 +215,12 @@ class TestOffsetPersistence:
         state.advance_offset(105)
         state.advance_offset(104)  # stale batch must not rewind
         assert state.offset == 105
+
+    def test_negative_offset_starts_fresh(self, tmp_path):
+        path = tmp_path / "state.json"
+        path.write_text(json.dumps({"delivered": [], "replies": {},
+                                    "offset": -3}), encoding="utf-8")
+        state = DedupState(str(path))
+        state.load()
+        assert not state.corrupt
+        assert state.offset == 0
