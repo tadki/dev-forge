@@ -20,13 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilo
 
 import architecture_sweep as sweep
 
-
-@pytest.fixture(autouse=True)
-def _isolate_arch_patrol_state(tmp_path, monkeypatch):
-    # SEE-1593: check_gut_silent_skip consults the previous L1 report for
-    # no-input escalation — never let tests read the machine's real state.
-    monkeypatch.setattr(sweep, "REPORT_FILE", str(tmp_path / "last_report.json"))
-    monkeypatch.setattr(sweep, "BASELINE_FILE", str(tmp_path / "baseline.jsonl"))
+pytestmark = pytest.mark.usefixtures("isolate_arch_patrol_state")
 
 
 GUTCONFIG = {

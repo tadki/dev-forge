@@ -1481,10 +1481,10 @@ def _resolve_junit_source(repo_root: str, gutconfig: dict, workspace_root: str,
     # candidate consulted. On a hit (readable file, fresh within
     # JUNIT_MAX_AGE_DAYS) it wins over both the local read and the slot scan;
     # on a miss or stale file the sweep fails loudly (log_error → error
-    # heartbeat → exit 2, plus the "no junit report found" GUT finding) and
-    # NEVER falls back to local/slot artifacts, which could silently report a
-    # different HEAD's run as authoritative (SEE-1128: a loud unresolved
-    # source beats a quietly wrong one).
+    # heartbeat → exit 2, plus the "configured stable junit source unavailable"
+    # GUT finding) and NEVER falls back to local/slot artifacts, which could
+    # silently report a different HEAD's run as authoritative (SEE-1128: a loud
+    # unresolved source beats a quietly wrong one).
     if stable_path:
         if not os.path.isfile(stable_path):
             log_error(f"Configured stable junit source not found: {stable_path}")
@@ -1681,11 +1681,12 @@ def _gut_silent_skip_findings(expected: int, junit_path: str, actual: int,
 
 
 def _gut_state_from_metrics(metrics: dict) -> tuple:
+    """(verified, streak) from a metrics dict known to carry both keys."""
     verified = bool(metrics.get("gut_verified"))
     streak = metrics.get("gut_unverified_streak", 0)
     if not isinstance(streak, int) or streak < 0:
         streak = 0
-    return True, verified, streak
+    return verified, streak
 
 
 def _read_previous_l1_gut_state() -> tuple:
@@ -1703,13 +1704,15 @@ def _read_previous_l1_gut_state() -> tuple:
             report = json.load(f)
         report_metrics = (report.get("summary") or {}).get("metrics") or {}
         if "gut_verified" in report_metrics:
-            return _gut_state_from_metrics(report_metrics)
+            verified, streak = _gut_state_from_metrics(report_metrics)
+            return True, verified, streak
     except (OSError, ValueError):
         pass
     for rec in reversed(read_jsonl(BASELINE_FILE)):
         metrics = rec.get("metrics", {})
         if isinstance(metrics, dict) and "gut_verified" in metrics:
-            return _gut_state_from_metrics(metrics)
+            verified, streak = _gut_state_from_metrics(metrics)
+            return True, verified, streak
     return False, None, 0
 
 
