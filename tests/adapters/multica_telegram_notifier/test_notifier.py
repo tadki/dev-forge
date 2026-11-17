@@ -1269,42 +1269,62 @@ def _ok_send(mid):
     return (200, {"ok": True, "result": {"message_id": mid}})
 
 
+def _deliver_oversized(tmp_path, fake_telegram, responses=None, item_id="item-1",
+                       **frame_over):
+    """Shared rig: delivers one oversized item through a real Notifier over
+    the fakes; returns (cfg, capture, result)."""
+    if responses is not None:
+        fake_telegram.responses = responses
+    server = FakeMulticaWS(script=[("text", make_inbox_frame(
+        item_id=item_id, item_overrides={"body": _oversized_body(), **frame_over})),
+        ("sleep", 5)])
+    try:
+        notifier, cfg, capture = build(tmp_path, server, fake_telegram)
+        _thread, result = run_in_thread(notifier)
+        return cfg, capture, result
+    finally:
+        server.close()
+
+
 class TestMultiPartDelivery:
     """§SPEC-002: over-budget items go out as ordered numbered parts; the
     at-least-once / quarantine semantics apply to the item as a whole; each
     part records its own delivered evidence."""
 
     def test_oversized_item_delivers_ordered_numbered_parts(self, tmp_path, fake_telegram):
-        fake_telegram.responses = [_ok_send(100 + i) for i in range(1, 7)]
-        server = FakeMulticaWS(script=[("text", make_inbox_frame(item_overrides={
-            "body": _oversized_body()})), ("sleep", 5)])
-        try:
-            notifier, _cfg, capture = build(tmp_path, server, fake_telegram)
-            _thread, result = run_in_thread(notifier)
-            assert result.get("code") == EXIT_OK, result
-            calls = send_calls(fake_telegram)
-            n = len(calls)
-            assert n >= 2
-            texts = [c[1]["text"] for c in calls]
-            for idx, text in enumerate(texts, 1):
-                lines = text.split("\n")
-                assert lines[1] == SEPARATOR
-                assert lines[2] == f"{idx}/{n}"
-            # Footer only on the last part (footer carries the inbox kind).
-            assert all("issue_assigned" not in t for t in texts[:-1])
-            assert "issue_assigned" in texts[-1]
-            delivered = capture.events("delivered")
-            assert len(delivered) == n
-            assert [e["message_id"] for e in delivered] == [100 + i for i in range(1, n + 1)]
-            assert [e["part"] for e in delivered] == list(range(1, n + 1))
-            assert all(e["part_count"] == n for e in delivered)
-            # Evidence exactness per part: logged payload == bytes actually sent.
-            for i, event in enumerate(delivered):
-                assert event["outbound_text"] == texts[i]
-                assert event["text_units"] == _utf16(texts[i])
-                assert event["text_units"] <= 4096
-        finally:
-            server.close()
+        _cfg, capture, result = _deliver_oversized(
+            tmp_path, fake_telegram,
+            responses=[_ok_send(100 + i) for i in range(1, 7)])
+        assert result.get("code") == EXIT_OK, result
+        calls = send_calls(fake_telegram)
+        n = len(calls)
+        assert n >= 2
+        texts = [c[1]["text"] for c in calls]
+        for idx, text in enumerate(texts, 1):
+            lines = text.split("\n")
+            assert lines[1] == SEPARATOR
+            assert lines[2] == f"{idx}/{n}"
+        # Footer only on the last part (footer carries the inbox kind).
+        assert all("issue_assigned" not in t for t in texts[:-1])
+        assert "issue_assigned" in texts[-1]
+        delivered = capture.events("delivered")
+        assert len(delivered) == n
+        assert [e["part"] for e in delivered] == list(range(1, n + 1))
+        assert all(e["part_count"] == n for e in delivered)
+
+    def test_part_delivered_events_carry_exact_payload_evidence(self, tmp_path, fake_telegram):
+        _cfg, capture, result = _deliver_oversized(
+            tmp_path, fake_telegram,
+            responses=[_ok_send(100 + i) for i in range(1, 7)])
+        assert result.get("code") == EXIT_OK, result
+        texts = [c[1]["text"] for c in send_calls(fake_telegram)]
+        delivered = capture.events("delivered")
+        assert [e["message_id"] for e in delivered] == [100 + i for i in range(1, len(texts) + 1)]
+        # Evidence exactness per part: logged payload == bytes actually sent.
+        for i, event in enumerate(delivered):
+            assert event["outbound_text"] == texts[i]
+            assert event["text_units"] == _utf16(texts[i])
+            assert event["text_units"] <= 4096
 
     def test_retryable_failure_midway_keeps_item_pending(self, tmp_path, fake_telegram):
         # Part 1 succeeds, part 2 fails retryably until the once-bound fires:
