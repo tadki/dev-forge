@@ -181,6 +181,38 @@ class MetadataResolver:
             return f"{url}#comment-{comment_id}"
         return url
 
+    def post_comment(self, issue_id: str, parent_comment_id: str, content: str) -> str:
+        """§SPEC-006: the adapter's ONLY write path — create a reply comment
+        under the mapped parent comment; returns the created comment id.
+
+        Endpoint shape pinned from upstream contract evidence, the same way
+        protocol.py pins the WS contract (Multica CLI/daemon 0.9.0 artifacts
+        plus the self-hosted deployment's established conventions):
+        - comments are issue-path-scoped: POST
+          /api/issues/<issue uuid>/comments?workspace_id=<id> — the CLI's own
+          compact-mode documentation describes a comment's issue_id as
+          "echoed from the request path";
+        - the reply thread field is `parent_id` (upstream request struct tag
+          json:"parent_id,omitempty"; the CLI maps its --parent flag onto it);
+        - auth is the PAT Bearer header and workspace_id travels as a query
+          parameter — identical to the read endpoints below and to the
+          comment-edit call in claude-hooks/scripts/auto-pr-on-stop.sh.
+
+        All gates run BEFORE any request (no request can be steered off the
+        pinned path), and every failure raises MulticaApiError carrying only
+        the exception type name — no token, no URL."""
+        if not (isinstance(issue_id, str) and looks_like_uuid(issue_id)):
+            # FR-3 discipline: only a canonical UUID may become a REST path
+            # segment; anything else never reaches an authenticated request.
+            raise MulticaApiError("comment sync refused: invalid issue id")
+        if not (isinstance(parent_comment_id, str) and looks_like_uuid(parent_comment_id)):
+            raise MulticaApiError("comment sync refused: invalid parent comment id")
+        if not (isinstance(content, str) and content.strip()):
+            raise MulticaApiError("comment sync refused: empty reply text")
+        return self._post_json(
+            f"/api/issues/{issue_id}/comments",
+            {"content": content, "parent_id": parent_comment_id})
+
     # --- internals ---
 
     def _validated_web_root(self) -> str:
@@ -261,3 +293,27 @@ class MetadataResolver:
         if not isinstance(data, dict):
             raise MulticaApiError("metadata query returned a non-object body")
         return data
+
+    def _post_json(self, path: str, payload: dict) -> str:
+        sep = "&" if "?" in path else "?"
+        url = (f"{self._base}{path}{sep}"
+               f"workspace_id={urllib.parse.quote(self._workspace, safe='')}")
+        request = urllib.request.Request(
+            url, data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {self._pat}",
+                     "Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                raw = response.read()
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
+                socket.timeout, OSError, http.client.HTTPException) as exc:
+            # `from None` keeps the token-bearing URL out of any traceback.
+            raise MulticaApiError(f"comment sync failed: {type(exc).__name__}") from None
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise MulticaApiError("comment sync returned invalid JSON") from None
+        comment_id = data.get("id") if isinstance(data, dict) else None
+        if not isinstance(comment_id, str) or not comment_id:
+            raise MulticaApiError("comment sync returned no comment id")
+        return comment_id
