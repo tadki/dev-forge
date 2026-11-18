@@ -49,9 +49,13 @@ export interface PlatformDiscovery {
   files?: boolean;
   /** declared：确认归属的 registry.d 条目 id（console/registry.d/*.yaml 的 entries[].id） */
   registry?: string;
-  /** 归属筛选字段（derive 资产用）：注册条目不代盖 platforms 时，页面显示归属判据——
-   *  harness = 资产自身声明（如 hook-rule 的 harness）；usage = 使用链继承（如 hook-script） */
-  platformFilter?: 'harness' | 'usage';
+  /** 归属判据（声明式 kind 统一声明，三选一；缺省 = stamp）：
+   *  - stamp：registry.d 条目代盖 platforms（条目声明即判据，如 patch）
+   *  - self：资产自身声明字段（platformBasisField 指明字段名，如 hook-rule 的 harness）
+   *  - usage：使用链继承（derive 框架传递并集，如 hook-script） */
+  platformBasis?: 'stamp' | 'self' | 'usage';
+  /** basis=self 时：资产自身携带平台声明的字段名 */
+  platformBasisField?: string;
   note?: string;
 }
 
@@ -134,8 +138,9 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           collector: 'devforge-hooks',
           paths: ['<devforge>/claude-hooks/unified/rules-v2.json', '<devforge>/claude-hooks/unified/rules.d/*.json'],
           registry: 'devforge-hooks-engine',
-          platformFilter: 'harness',
-          note: '规则清单 JSON（devforge-hooks）；平台 = 规则自身 harness 声明（注册条目不代盖）；settings.json 挂载由 claude-global 读（hook-registration）',
+          platformBasis: 'self',
+          platformBasisField: 'harness',
+          note: '规则清单 JSON（devforge-hooks）；平台 = 规则自身 harness 声明（归属判据 self）；settings.json 挂载由 claude-global 读（hook-registration）',
         },
         read: { how: 'file' },
         write: { type: 'file-write' },
@@ -147,8 +152,8 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           collector: 'devforge-hooks',
           paths: ['<devforge>/claude-hooks/scripts/*.sh', '<devforge>/claude-hooks/scripts/lib/*.sh', '<project>/.claude/hooks/*.sh'],
           registry: 'devforge-hooks-engine',
-          platformFilter: 'usage',
-          note: 'dev-forge 挂载脚本与 lib；平台 = 使用链继承（挂载/引用链，derive 框架）；项目钩子（claude-projects）扫描直接声明——同 kind 混合',
+          platformBasis: 'usage',
+          note: 'dev-forge 挂载脚本与 lib；平台 = 使用链继承（归属判据 usage，derive 框架）；项目钩子（claude-projects）扫描直接声明——同 kind 混合',
         },
         read: { how: 'file' },
         write: { type: 'file-write' },
