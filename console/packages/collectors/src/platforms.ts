@@ -542,7 +542,7 @@ export interface PlatformKindView {
   read?: PlatformRead;
   write?: PlatformWrite;
   assetCount: number;
-  /** 该 kind 归属资产中的自建数（provenance=first-party，全量计数不受清单截断影响） */
+  /** 该 kind 归属资产中的自建数（provenance=first-party） */
   firstPartyCount: number;
   collectors: string[];
   assets: PlatformAssetLite[];
@@ -574,8 +574,6 @@ export interface PlatformsView {
   declaredCount: number;
   unadapted: PlatformsUnadapted;
 }
-
-const ASSETS_PER_KIND_CAP = 30;
 
 function kindOrderIndex(kind: string): number {
   const i = (ASSET_KINDS as readonly string[]).indexOf(kind);
@@ -652,7 +650,7 @@ export function buildPlatformsView(
         assetCount: list.length,
         firstPartyCount: list.filter((a) => a.provenance === 'first-party').length,
         collectors: [...new Set(list.map((a) => a.source.collector))].sort(),
-        assets: list.slice(0, ASSETS_PER_KIND_CAP).map(assetLite),
+        assets: list.map(assetLite),
       };
     });
     return {
@@ -677,7 +675,7 @@ export function buildPlatformsView(
           count: list.length,
           firstPartyCount: list.filter((a) => a.provenance === 'first-party').length,
           collectors: [...new Set(list.map((a) => a.source.collector))].sort(),
-          assets: list.slice(0, ASSETS_PER_KIND_CAP).map(assetLite),
+          assets: list.map(assetLite),
         };
       }),
     },

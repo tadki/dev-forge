@@ -252,6 +252,19 @@ describe('buildPlatformsView', () => {
     expect(v.unadapted.kinds[0].assets[0]).toMatchObject({ id: 'service:grepai', path: 'systemd://user/grepai-watch.service' });
   });
 
+  it('资产清单全量返回：超过 30 个也完整带出，assetCount 与 assets.length 一致（两桶均不截断）', () => {
+    const declaredAssets = Array.from({ length: 35 }, (_, i) => mkAsset(`skill:s${i}`, `multica://skills/s${i}`, 'skill', {}, ['multica']));
+    const v = buildPlatformsView(declaredAssets, DEFAULT_PLATFORMS);
+    const row = v.platforms.find((p) => p.id === 'multica')?.kinds.find((k) => k.kind === 'skill');
+    expect(row?.assetCount).toBe(35);
+    expect(row?.assets).toHaveLength(35);
+
+    const unadaptedAssets = Array.from({ length: 33 }, (_, i) => mkAsset(`service:s${i}`, `systemd://s${i}.service`, 'service', {}, [], 'none'));
+    const vu = buildPlatformsView(unadaptedAssets, DEFAULT_PLATFORMS);
+    expect(vu.unadapted.kinds[0]).toMatchObject({ kind: 'service', count: 33 });
+    expect(vu.unadapted.kinds[0].assets).toHaveLength(33);
+  });
+
   it('YAML 未声明的实有 kind → declared=false；kind 序循 ASSET_KINDS', () => {
     const defs: PlatformDef[] = [{ id: 't', kinds: { skill: { write: { type: 'file-write' } } } }];
     const assets = [mkAsset('custom:x', 't://x', 'custom', {}, ['t']), mkAsset('skill:s', 't://s', 'skill', {}, ['t'])];
