@@ -49,6 +49,9 @@ export interface PlatformDiscovery {
   files?: boolean;
   /** declared：确认归属的 registry.d 条目 id（console/registry.d/*.yaml 的 entries[].id） */
   registry?: string;
+  /** 归属筛选字段（derive 资产用）：注册条目不代盖 platforms 时，页面显示归属判据——
+   *  harness = 资产自身声明（如 hook-rule 的 harness）；usage = 使用链继承（如 hook-script） */
+  platformFilter?: 'harness' | 'usage';
   note?: string;
 }
 
@@ -129,9 +132,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           mode: 'declared',
           how: 'file',
           collector: 'devforge-hooks',
-          paths: ['<devforge>/claude-hooks/*.json'],
+          paths: ['<devforge>/claude-hooks/unified/rules-v2.json', '<devforge>/claude-hooks/unified/rules.d/*.json'],
           registry: 'devforge-hooks-engine',
-          note: '规则清单 JSON（devforge-hooks）；归属由 registry.d 条目盖章；settings.json 挂载由 claude-global 读（hook-registration）',
+          platformFilter: 'harness',
+          note: '规则清单 JSON（devforge-hooks）；平台 = 规则自身 harness 声明（注册条目不代盖）；settings.json 挂载由 claude-global 读（hook-registration）',
         },
         read: { how: 'file' },
         write: { type: 'file-write' },
@@ -143,7 +147,8 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           collector: 'devforge-hooks',
           paths: ['<devforge>/claude-hooks/scripts/*.sh', '<devforge>/claude-hooks/scripts/lib/*.sh', '<project>/.claude/hooks/*.sh'],
           registry: 'devforge-hooks-engine',
-          note: 'dev-forge 挂载脚本与 lib 经 registry.d 盖章；项目钩子（claude-projects）扫描直接声明——同 kind 混合',
+          platformFilter: 'usage',
+          note: 'dev-forge 挂载脚本与 lib；平台 = 使用链继承（挂载/引用链，derive 框架）；项目钩子（claude-projects）扫描直接声明——同 kind 混合',
         },
         read: { how: 'file' },
         write: { type: 'file-write' },
@@ -354,10 +359,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           how: 'derived',
           collector: 'multica',
           cmd: ['multica', 'agent', 'tasks', '{agentId}'],
-          paths: ['<task.work_dir>/CLAUDE.md'],
-          note: '最近任务（agent tasks，每 agent 限 maxTasksPerAgent）+ 最新完成任务的 workdir CLAUDE.md 物化采样',
+          paths: ['<task.work_dir>/CLAUDE.md', '<devforge>/adapters/upgrade-multica-selfhost.sh'],
+          note: '最近任务（agent tasks，每 agent 限 maxTasksPerAgent）+ 最新完成任务的 workdir CLAUDE.md 物化采样；multica 自托管升级脚本（dev-forge 仓库文件，归属由 registry.d devforge-multica-selfhost 盖章，Owner 2026-11-18）同 kind 混合',
         },
-        read: { how: 'file', note: '物化 CLAUDE.md 读 workdir 文件；任务元数据随 agent tasks 返回' },
+        read: { how: 'file', note: '物化 CLAUDE.md / 升级脚本直接读本地文件；任务元数据随 agent tasks 返回' },
         write: { type: 'none', advice: '采样/聚合型资产，无写通道' },
       },
     },

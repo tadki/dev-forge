@@ -25,6 +25,11 @@ const WRITE_TYPE_LABEL: Record<PlatformWriteChannel['type'], string> = {
   command: 'CLI 物化',
   none: '仅建议',
 };
+/** 派生资产的归属筛选字段（注册条目不代盖 platforms 时，注册条目行显示归属判据） */
+const PLATFORM_FILTER_LABEL: Record<string, string> = {
+  harness: 'harness（规则自身声明）',
+  usage: 'usage（挂载/引用链继承）',
+};
 
 const SMALL = { fontSize: 'var(--fs-l1)' } as const;
 const LABEL = { fontSize: 'var(--fs-label)' } as const;
@@ -105,6 +110,15 @@ function DiscoveryCell({ discovery, registryPlatforms, notApplicable }: { discov
         {discovery?.registry ? (
           <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
             <Chip>registry.d: {discovery.registry}</Chip>
+            {discovery.platformFilter && !registryPlatforms?.length ? (
+              <span
+                className="mono"
+                style={SMALL}
+                title="注册条目不代盖 platforms——归属按此筛选字段随采集自动同步（无待裁决漂移）"
+              >
+                筛选字段: {PLATFORM_FILTER_LABEL[discovery.platformFilter] ?? discovery.platformFilter}
+              </span>
+            ) : null}
             {registryPlatforms?.length ? (
               <span className="mono" style={SMALL} title="该 registry.d 条目的 platforms 声明——据此盖章归属">
                 platforms: {registryPlatforms.join(' · ')}

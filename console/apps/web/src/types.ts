@@ -123,6 +123,8 @@ export interface PlatformDiscoveryChannel {
   paths?: string[];
   files?: boolean;
   registry?: string;
+  /** 派生资产的归属筛选字段（注册条目不代盖 platforms 时页面显示的判据） */
+  platformFilter?: 'harness' | 'usage';
   note?: string;
 }
 export interface PlatformReadChannel {
