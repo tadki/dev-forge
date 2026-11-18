@@ -2,6 +2,10 @@
 # 通用 meta 词汇表：owner / category / lifecycle(stable|experimental|deprecated) /
 #                   criticality(high|medium|low) / runtime(claude-code|multica|both|standalone) / docs / since / notes
 # platforms：声明该资产已应用到的平台（claude-code|multica）。不写 = 不参与平台对账（平台 → 本地 / 本地 → 平台）
+#            声明时同步解除采集器给该资产写的 source.platform=none 机械豁免（Owner 2026-11-18 账本说了算）
+# kind：覆盖命中资产的 kind（id 前缀同步改写保持 kind:name 不变量）——声明优先于扫描，采集器无需为个案破例
+# sha256：身份指纹（Owner 2026-11-18）——核对「是不是同一个东西」不能只看名称/路径；声明后实测不符则
+#         整条声明不生效 + warn 诊断（重新认可 = 更新指纹）
 # match 粒度：idPrefix/pathPrefix 前缀；ids 精确清单；exclude 前缀命中后排除（平台自带剔除）。
 # 顺序敏感：第一条命中生效（first-match-wins），更具体的条目必须写在宽泛条目（如 devforge-core）之前。
 # 归属口径（Owner 2026-11-06）：multica 平台上扫到的全部资产都是自建；本地 ~/.claude/skills 与 multica 同名的是重复错放，清理掉。
@@ -48,6 +52,17 @@ entries:
     match: { pathPrefix: "/home/jerry/tools/dev-forge/autopilots/" }
     platforms: [multica]
     meta: { owner: jerry, category: governance, lifecycle: stable, criticality: medium, runtime: multica }
+
+  - id: devforge-multica-selfhost
+    # multica 自托管升级脚本（Owner 2026-11-18 账本说了算）：kind 覆盖为 custom（id 前缀同步改写）、
+    # 归 multica 平台——platforms 声明同时解除采集器的 platform=none 机械豁免，采集器零改动；
+    # sha256 指纹核对了才盖：脚本改动后本条声明自动失效并告警，确认新版后更新指纹；
+    # 其余 adapters/ 脚本仍走下方 devforge-adapters 无归属条目
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/adapters/upgrade-multica-selfhost.sh" }
+    kind: custom
+    sha256: 751dfb2762c0abbad6166cfde38001cd04f84b756e148054e077d8193a97c8a5
+    platforms: [multica]
+    meta: { owner: jerry, category: platform, lifecycle: stable, criticality: medium, runtime: multica }
 
   - id: hindsight-mcp-remote
     # Hindsight MCP stdio 转发器（→4894 桥，HINDSIGHT_BANK_ID 选库）：multica 平台 per-agent

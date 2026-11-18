@@ -186,6 +186,9 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     expect(multica?.kinds?.instruction?.discovery?.how).toBe('derived');
     expect(multica?.kinds?.instruction?.discovery?.note).toContain('workdir');
     expect(multica?.kinds?.instruction?.read?.how).toBe('file');
+    // custom 同 kind 混合：任务采样 + multica 自托管升级脚本（registry.d 盖章归属，Owner 2026-11-18）
+    expect(multica?.kinds?.custom?.discovery?.paths).toContain('<devforge>/adapters/upgrade-multica-selfhost.sh');
+    expect(multica?.kinds?.custom?.discovery?.note).toContain('devforge-multica-selfhost');
     // multica 平台无 hooks 设置与挂载入口：三类 hook kind 均显式不适用（Owner 2026-11-11）
     expect(multica?.kinds?.['hook-rule']?.applicable).toBe(false);
     expect(multica?.kinds?.['hook-script']?.applicable).toBe(false);
