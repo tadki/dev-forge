@@ -49,6 +49,14 @@ entries:
     platforms: [multica]
     meta: { owner: jerry, category: governance, lifecycle: stable, criticality: medium, runtime: multica }
 
+  - id: hindsight-mcp-remote
+    # Hindsight MCP stdio 转发器（→4894 桥，HINDSIGHT_BANK_ID 选库）：multica 平台 per-agent
+    # 挂载 + Claude Code 类 MCP host 直接复用（Owner 2026-11-18）
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/adapters/hindsight-mcp-remote.py" }
+    sha256: 0c1447d4709d2cf54a5a80e944597d0c94e90b74c1f871b410d5d4a5e8682e31
+    platforms: [claude-code, multica]
+    meta: { owner: jerry, category: infra, lifecycle: stable, criticality: medium, runtime: both }
+
   - id: devforge-adapters
     # adapter 是跨平台胶水脚本（协议翻译/启动包装/事件转发/跨机操作），不适配任何平台：
     # 不声明 platforms（不参与平台对账），资产落平台页未适配桶，注册表照常收录（Owner 2026-11-11）

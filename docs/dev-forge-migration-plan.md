@@ -100,7 +100,7 @@ dev-forge/                          # 唯一检出：~/tools/dev-forge/（main �
 
 ## 8. Owner 手动操作清单
 
-1. **已完成 ✓**：Multica 平台创建 -new 后缀 hindsight MCP（command=bash，args=`/home/jerry/tools/dev-forge/adapters/hindsight-mcp.sh`）。
+1. **已完成 ✓**：Multica 平台创建 -new 后缀 hindsight MCP（command=bash，args=`/home/jerry/tools/dev-forge/adapters/hindsight-mcp.sh`）。（已退役 2026-11-18：平台 hindsight MCP 实配现指向 `adapters/hindsight-mcp-remote.py`，.sh 零消费方已删除）
 2. GitHub 网页：dev-forge 建仓后 branch protection（禁 squash merge 等，对齐 gqt repo settings）。
 3. P2.5 实测通过后：平台共享 MCP 配置从旧路径（`<旧 KOL 检出>/.dev/launch/hindsight-mcp.sh`）切换到 -new 或删旧留新。
 4. （如需）systemd restart 授权。
