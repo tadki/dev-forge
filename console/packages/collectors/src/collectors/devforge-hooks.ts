@@ -1,4 +1,5 @@
-import type { Asset, Relation } from '@forge/schema';
+import { PLATFORM_IDS, type Asset, type Relation } from '@forge/schema';
+import { propagateStringSets } from '../derive.js';
 import { join } from 'node:path';
 import { humanizeWhen, listDir, readJson, readText, sha256 } from '../util.js';
 import { asset, type CollectContext, type Collector } from '../types.js';
@@ -32,6 +33,12 @@ function actionSummary(actions: RuleDef['action']): string {
 }
 
 const WHEN_COMBINATORS = new Set(['all', 'any', 'not']);
+
+/** 规则 harness 声明 → 平台 id（未知 harness 不映射；平台枚举受 schema 约束） */
+function harnessPlatforms(harness?: string[]): string[] {
+  const hs = harness?.length ? harness : ['claude-code'];
+  return hs.filter((h): h is (typeof PLATFORM_IDS)[number] => (PLATFORM_IDS as readonly string[]).includes(h));
+}
 
 function collectWhenSourceOps(node: unknown, acc: Set<string>): void {
   if (!node || typeof node !== 'object') return;
@@ -136,8 +143,8 @@ export const devforgeHooksCollector: Collector = {
                 }
               : undefined,
             enforcement: 'enforced',
-            // dev-forge 工具链内部文件：归属由 registry.d 声明（devforge-hooks-engine → claude-code+multica）
-            platforms: [],
+            // 平台 = 规则自身 harness 声明（hook-script 的平台不自行声明，由使用链继承——见 derive.ts）
+            platforms: harnessPlatforms(rule.harness),
             enabled: rule.enabled !== false,
             owner: rule.owner,
             source: { collector: 'devforge-hooks', path: file, locator: `$.rules[?(@.name=="${rule.name}")]`, sha256: undefined },
@@ -183,6 +190,7 @@ export const devforgeHooksCollector: Collector = {
           summary: purpose.slice(0, 100),
           attach: { level: 'user' },
           enforcement: 'enforced',
+          // 平台不自行设置：由使用链继承（derive 框架，见使用方回填）
           platforms: [],
           source: { collector: 'devforge-hooks', path: p, sha256: sha256(md) },
           payload: { lines: md.split('\n').length, purpose, content: md },
@@ -214,8 +222,15 @@ export const devforgeHooksCollector: Collector = {
       );
     }
 
-    // 使用方回填：mountedBy = 规则直接挂载；referencedBy = 其他脚本正文引用（lib 间接使用的依据）
+        // 使用方回填 + 平台继承（derive 框架）：
+    //   - mountedBy  = 规则 run_script 直接挂载（边：规则 → 脚本）
+    //   - referencedBy = 其他脚本正文包含其文件名（边：引用脚本 → 被引用脚本；lib 的间接依据）
+    //   - 平台不自行声明：seeds = 挂载规则的 harness 平台，沿引用者→被引用者做不动点闭包，
+    //     多来源取并集（共用脚本的执行面 = 所有使用方的运行时并集）
     const scriptAssets = assets.filter((a) => a.kind === 'hook-script');
+    const rulePlatforms = new Map<string, string[]>();
+    for (const a of assets.filter((x) => x.kind === 'hook-rule')) rulePlatforms.set(a.name, a.platforms);
+    const usageOf = new Map<string, { mountedBy: string[]; referencedBy: string[] }>();
     for (const target of scriptAssets) {
       const variants = [target.name, target.name.startsWith('lib-') ? `lib/${target.name.slice(4)}` : target.name];
       const referencedBy = scriptAssets
@@ -227,10 +242,21 @@ export const devforgeHooksCollector: Collector = {
         .map((o) => o.name);
       const mount = new Set<string>(mountedBy.get(target.name) ?? []);
       for (const v of variants) for (const n of mountedBy.get(v) ?? []) mount.add(n);
-      (target.payload as Record<string, unknown>).usage = {
-        mountedBy: [...mount],
-        referencedBy: [...new Set(referencedBy)],
-      };
+      usageOf.set(target.name, { mountedBy: [...mount], referencedBy: [...new Set(referencedBy)] });
+    }
+    const derived = propagateStringSets({
+      nodes: scriptAssets.map((a) => a.name),
+      seeds: (id) => {
+        const out: string[] = [];
+        for (const rn of usageOf.get(id)?.mountedBy ?? []) out.push(...(rulePlatforms.get(rn) ?? []));
+        return out;
+      },
+      referrers: (id) => usageOf.get(id)?.referencedBy ?? [],
+    });
+    for (const target of scriptAssets) {
+      const platforms = [...(derived.get(target.name) ?? [])].sort();
+      target.platforms = platforms;
+      (target.payload as Record<string, unknown>).usage = { ...usageOf.get(target.name)!, platforms };
     }
 
     return { assets, relations, diagnostics: ctx.diagnostics };
