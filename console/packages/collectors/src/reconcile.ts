@@ -126,7 +126,7 @@ function buildLedgerConsistencyItems(
     const collected = collectedById.get(id);
     if (!collected) {
       // 裁决两个方向：以生产为准 → 清名册；以库为准 → 按写通道物化回生产（可执行才给按钮）
-      const resolved = resolveWriteChannel(rec.asset, state.assets, opts.platforms ?? DEFAULT_PLATFORMS);
+      const resolved = resolveWriteChannel(rec.asset, opts.platforms ?? DEFAULT_PLATFORMS);
       const field = contentFieldOf(rec.asset);
       const storeText = field ? (rec.asset.payload as Record<string, unknown>)[field] : undefined;
       let restore: ReconcileAction;
@@ -250,7 +250,7 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
     const side = useView ? viewSide : textSide;
     const diff = useView ? lineDiff(viewSide.left, viewSide.right) : textDiff; // - 库内真源 / + 生产实测
 
-    const resolved = resolveWriteChannel(a, state.assets, platforms);
+    const resolved = resolveWriteChannel(a, platforms);
     let push: ReconcileAction;
     if (!resolved) {
       push = { id: 'push', direction: 'local-to-platform', label: '以库为准：物化到生产', executable: false, note: '资产不匹配任何平台适配（platforms.d）', steps: [] };
@@ -604,8 +604,12 @@ export function buildReconcileReport(
       (a) => a.kind === 'agent' && a.name.toLowerCase() === d.agent.toLowerCase() && !(a.payload as { subagent?: boolean }).subagent
     );
     const sampleAsset = state.assets.find((a) => a.id === 'custom:multica-materialized-instructions');
-    const deployment = state.assets.find((a) => a.id === `deployment:multica:${d.agent.toLowerCase()}`);
-    const platformId = (deployment?.payload as { platformId?: string } | undefined)?.platformId;
+    const depAgent = state.assets.find(
+      (a) => a.kind === 'agent' && a.name.toLowerCase() === d.agent.toLowerCase() && !(a.payload as { subagent?: boolean }).subagent
+    );
+    const platformId = ((depAgent?.payload as { deployments?: Array<{ platformId?: string }> } | undefined)?.deployments ?? []).find(
+      (x) => x.platformId
+    )?.platformId;
     const hasInstructions = typeof (agentAsset?.payload as { instructions?: unknown } | undefined)?.instructions === 'string';
     const instructionsText = hasInstructions ? (agentAsset!.payload as { instructions: string }).instructions : '';
     const instructionsTruncated = instructionsText.endsWith('…(截断)');

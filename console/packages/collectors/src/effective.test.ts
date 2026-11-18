@@ -27,13 +27,15 @@ const project = base('project:king-of-likes', 'project', {
 
 const fronti = base('agent:fronti', 'agent', {
   name: 'Fronti',
-  payload: { model: 'agent-fronti[1m]', thinkingLevel: 'max', customEnvKeyCount: 3, instructions: 'You are Fronti…', skills: [{ name: 'code-review' }, { name: 'recall' }] },
-});
-const frontiDep = base('deployment:multica:fronti', 'deployment', {
-  name: 'Fronti @ multica',
-  attach: { level: 'platform', ref: 'multica' },
-  platforms: ['multica'],
-  payload: { platform: 'multica', agent: 'Fronti', platformId: 'f-1', status: 'idle' },
+  payload: {
+    model: 'agent-fronti[1m]',
+    thinkingLevel: 'max',
+    customEnvKeyCount: 3,
+    instructions: 'You are Fronti…',
+    skills: [{ name: 'code-review' }, { name: 'recall' }],
+    // 部署运行态折入 agent（kind 去重）
+    deployments: [{ platform: 'multica', platformId: 'f-1', status: 'idle' }],
+  },
 });
 
 const kolMd = base('instruction:king-of-likes/CLAUDE.md', 'instruction', {
@@ -53,7 +55,6 @@ const ruleGlobal = base('hook-rule:global-gate', 'hook-rule', {});
 const assets = [
   project,
   fronti,
-  frontiDep,
   kolMd,
   ruleForFronti,
   ruleForRevy,
@@ -70,7 +71,7 @@ describe('resolveEffective', () => {
     expect(eff.project.workspace).toBe('jerry');
     expect(eff.agent?.platform).toBe('multica');
     const hooks = eff.sections.find((s) => s.id === 'hooks')!;
-    expect(hooks.items[1].detail).toContain('2/3'); // fronti-gate + global-gate 命中
+    expect(hooks.items[0].detail).toContain('2/3'); // fronti-gate + global-gate 命中
     const mcp = eff.sections.find((s) => s.id === 'mcp')!;
     expect(mcp.items.map((i) => i.label)).toContain('godot-mcp');
     expect(mcp.items.map((i) => i.label)).toContain('hindsight（Fronti）');
@@ -79,13 +80,13 @@ describe('resolveEffective', () => {
   it('agent gating excludes non-matching agents', () => {
     const eff = resolveEffective(assets, [], 'king-of-likes', 'Revy');
     const hooks = eff.sections.find((s) => s.id === 'hooks')!;
-    expect(hooks.items[1].detail).toContain('2/3');
+    expect(hooks.items[0].detail).toContain('2/3');
   });
 
   it('human session (no agent) passes all gates', () => {
     const eff = resolveEffective(assets, [], 'king-of-likes');
     const hooks = eff.sections.find((s) => s.id === 'hooks')!;
-    expect(hooks.items[1].detail).toContain('3/3');
+    expect(hooks.items[0].detail).toContain('3/3');
   });
 
   it('includes CLAUDE.md and platform skills for Fronti', () => {

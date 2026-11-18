@@ -41,11 +41,9 @@ export function resolveEffective(
   const agentDef = agentName
     ? assets.find((a) => a.kind === 'agent' && a.name.toLowerCase() === agentName.toLowerCase())
     : undefined;
-  const agentLc = agentName?.toLowerCase();
-  const deployments = agentDef && agentLc
-    ? assets.filter((a) => a.kind === 'deployment' && (a.payload as { agent?: string }).agent?.toLowerCase() === agentLc)
-    : [];
-  const mcDeployment = deployments.find((d) => (d.payload as { platform?: string }).platform === 'multica');
+  // 部署运行态已折入 agent payload.deployments（kind 去重，Owner 2026-11-18）
+  const deployments = ((agentDef?.payload as { deployments?: Array<Record<string, unknown>> } | undefined)?.deployments ?? []);
+  const mcDeployment = deployments.find((d) => d.platform === 'multica');
   const isSubagent = agentDef ? (agentDef.payload as { subagent?: boolean }).subagent === true : false;
 
   // 01 指令：multica 前导 + agent instructions + 项目 CLAUDE.md
@@ -55,7 +53,7 @@ export function resolveEffective(
     instructions.push({
       label: 'agent.instructions（平台）',
       detail: `${(p.instructions ?? '').length} 字符 markdown`,
-      sources: [{ path: `multica://agents/${(mcDeployment.payload as { platformId?: string }).platformId}`, scope: 'AGENT' }],
+      sources: [{ path: `multica://agents/${mcDeployment.platformId}`, scope: 'AGENT' }],
     });
     instructions.push({
       label: 'multica 运行时前导（物化时注入）',
@@ -89,16 +87,10 @@ export function resolveEffective(
     });
   }
 
-  // 02 hooks：注册 + 命中规则
-  const registrations = assets.filter((a) => a.kind === 'hook-registration' && a.attach.level === 'user');
+  // 02 hooks：命中规则（挂载点事实由 hooks-registration.json manifest 承载，hook-registration kind 已退役）
   const rules = assets.filter((a) => a.kind === 'hook-rule' && a.enabled);
   const gated = rules.filter((r) => agentGates(r, agentDef?.name ?? agentName));
   const hooksItems: EffectiveItem[] = [
-    {
-      label: 'user 层挂载点',
-      detail: `${registrations.length} 条注册（dev-forge 统一入口 + hindsight 旁挂）`,
-      sources: [{ path: '~/.claude/settings.json', scope: 'USER' }],
-    },
     {
       label: '生效规则（agents 门控后）',
       detail: `${gated.length}/${rules.length} 条命中 ${agentName ?? '（人机会话）'}`,

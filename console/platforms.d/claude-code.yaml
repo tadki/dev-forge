@@ -47,7 +47,7 @@ kinds:
       registry: devforge-hooks-engine
       platformBasis: self
       platformBasisField: harness
-      note: '规则清单 JSON（devforge-hooks）；归属判据 self = 规则自身 harness 声明；settings.json 挂载由 claude-global 读（hook-registration）'
+      note: '规则清单 JSON（devforge-hooks）；归属判据 self = 规则自身 harness 声明；settings.json 挂载由 claude-global 读'
     read: { how: file }
     write: { type: file-write }
   hook-script:
@@ -82,15 +82,6 @@ kinds:
   autopilot-script:
     applicable: false
     note: 'Claude Code 无 autopilot 体系：dev-forge 巡逻脚本/评审巡逻由 registry.d 声明归属 multica'
-  hook-registration:
-    discovery:
-      mode: scan
-      how: file
-      collector: claude-global
-      paths: ["~/.claude/settings.json"]
-      note: 'settings.json hooks 挂载点实测（claude-global 直接声明）；dev-forge 注册清单工件经 registry.d devforge-hook-registrations 盖章——同 kind 混合'
-    read: { how: file }
-    write: { type: file-write }    # hooks 块在 settings.json，本地文件直接编辑（执行器白名单 + 备份）
   mcp-endpoint:
     discovery:
       mode: scan
@@ -130,7 +121,3 @@ kinds:
   service:
     applicable: false
     note: 'Claude Code 无 service 对象：systemd 运行时探针是 dev 机器对象（source.platform=none），不归属任何平台'
-  # deployment 平台页显示「不适用」而非「未适配」：Claude Code 结构上无部署实例对象
-  deployment:
-    applicable: false
-    note: 'Claude Code 无部署实例对象：deployment 是 multica 的 agent×运行环境绑定（platformId/workspaceId/status），本地文件系统平台不存在此概念'

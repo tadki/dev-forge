@@ -45,7 +45,7 @@ kinds:
     write:
       type: command
       cmd: [multica, agent, update, "{platformId}", --instructions, "{content}"]
-      platformIdFrom: deployment      # 该 agent 的 deployment 资产 payload.platformId
+      platformIdFrom: deployment      # platformId 在 agent payload.deployments（kind 去重折入）
   instruction:
     discovery:
       mode: scan
@@ -79,9 +79,6 @@ kinds:
       note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻，归属由 registry.d 条目确认（multica autopilot 引用执行）'
     read: { how: file }
     write: { type: file-write }
-  hook-registration:
-    applicable: false
-    note: 'multica 平台无 hooks 设置与挂载入口；hook 资产只归属 claude-code（Owner 2026-11-11）'
   hook-rule:
     applicable: false
     note: 'multica 平台无 hooks 设置与挂载入口；hook 规则源在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）'
@@ -91,18 +88,15 @@ kinds:
   adapter:
     applicable: false
     note: 'adapter 是跨平台胶水脚本，不归属任何平台（含 multica）：采集显式 platform=none（Owner 2026-11-11）'
-  deployment:
-    discovery:
-      mode: scan
-      how: cli
-      collector: multica
-      cmd: [multica, agent, list]
-      note: '部署实例与 agent 同一 JSON 产出（platformId/workspaceId/status 等运行态字段只落在 deployment）'
-    read:
-      how: api
-      cmd: [multica, agent, list]
-      note: '运行态字段随 agent list JSON 返回'
-    write: { type: none, advice: '部署绑定由 multica daemon 管理，无物化通道' }
+  patch:
+    applicable: false
+    note: 'multica 平台无补丁对象：补丁脚本收编在 dev-forge 仓库 patches/（platform=none），平台页不适用'
+  env:
+    applicable: false
+    note: 'multica 平台无独立 env 对象：agent custom_env 计数随 agent list 采集，不单独建模'
+  project:
+    applicable: false
+    note: 'multica 平台无 project 对象：项目由 console workspace 注册（git 身份）决定，与平台无关'
   mcp-endpoint:
     discovery:
       mode: scan

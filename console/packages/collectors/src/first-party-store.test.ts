@@ -47,14 +47,14 @@ describe('first-party store（真源：create-only）', () => {
     expect(rec.hashVersion).toBe(4);
   });
 
-  it('非内容型 kind 与未声明资产不入库', async () => {
+  it('内容型 kind（含 service）均入库；未声明资产不入库', async () => {
     const sub = join(dir, 'gating');
     const r = await syncFirstPartyStore(
       [mkAsset('service:x', { kind: 'service' }), mkAsset('skill:undeclared', { declared: false })],
       sub
     );
-    expect(r.written).toBe(0);
-    expect((await readdir(sub)).filter((f) => f.endsWith('.json'))).toHaveLength(0);
+    expect(r.written).toBe(1); // service 入库；未声明的 skill 不入
+    expect((await readdir(sub)).filter((f) => f.endsWith('.json'))).toHaveLength(1);
   });
 
   it('v1 记录迁移为 v4（按库内副本重算指纹），不报漂移', async () => {

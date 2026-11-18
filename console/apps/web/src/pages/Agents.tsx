@@ -16,15 +16,8 @@ interface AgentPayload {
   customEnvKeyCount?: number;
   customArgs?: string[];
   bodyLines?: number;
-}
-
-interface DeploymentPayload {
-  platform: string;
-  agent: string;
-  platformId?: string;
-  workspaceId?: string;
-  status?: string;
-  maxConcurrentTasks?: number;
+  /** 部署运行态折入 agent（kind 去重，Owner 2026-11-18） */
+  deployments?: Array<{ platform: string; platformId?: string; workspaceId?: string; status?: string; maxConcurrentTasks?: number }>;
 }
 
 interface TaskRow {
@@ -35,15 +28,14 @@ interface TaskRow {
   startedAt?: string;
 }
 
-function AgentCard({ a, selId, depsOf, onSelect }: {
+function AgentCard({ a, selId, onSelect }: {
   a: AssetLite;
   selId: string | null;
-  depsOf: (name: string) => AssetLite[];
   onSelect: (id: string) => void;
 }) {
   const p = a.payload as AgentPayload;
-  const d = depsOf(a.name);
-  const mc = d.find((x) => (x.payload as DeploymentPayload).platform === 'multica');
+  const d = p.deployments ?? [];
+  const mc = d.find((x) => x.platform === 'multica');
   return (
     <button className={`card ${a.id === selId ? 'sel' : ''}`} onClick={() => onSelect(a.id)}>
       <div className="row">
@@ -52,11 +44,11 @@ function AgentCard({ a, selId, depsOf, onSelect }: {
           <h3>{a.name}</h3>
           <span className="mono dim" style={{ fontSize: 'var(--fs-label)' }}>{[p.model, p.thinkingLevel].filter(Boolean).join(' · ')}</span>
         </div>
-        <span style={{ marginLeft: 'auto' }}>{mc?.payload ? <StatusBadge status={(mc.payload as DeploymentPayload).status ?? '?'} /> : null}</span>
+        <span style={{ marginLeft: 'auto' }}>{mc ? <StatusBadge status={mc.status ?? '?'} /> : null}</span>
       </div>
       <div className="desc">{(a.summary ?? '').slice(0, 80)}</div>
       <div className="row">
-        {d.length > 0 ? d.map((x) => <Badge key={x.id} tone="plain">{(x.payload as DeploymentPayload).platform}</Badge>) : <Badge tone="off">未部署</Badge>}
+        {d.length > 0 ? d.map((x) => <Badge key={x.platformId ?? x.platform} tone="plain">{x.platform}</Badge>) : <Badge tone="off">未部署</Badge>}
         {p.subagent ? <Badge tone="plain">subagent</Badge> : null}
         <Badge tone="plain">{p.skills?.length ?? 0} skills</Badge>
         {p.customEnvKeyCount ? <Badge tone="plain">env×{p.customEnvKeyCount}</Badge> : null}
@@ -67,7 +59,6 @@ function AgentCard({ a, selId, depsOf, onSelect }: {
 
 export function AgentsPage(_props: { ctx: PageCtx }) {
   const agents = useQuery({ queryKey: ['assets', 'agent'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=agent') });
-  const deployments = useQuery({ queryKey: ['assets', 'deployment'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=deployment') });
   const rules = useQuery({ queryKey: ['assets', 'hook-rule'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=hook-rule') });
   const tasks = useQuery({
     queryKey: ['assets', 'multica-tasks'],
@@ -79,8 +70,6 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
   const rows = [...(agents.data?.assets ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   const ownRows = rows.filter((a) => a.provenance === 'first-party');
   const discoveredRows = rows.filter((a) => a.provenance !== 'first-party');
-  const deps = deployments.data?.assets ?? [];
-  const depsOf = (agentName: string) => deps.filter((d) => ((d.payload as DeploymentPayload).agent ?? '').toLowerCase() === agentName.toLowerCase());
   const selId = sel ?? rows[0]?.id ?? null;
   const selected = rows.find((a) => a.id === selId);
   const detail = useQuery({
@@ -89,8 +78,8 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
     enabled: !!selId,
   });
   const selPayload = ((detail.data?.asset ?? selected)?.payload ?? {}) as AgentPayload;
-  const selDeps = selected ? depsOf(selected.name) : [];
-  const mcDep = selDeps.find((d) => (d.payload as DeploymentPayload).platform === 'multica');
+  const selDeps = (selPayload.deployments ?? []).map((d, i) => ({ ...d, id: d.platformId ?? `${d.platform}-${i}` }));
+  const mcDep = selDeps.find((d) => d.platform === 'multica');
 
   const gatedRules = (rules.data?.assets ?? []).filter((r) => {
     const g = r.applies?.agents;
@@ -106,7 +95,7 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
       <div className="page-head">
         <div>
           <h2>智能体</h2>
-          <div className="sub tagline">AGENTS · 自建 {ownRows.length} · 探测 {discoveredRows.length} · 部署 {deps.length}</div>
+          <div className="sub tagline">AGENTS · 自建 {ownRows.length} · 探测 {discoveredRows.length} · 部署 {rows.filter((a) => ((a.payload as AgentPayload).deployments ?? []).length > 0).length}</div>
         </div>
         <div className="page-actions">
           <a className="btn btn-ghost" href={`#/effective`} style={{ textDecoration: 'none' }}>有效 HARNESS →</a>
@@ -118,7 +107,7 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
           <Panel title="自建 AGENTS" en={`FIRST-PARTY · ${ownRows.length}`}>
             <div className="card-grid">
               {ownRows.map((a) => (
-                <AgentCard key={a.id} a={a} selId={selId} depsOf={depsOf} onSelect={setSel} />
+                <AgentCard key={a.id} a={a} selId={selId} onSelect={setSel} />
               ))}
             </div>
           </Panel>
@@ -126,7 +115,7 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
             <Panel title="探测 DISCOVERED" en={`HARNESS · ${discoveredRows.length}`}>
               <div className="card-grid">
                 {discoveredRows.map((a) => (
-                  <AgentCard key={a.id} a={a} selId={selId} depsOf={depsOf} onSelect={setSel} />
+                  <AgentCard key={a.id} a={a} selId={selId} onSelect={setSel} />
                 ))}
               </div>
               <div className="dim" style={{ fontSize: 'var(--fs-label)', padding: '4px 0' }}>harness / 项目目录扫描发现，非自建 roster；确认为自建后可在 registry.d/owned.yaml 声明收编。</div>
@@ -171,10 +160,10 @@ export function AgentsPage(_props: { ctx: PageCtx }) {
           <DataTable
             rows={selDeps}
             cols={[
-              { key: 'platform', head: '平台', render: (d) => <Badge tone="plain">{(d.payload as DeploymentPayload).platform}</Badge> },
-              { key: 'ws', head: '环境', render: (d) => <span className="mono dim">{(d.payload as DeploymentPayload).workspaceId?.slice(0, 8) ?? d.attach.ref ?? '—'}</span> },
-              { key: 'status', head: '状态', render: (d) => (d.payload as DeploymentPayload).status ? <StatusBadge status={(d.payload as DeploymentPayload).status ?? '?'} /> : <span className="dim">—</span> },
-              { key: 'conc', head: '并发', render: (d) => <span className="mono dim">{(d.payload as DeploymentPayload).maxConcurrentTasks ?? '—'}</span> },
+              { key: 'platform', head: '平台', render: (d) => <Badge tone="plain">{d.platform}</Badge> },
+              { key: 'ws', head: '环境', render: (d) => <span className="mono dim">{d.workspaceId?.slice(0, 8) ?? '—'}</span> },
+              { key: 'status', head: '状态', render: (d) => d.status ? <StatusBadge status={d.status ?? '?'} /> : <span className="dim">—</span> },
+              { key: 'conc', head: '并发', render: (d) => <span className="mono dim">{d.maxConcurrentTasks ?? '—'}</span> },
             ]}
           />
           {selDeps.length === 0 && <div className="dim" style={{ padding: '4px 0' }}>该本体尚未部署到任何平台 / 项目。</div>}

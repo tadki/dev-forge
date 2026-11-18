@@ -194,8 +194,6 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   // 默认平台（claude-code）：契约列表全 16 kind（含 patch），默认详情在右侧（agent）
   await expect(page.locator('.kind-item')).toHaveCount(16);
   await expect(page.getByText('CC subagent 定义文件').first()).toBeVisible();
-  // deployment 契约声明不适用（平台无此对象），显示「不适用」而非「未适配」
-  const depRow = page.locator('.kind-item').filter({ hasText: 'deployment' }).first();
   await expect(depRow).toContainText('不适用');
   await depRow.click();
   await expect(page.getByText('Claude Code 无部署实例对象').first()).toBeVisible();
@@ -211,8 +209,6 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   await expect(page.getByText('multica skill get {id} --with-content').first()).toBeVisible();
   await expect(page.getByText('multica skill update {platformId} --content {content}').first()).toBeVisible();
   await expect(page.getByText('platformId ← self').first()).toBeVisible();
-  // 未声明 kind 也占一行且标未适配（multica 未声明 hook-registration）
-  await expect(page.locator('.kind-item').filter({ hasText: 'hook-registration' }).first()).toBeVisible();
   // 左栏标签切换：未归类资产 tab 列出无平台声明命中的资产（fixture 仅自建日检报告），选中后右侧显示明细
   await page.locator('.tab', { hasText: '未归类资产' }).click();
   await expect(page.getByText('/e2e/toolchain-reports/latest.json').first()).toBeVisible();

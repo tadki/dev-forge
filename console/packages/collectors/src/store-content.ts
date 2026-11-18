@@ -7,14 +7,21 @@ import type { Asset, AssetKind } from '@forge/schema';
  * 供 store 落盘与 store-drift 对账共用（绝不两处各写一套）。
  */
 
-/** 进库且参与漂移对账的 kind（其余 kind 永远只是生产实测投影） */
+/** 进库且参与漂移对账的 kind——全部自建内容型资产均入库（Owner 2026-11-18：
+ *  扫描产物皆投影，落在 registry 声明范围内的即对应真源；指纹视图按 kind 设计） */
 export const TRUTH_KINDS: readonly AssetKind[] = [
   'instruction',
   'skill',
   'agent',
   'hook-rule',
   'hook-script',
+  'service',
   'adapter',
+  'patch',
+  'mcp-endpoint',
+  'env',
+  'project',
+  'custom',
   'autopilot-script',
   'autopilot-registration',
 ];
@@ -67,8 +74,26 @@ function contentView(asset: Asset): Record<string, unknown> {
     }
     case 'hook-script':
       return { sha256: asset.source.sha256, ...pick(p, ['purpose']) };
+    case 'service':
+      // unit 定义（systemctl cat）+ 挂载层级；active/enabled 等运行态不进指纹
+      return { ...pick(p, ['scope', 'unitName', 'unitContent']) };
     case 'adapter':
       return { sha256: asset.source.sha256, ...pick(p, ['envContract', 'purpose']) };
+    case 'patch':
+      // 补丁脚本正文 + 应用基线；appliedAt 随重贴变化不进指纹
+      return { sha256: asset.source.sha256, ...pick(p, ['content', 'state']) };
+    case 'mcp-endpoint':
+      // 脱敏后的连接定义（url/command/args 均为确定性掩码，不含密钥原文）
+      return pick(p, ['transport', 'command', 'args', 'url']);
+    case 'env':
+      // 脱敏键值集 + 键数：增删键即漂移
+      return pick(p, ['values', 'count']);
+    case 'project':
+      // 仓库身份
+      return pick(p, ['path', 'git', 'workspace', 'harnesses']);
+    case 'custom':
+      // 观测/杂项桶：只登记身份不参与内容对账（空视图 → 指纹恒定，不产生假漂移）
+      return {};
     case 'autopilot-script':
       // 本地脚本型 / 配置 / agent 评审型（content 已归档不进指纹）
       return { sha256: asset.source.sha256, ...pick(p, ['purpose', 'reviewKind', 'templates']) };
