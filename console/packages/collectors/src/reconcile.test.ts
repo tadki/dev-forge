@@ -409,3 +409,63 @@ describe('审核回归：未注册平台与截断保护', () => {
     expect(item?.actions.find((x) => x.id === 'adopt')?.note).toContain('未注册');
   });
 });
+
+describe('账本一致性（规则层 ↔ 名册层）', () => {
+  const declared = (a: Asset): Asset => ({ ...a, payload: { ...a.payload, registry: { declared: true, declaredBy: 'entry-a' } } });
+  const entries = [{ id: 'entry-a' }, { id: 'entry-b' }];
+
+  function v3(asset: Asset, hashOverride?: string): import('./first-party-store.js').StoreRecord {
+    return {
+      id: asset.id,
+      kind: asset.kind,
+      name: asset.name,
+      declaredBy: (asset.payload as { registry?: { declaredBy?: string } }).registry?.declaredBy,
+      savedAt: '2026-11-06T00:00:00Z',
+      updatedAt: '2026-11-06T00:00:00Z',
+      hashVersion: 3,
+      hash: hashOverride ?? contentFingerprint(asset),
+      asset,
+    };
+  }
+
+  it('孤儿记录：库内有、采集面消失 → ledger-orphan', () => {
+    const ghost = declared(mk('instruction:ghost/CLAUDE.md', 'instruction', { payload: { content: 'x' } }));
+    const live = declared(mk('instruction:live/CLAUDE.md', 'instruction', { payload: { content: 'y' } }));
+    const store = new Map([[ghost.id, v3(ghost)]]);
+    const report = buildReconcileReport({ assets: [live] }, entries, new Date(), { store });
+    const item = report.items.find((i) => i.type === 'ledger-orphan');
+    expect(item?.name).toBe(ghost.name);
+    expect(item?.detail).toContain('entry-a');
+  });
+
+  it('declaredBy 悬空：条目不存在 → ledger-dangling', () => {
+    const orphanEntry = declared(mk('instruction:dan/CLAUDE.md', 'instruction', { payload: { content: 'x' } }));
+    const rec = { ...v3(orphanEntry), declaredBy: 'removed-entry' };
+    const report = buildReconcileReport({ assets: [orphanEntry] }, entries, new Date(), { store: new Map([[orphanEntry.id, rec]]) });
+    const item = report.items.find((i) => i.type === 'ledger-dangling');
+    expect(item?.detail).toContain('removed-entry');
+  });
+
+  it('记录自指纹不符 → ledger-selfhash（error + adopt 重写动作）', () => {
+    const a = declared(mk('instruction:hash/CLAUDE.md', 'instruction', { payload: { content: '真实内容' } }));
+    const rec = v3(a, 'bogus-hash');
+    const report = buildReconcileReport({ assets: [a] }, entries, new Date(), { store: new Map([[a.id, rec]]) });
+    const item = report.items.find((i) => i.type === 'ledger-selfhash');
+    expect(item?.severity).toBe('error');
+    expect(item?.actions.find((x) => x.id === 'adopt')?.executable).toBe(true);
+  });
+
+  it('声明为自建但未入库 → ledger-unregistered（adopt 登记入库）', () => {
+    const a = declared(mk('instruction:new/CLAUDE.md', 'instruction', { payload: { content: '新资产' } }));
+    const report = buildReconcileReport({ assets: [a] }, entries, new Date(), { store: new Map() });
+    const item = report.items.find((i) => i.type === 'ledger-unregistered');
+    expect(item?.name).toBe(a.name);
+    expect(item?.actions.find((x) => x.id === 'adopt')?.steps[0]).toMatchObject({ type: 'store-write', assetId: a.id });
+  });
+
+  it('完全一致 → 无账本条目', () => {
+    const a = declared(mk('instruction:ok/CLAUDE.md', 'instruction', { payload: { content: 'ok' } }));
+    const report = buildReconcileReport({ assets: [a] }, entries, new Date(), { store: new Map([[a.id, v3(a)]]) });
+    expect(report.items.filter((i) => i.type.startsWith('ledger-'))).toHaveLength(0);
+  });
+});

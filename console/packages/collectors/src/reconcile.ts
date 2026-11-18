@@ -14,7 +14,11 @@ export type ReconcileItemType =
   | 'content-drift'
   | 'store-drift'
   | 'patch-drift'
-  | 'uncovered-assets';
+  | 'uncovered-assets'
+  | 'ledger-orphan'
+  | 'ledger-dangling'
+  | 'ledger-selfhash'
+  | 'ledger-unregistered';
 export type ReconcileDirection = 'platform-to-local' | 'local-to-platform';
 
 /** 内容来源：从当前 state 的资产 payload（默认）或库内副本（from:'store'）取同步内容（服务端解析，客户端无法注入） */
@@ -99,8 +103,83 @@ function manualApplyNote(platform: string, matched: Asset[]): string {
 export interface ReconcileOpts {
   /** 库内真源副本（v2）。提供时启用 store-drift 检测：库指纹 ≠ 生产指纹即差异 */
   store?: Map<string, StoreRecord>;
+  /** registry.d 条目（规则层）。提供时启用账本一致性校验（declaredBy 悬空检测） */
+  registryEntries?: Array<{ id: string; platforms?: string[] }>;
   /** 平台适配（默认 DEFAULT_PLATFORMS；生产由 engine 从 console/platforms.d 加载） */
   platforms?: PlatformDef[];
+}
+
+/** 账本一致性（规则层 ↔ 名册层）：孤儿记录 / declaredBy 悬空 / 记录自指纹不符 / 声明未入册 */
+function buildLedgerConsistencyItems(
+  state: { assets: Asset[] },
+  opts: ReconcileOpts,
+  entries: RegistryEntry[]
+): ReconcileItem[] {
+  const items: ReconcileItem[] = [];
+  const store = opts.store;
+  if (!store) return items;
+  const entryIds = new Set(entries.map((e) => e.id));
+  const collectedById = new Map(state.assets.map((a) => [a.id, a] as const));
+
+  for (const [id, rec] of store) {
+    const collected = collectedById.get(id);
+    if (!collected) {
+      items.push({
+        key: `ledger-orphan:${id}`,
+        type: 'ledger-orphan',
+        severity: 'warn',
+        platform: 'local',
+        name: rec.asset.name,
+        detail: `名册记录在采集面已消失（declaredBy: ${rec.declaredBy ?? '—'}）——规则改动或资产下线后名册未清`,
+        copies: [{ assetId: rec.asset.id, name: `${rec.asset.name}（库内）`, path: rec.asset.source.path, sha: rec.hash.slice(0, 16), platforms: ['store'] }],
+        actions: [],
+      });
+      continue;
+    }
+    if (rec.hashVersion === 3 && rec.hash !== contentFingerprint(rec.asset)) {
+      items.push({
+        key: `ledger-selfhash:${id}`,
+        type: 'ledger-selfhash',
+        severity: 'error',
+        platform: 'local',
+        name: rec.asset.name,
+        detail: '名册记录自身指纹与内容不符（手工编辑或写入损坏），该记录不可作为真源采信',
+        copies: [{ assetId: rec.asset.id, name: `${rec.asset.name}（库内）`, path: rec.asset.source.path, sha: rec.hash.slice(0, 16), platforms: ['store'] }],
+        actions: [{ id: 'adopt', direction: 'platform-to-local', label: '以生产为准：重算并重写库记录', executable: true, steps: [{ type: 'store-write', assetId: rec.asset.id }] }],
+      });
+    }
+    if (rec.declaredBy && !entryIds.has(rec.declaredBy)) {
+      items.push({
+        key: `ledger-dangling:${id}`,
+        type: 'ledger-dangling',
+        severity: 'warn',
+        platform: 'local',
+        name: rec.asset.name,
+        detail: `declaredBy 指向不存在的账本条目「${rec.declaredBy}」——规则已改名/删除，收录链路断开`,
+        copies: [{ assetId: rec.asset.id, name: `${rec.asset.name}（库内）`, path: rec.asset.source.path, sha: rec.hash.slice(0, 16), platforms: ['store'] }],
+        actions: [],
+      });
+    }
+  }
+
+  // 覆盖对照：声明为自建（registry 盖章）的内容型资产，名册里必须有记录（入库环节遗漏）
+  for (const a of state.assets) {
+    if (!isTruthKind(a.kind)) continue;
+    if (a.provenance !== 'first-party') continue;
+    const declared = (a.payload as { registry?: { declared?: boolean } } | undefined)?.registry?.declared === true;
+    if (!declared || store.has(a.id)) continue;
+    items.push({
+      key: `ledger-unregistered:${a.id}`,
+      type: 'ledger-unregistered',
+      severity: 'warn',
+      platform: a.platforms.join('+') || 'local',
+      name: a.name,
+      detail: '声明为自建的内容型资产不在名册（入库环节遗漏）——库无法作为其展示真源',
+      copies: [{ assetId: a.id, name: a.name, path: a.source.path, platforms: a.platforms }],
+      actions: [{ id: 'adopt', direction: 'platform-to-local', label: '以生产为准：登记入库', executable: true, steps: [{ type: 'store-write', assetId: a.id }] }],
+    });
+  }
+  return items;
 }
 
 /** 库 vs 生产对账：真源副本指纹与当前采集内容分叉 → adopt（采纳生产）/ push（以库为准物化） */
@@ -573,6 +652,9 @@ export function buildReconcileReport(
   // 库（真源）vs 生产：指纹分叉 → store-drift（adopt / push 双向裁决）
   items.push(...buildStoreDriftItems(state, opts));
 
+  // 规则层（registry.d）↔ 名册层（store）：四项一致性校验（Owner 2026-11-18：两层为一体，分叉即提示）
+  items.push(...buildLedgerConsistencyItems(state, opts, entries));
+
   // 本地补丁 vs 现状：基线失配 → patch-drift（reapply 单向）
   items.push(...buildPatchDriftItems(state));
 
@@ -601,6 +683,10 @@ export function reconcileDiagnostics(report: ReconcileReport, limit = 30): Array
     'store-drift': '库与生产分叉',
     'patch-drift': '补丁漂移',
     'uncovered-assets': '未纳入对账',
+    'ledger-orphan': '名册孤儿记录',
+    'ledger-dangling': 'declaredBy 悬空',
+    'ledger-selfhash': '名册自指纹不符',
+    'ledger-unregistered': '声明未入册',
   };
   return report.items.slice(0, limit).map((i) => ({
     level: 'warn' as const,

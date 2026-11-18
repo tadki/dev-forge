@@ -14,6 +14,10 @@ const RECONCILE_LABEL: Record<ReconcileItem['type'], string> = {
   'store-drift': '库与生产分叉',
   'patch-drift': '补丁漂移',
   'uncovered-assets': '未纳入对账',
+  'ledger-orphan': '名册孤儿记录',
+  'ledger-dangling': 'declaredBy 悬空',
+  'ledger-selfhash': '名册自指纹不符',
+  'ledger-unregistered': '声明未入册',
 };
 
 const DIRECTION_LABEL: Record<ReconcileAction['direction'], string> = {
