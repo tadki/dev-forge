@@ -4,6 +4,10 @@ import { exists, firstHeading, guessLang, headings, listDir, readJson, readText,
 import { asset, type CollectContext, type Collector } from '../types.js';
 import { redactObject } from '../redact.js';
 
+interface SettingsHooks {
+  [event: string]: Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string }> }>;
+}
+
 /** 在插件缓存目录 `cache/<marketplace>/<plugin>/<version>/agents` 中选最新版本的 agents 目录 */
 async function resolvePluginAgentsDir(pluginBase: string): Promise<string | null> {
   let best: { dir: string; ver: string } | null = null;
@@ -36,6 +40,46 @@ export const claudeGlobalCollector: Collector = {
     const claude = ctx.paths.claude;
 
     const settings = (await readJson<Record<string, unknown>>(join(claude, 'settings.json'))) ?? {};
+
+    // hooks 注册（user 层）：按 CC hooks schema 整表遍历（event → matcher entry → hooks[] 全量命令）。
+    // 归属判定：只有对照 bootstrap/hooks-registration.json 声明命中的统一入口是自建（wrapper 路径锚定，不按仓库名猜）；
+    // hindsight 旁挂按部署根目录识别（根规则，非逐条登记）——那是 Hindsight 平台自带的 SessionStart/UserPromptSubmit/Stop
+    // 三钩，与其余外部挂载同为第三方（Owner 2026-11-18：hindsight 钩子不算自建）。
+    const hookManifest = await readJson<{ wrapper?: string; alias?: string }>(
+      join(ctx.paths.devforge, 'bootstrap', 'hooks-registration.json')
+    );
+    const wrapperToken = hookManifest?.wrapper ? `claude-hooks/${hookManifest.wrapper}` : null;
+    const hooks = (settings.hooks ?? {}) as SettingsHooks;
+    for (const [event, entries] of Object.entries(hooks)) {
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        const allCmds = entry.hooks ?? [];
+        for (let j = 0; j < allCmds.length; j++) {
+          const command = allCmds[j]?.command ?? '';
+          if (!command) continue;
+          const isDevforge = wrapperToken !== null && command.includes(wrapperToken);
+          const isHindsight = command.includes('.hindsight');
+          const cls = isDevforge ? 'devforge' : isHindsight ? 'hindsight' : 'other';
+          assets.push(
+            asset({
+              // 类别段置于 event 之前，registry.d 才能用 idPrefix 精确圈定/排除（后缀不可前缀匹配）
+              id: `hook-registration:${cls}:${event}-${i}-${j}`,
+              kind: 'hook-registration',
+              name: `${event} → ${isDevforge ? 'dev-forge 统一入口' : isHindsight ? 'hindsight 旁挂' : '自定义'}`,
+              summary: command.length > 120 ? command.slice(0, 120) + '…' : command,
+              attach: { level: 'user' },
+              enforcement: 'enforced',
+              // user 级挂载对机器上所有 claude-code 会话生效；multica 平台无 hooks 入口，钩子资产只归属 claude-code（Owner 2026-11-11）
+              platforms: ['claude-code'],
+              provenance: isDevforge ? 'first-party' : 'third-party',
+              tags: [event, isDevforge ? 'devforge' : isHindsight ? 'hindsight' : 'custom'],
+              source: { collector: 'claude-global', path: join(claude, 'settings.json'), locator: `$.hooks.${event}[${i}][${j}]` },
+              payload: { event, matcher: entry.matcher ?? '*', command: redactObject(command) },
+            })
+          );
+        }
+      }
+    }
 
     // env（脱敏）
     const env = (settings.env ?? {}) as Record<string, string>;

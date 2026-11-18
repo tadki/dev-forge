@@ -970,6 +970,33 @@
         "active": "active",
         "trigger": "随 toolchain-start-all 启动"
       }
+    },
+    {
+      "id": "hook-registration:PreToolUse-0-devforge",
+      "kind": "hook-registration",
+      "name": "PreToolUse → dev-forge 统一入口",
+      "summary": "/e2e/dev-forge/claude-hooks/hook-wrapper.sh",
+      "attach": {
+        "level": "user"
+      },
+      "enforcement": "enforced",
+      "platforms": [
+        "claude-code"
+      ],
+      "provenance": "first-party",
+      "tags": [
+        "PreToolUse",
+        "devforge"
+      ],
+      "enabled": true,
+      "source": {
+        "collector": "fixture",
+        "path": "/e2e/settings.json"
+      },
+      "payload": {
+        "event": "PreToolUse",
+        "command": "/e2e/dev-forge/hook-wrapper.sh PreToolUse unified-hook"
+      }
     }
   ],
   "relations": [

@@ -145,6 +145,17 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         read: { how: 'file' },
         write: { type: 'file-write' },
       },
+      'hook-registration': {
+        discovery: {
+          mode: 'scan',
+          how: 'file',
+          collector: 'claude-global',
+          paths: ['~/.claude/settings.json'],
+          note: 'settings.json hooks 挂载点实测（claude-global 直接声明）；dev-forge 注册清单工件经 registry.d devforge-hook-registrations 盖章——同 kind 混合',
+        },
+        read: { how: 'file' },
+        write: { type: 'file-write' },
+      },
       'hook-script': {
         discovery: {
           mode: 'declared',
@@ -297,6 +308,10 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
       'hook-rule': {
         applicable: false,
         note: 'multica 平台无 hooks 设置与挂载入口；hook 规则源在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）',
+      },
+      'hook-registration': {
+        applicable: false,
+        note: 'multica 平台无 hooks 设置与挂载入口；hook 资产只归属 claude-code（Owner 2026-11-11）',
       },
       'hook-script': {
         applicable: false,
