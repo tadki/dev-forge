@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { Asset } from '@forge/schema';
 import { createHandler } from './app.js';
 import { SSEBus } from './sse.js';
-import type { RegistryState } from '@forge/collectors';
+import type { RegistryState, StoreRecord } from '@forge/collectors';
 import { DEFAULT_PLATFORMS } from '@forge/collectors';
 
 function mk(id: string, kind: Asset['kind'], over: Partial<Asset> = {}): Asset {
@@ -52,6 +52,10 @@ const state: RegistryState = {
     mk('skill:user-editable', 'skill', {
       name: 'editable',
       payload: { content: 'original body' },
+    }),
+    mk('skill:store-only', 'skill', {
+      name: 'store-only',
+      payload: { content: 'collected body' },
     }),
     mk('service:systemd-grepai-watch.service', 'service', {
       name: 'grepai-watch',
@@ -127,6 +131,25 @@ beforeAll(async () => {
       return name === 'missing-rule'
         ? { status: 'invalid', ok: false, output: `规则不存在：${name}` }
         : { status: 'ok', ok: true, output: `${name} → ${enabled ? 'enabled' : 'disabled'}` };
+    },
+    storeRecords: () => {
+      // 镜像当前采集（生产=投影，库随采集收敛）；store-only 钉死分歧内容模拟漂移
+      const m = new Map<string, StoreRecord>();
+      for (const a of state.assets) {
+        if (a.kind !== 'skill') continue;
+        const diverged = a.id === 'skill:store-only';
+        m.set(a.id, {
+          id: a.id,
+          kind: a.kind,
+          name: a.name,
+          savedAt: '2026-11-01T00:00:00Z',
+          updatedAt: '2026-11-01T00:00:00Z',
+          hashVersion: 2,
+          hash: diverged ? 'storeonlyhash' : 'mirrorhash',
+          asset: diverged ? { ...a, payload: { content: 'store body' } } : a,
+        });
+      }
+      return m;
     },
     getReconcileReport: () => ({
       generatedAt: '2026-11-05T00:00:00Z',
@@ -205,7 +228,7 @@ describe('api endpoints', () => {
 
   it('overview aggregates counts, health', async () => {
     const r = await get('/api/overview', TOKEN);
-    expect(r.body.total).toBe(13);
+    expect(r.body.total).toBe(14);
     expect(r.body.counts['hook-rule']).toBe(1);
     expect(r.body.counts['deployment']).toBe(1);
     expect(r.body.health.status).toBe('GREEN');
@@ -255,7 +278,7 @@ describe('api endpoints', () => {
     expect(agentRow.read).toMatchObject({ how: 'api', cmd: ['multica', 'agent', 'list'] });
     expect(agentRow.write.type).toBe('command');
     const cc = r.body.platforms.find((p: { id: string }) => p.id === 'claude-code');
-    expect(cc.totalAssets).toBe(9); // 13 资产 - 3 个无平台声明（systemd 运行时探针，platform:none）- 1 个仅声明 multica
+    expect(cc.totalAssets).toBe(10); // 14 资产 - 4 个无平台声明（3 systemd 探针 + store-only 无声明）- 1 个仅声明 multica
     expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').discovery.paths).toContain('<project>/CLAUDE.md');
     expect(cc.kinds.find((k: { kind: string }) => k.kind === 'instruction').read).toEqual({ how: 'file' });
     // 声明式发现：盖章条目 id 与条目内的 platforms 声明一起带出（页面可追溯归属链）
@@ -267,7 +290,7 @@ describe('api endpoints', () => {
     expect(ccRule.firstPartyCount).toBeLessThanOrEqual(ccRule.assetCount);
     expect(r.body.unadapted.assetCount).toBe(3);
     expect(r.body.unadapted.kinds[0].kind).toBe('service');
-    expect(r.body.declaredCount).toBe(10); // 唯一声明资产：cc 9 + multica 1（跨页共享会重复计入 totalAssets，此处无共享）
+    expect(r.body.declaredCount).toBe(11); // 唯一声明资产：cc 10（含库内注册的 store-only）+ multica 1
     expect(Array.isArray(r.body.diagnostics)).toBe(true);
     expect(typeof r.body.generatedAt).toBe('string');
     for (const p of r.body.platforms as { kinds: { assets: Record<string, unknown>[] }[] }[]) {
@@ -356,6 +379,17 @@ describe('api endpoints', () => {
     expect((await post({ name: 'missing-rule', enabled: true })).status).toBe(404);
     expect((await post({ name: 'x' })).status).toBe(400); // enabled 缺失
     expect((await post({ name: '', enabled: true })).status).toBe(400); // name 为空
+  });
+
+  it('单资产 GET 真源库优先：内容型返回库记录正文+漂移标记；非内容型回落采集快照', async () => {
+    const r = await get('/api/assets/skill%3Astore-only', TOKEN);
+    expect(r.status).toBe(200);
+    expect((r.body.asset as { payload: { content: string } }).payload.content).toBe('store body');
+    expect(r.body.truth).toMatchObject({ source: 'store', drift: true });
+
+    const svc = await get('/api/assets/service%3Asystemd-grepai-watch.service', TOKEN);
+    expect(svc.status).toBe(200);
+    expect(svc.body.truth).toEqual({ source: 'collected' });
   });
 
   it('reconcile: 报告可读、写操作必须 confirm、gone 409、invalid 400', async () => {

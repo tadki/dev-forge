@@ -537,6 +537,8 @@ export interface PlatformAssetLite {
   platformId?: string;
   enabled: boolean;
   provenance?: 'first-party' | 'third-party';
+  /** 资产自身 platforms 声明（逐资产显示归属） */
+  platforms: string[];
 }
 
 export interface PlatformKindView {
@@ -606,6 +608,7 @@ function assetLite(a: Asset): PlatformAssetLite {
     ...(platformId !== undefined ? { platformId } : {}),
     enabled: a.enabled,
     ...(a.provenance ? { provenance: a.provenance } : {}),
+    platforms: a.platforms,
   };
 }
 

@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Asset } from '@forge/schema';
 import type { PlatformDef, ReconcileReport, RegistryState, WorkspaceDef } from '@forge/collectors';
-import { buildPlatformsView, resolveEffective } from '@forge/collectors';
+import { buildPlatformsView, contentFingerprint, isTruthKind, resolveEffective } from '@forge/collectors';
+import type { StoreRecord } from '@forge/collectors';
 import { validateCollection } from '@forge/schema';
 import { checkAuth } from './auth.js';
 import { serveStatic } from './static.js';
@@ -30,6 +31,8 @@ export interface AppDeps {
   saveAssetContent: (assetId: string, content: string, file?: string) => Promise<{ status: 'ok' | 'invalid' | 'failed'; ok: boolean; output: string }>;
   /** 钩子规则启停（写回 rules JSON，引擎每次事件从磁盘现读 → 写回即热生效；快照刷新由实现方负责） */
   toggleHookRule: (name: string, enabled: boolean) => Promise<{ status: 'ok' | 'invalid'; ok: boolean; output: string }>;
+  /** first-party store 真源记录（内容型自建资产展示的唯一真源；id → record） */
+  storeRecords: () => Map<string, StoreRecord>;
   onAfterAction?: () => void;
 }
 
@@ -137,7 +140,14 @@ export function createHandler(deps: AppDeps) {
       }
 
       if (path === '/api/platforms' && req.method === 'GET') {
-        const view = buildPlatformsView(state.assets, deps.platforms(), deps.registryEntries());
+        // 库真源叠加（Owner 2026-11-18 模型）：扫描全量发现 → 库记录以第一优先级覆盖同 id 资产；
+        // 仅存在于库中（手动注册、不在任何扫描路径）的真源资产同样进契约视图
+        const recs = deps.storeRecords();
+        const byId = new Map(state.assets.map((a) => [a.id, a] as const));
+        for (const [id, rec] of recs) {
+          if (isTruthKind(rec.asset.kind)) byId.set(id, rec.asset);
+        }
+        const view = buildPlatformsView([...byId.values()], deps.platforms(), deps.registryEntries());
         return json(res, 200, {
           ...view,
           generatedAt: new Date().toISOString(),
@@ -229,7 +239,17 @@ export function createHandler(deps: AppDeps) {
         if (!a) return json(res, 404, { error: 'asset not found', id });
         const inbound = state.relations.filter((r) => r.to === id);
         const outbound = state.relations.filter((r) => r.from === id);
-        return json(res, 200, { asset: a, relations: { inbound, outbound } });
+        // 真源库优先（Owner 2026-11-18 模型）：内容型自建资产的展示以库记录为唯一真源；
+        // 采集快照只提供发现与漂移标记。无库记录（未入库 kind/未盖章）回落采集快照。
+        const rec = isTruthKind(a.kind) ? deps.storeRecords().get(id) : undefined;
+        const drift = rec ? rec.hash !== contentFingerprint(a) : undefined;
+        return json(res, 200, {
+          asset: rec ? rec.asset : a,
+          relations: { inbound, outbound },
+          truth: rec
+            ? { source: 'store', recordHash: rec.hash.slice(0, 16), drift }
+            : { source: 'collected' },
+        });
       }
 
       if (path === '/api/graph') {
