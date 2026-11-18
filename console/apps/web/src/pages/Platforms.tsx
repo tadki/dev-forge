@@ -557,9 +557,9 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                 })}
               </div>
 
-              {/* 右栏：选中契约的完整详情（全字段 + 资产清单），内部滚动 */}
-              <div style={{ minHeight: 0, overflowY: 'auto', borderLeft: '1px solid var(--khaki)', paddingLeft: 'var(--sp-3)' }}>
-                <div className="row mb">
+              {/* 右栏：选中契约的完整详情。通道字段冻结，仅「资产 ASSETS」列表内部滚动 */}
+              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--khaki)', paddingLeft: 'var(--sp-3)' }}>
+                <div className="row mb" style={{ flexShrink: 0 }}>
                   <span className="mono" style={{ fontWeight: 700 }}>
                     {sel.kind}
                   </span>
@@ -575,7 +575,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     {sel.note}
                   </div>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--sp-3)', alignItems: 'start' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--sp-3)', alignItems: 'start', flexShrink: 0 }}>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
                       发现通道 DISCOVERY
@@ -596,11 +596,12 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                   </div>
                 </div>
                 {sel.assets.length > 0 && (
-                  <div style={{ marginTop: 'var(--sp-3)' }}>
-                    <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
+                  <div style={{ marginTop: 'var(--sp-3)', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <div className="mono dim" style={{ ...LABEL, marginBottom: 4, flexShrink: 0 }}>
                       资产 ASSETS
                     </div>
-                    {sel.assets.map((a) => (
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                      {sel.assets.map((a) => (
                       <div key={a.id} className="row" style={{ padding: '3px 0', borderBottom: '1px solid var(--khaki)' }}>
                         {a.provenance === 'first-party' && (
                           <span
@@ -625,7 +626,8 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                           {a.platformId ? ` · id ${a.platformId}` : ''}
                         </span>
                       </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
