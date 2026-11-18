@@ -90,9 +90,11 @@ test('instructions: tree, render, source', async ({ page }) => {
   await expect(page.locator('pre.code').first()).toContainText('# 基础规范');
 });
 
-test('hooks: pipeline, rules table, firelog', async ({ page }) => {
+test('hooks: harness badge, rules table, firelog', async ({ page }) => {
   await page.goto('/hooks');
-  await expect(page.locator('.pipe-node').first()).toContainText('CC 9 挂载点');
+  // 链路条已收敛为「已生效 HARNESS」Badge（tooltip 内为挂载链路）
+  await expect(page.getByText('已生效 HARNESS')).toBeVisible();
+  await expect(page.getByText('Claude Code').first()).toBeVisible();
   await expect(page.getByText('revy-testing-skill-check')).toBeVisible();
   await expect(page.getByText('REPO 门控')).toBeVisible();
   await expect(page.locator('tr', { hasText: 'revy-testing-skill-check' }).getByText('kol', { exact: true })).toBeVisible();
