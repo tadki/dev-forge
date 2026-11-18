@@ -44,7 +44,7 @@ describe('first-party store（真源：create-only）', () => {
     expect((await stat(file)).mtimeMs).toBe(mtime1); // 未重写
     const rec = JSON.parse(await readFile(file, 'utf8'));
     expect(rec.asset.payload.content).toBe('v1'); // 库内保持真源
-    expect(rec.hashVersion).toBe(3);
+    expect(rec.hashVersion).toBe(4);
   });
 
   it('非内容型 kind 与未声明资产不入库', async () => {
@@ -57,7 +57,7 @@ describe('first-party store（真源：create-only）', () => {
     expect((await readdir(sub)).filter((f) => f.endsWith('.json'))).toHaveLength(0);
   });
 
-  it('v1 记录迁移为 v2（按当前生产内容采纳基线），不报漂移', async () => {
+  it('v1 记录迁移为 v4（按库内副本重算指纹），不报漂移', async () => {
     const sub = join(dir, 'migrate');
     const a = mkAsset('skill:old', { content: '现产' });
     // 手工构造 v1 记录（无 hashVersion，hash 是旧口径）
@@ -70,7 +70,7 @@ describe('first-party store（真源：create-only）', () => {
     const r = await syncFirstPartyStore([a], sub);
     expect(r.migrated).toBe(1);
     const rec = JSON.parse(await readFile(join(sub, storeFileName(a.id)), 'utf8'));
-    expect(rec.hashVersion).toBe(3);
+    expect(rec.hashVersion).toBe(4);
     expect(rec.hash).toBe(contentFingerprint(a));
     expect(rec.migratedAt).toBeTruthy();
     expect(rec.savedAt).toBe('2026-11-05T00:00:00Z'); // 首次入库时间保留

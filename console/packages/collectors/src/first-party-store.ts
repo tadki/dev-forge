@@ -34,7 +34,7 @@ export interface StoreRecord {
   updatedAt: string;
   /** v1→v2 指纹口径迁移时间 */
   migratedAt?: string;
-  hashVersion: 1 | 2 | 3;
+  hashVersion: 1 | 2 | 3 | 4;
   /** 内容指纹（v2 = contentFingerprint，只含内容字段） */
   hash: string;
   asset: Asset;
@@ -90,7 +90,7 @@ export async function writeStoreRecord(dir: string, asset: Asset, prev?: StoreRe
     declaredBy: (asset.payload as { registry?: { declaredBy?: string } }).registry?.declaredBy,
     savedAt: prev?.savedAt ?? now,
     updatedAt: now,
-    hashVersion: 3,
+    hashVersion: 4,
     hash: contentFingerprint(asset),
     asset,
     ...(prev?.migratedAt ? { migratedAt: prev.migratedAt } : {}),
@@ -116,13 +116,24 @@ export async function syncFirstPartyStore(
     touched.add(a.id);
     const existing = records.get(a.id);
     if (!existing) {
-      await writeStoreRecord(dir, a);
+      records.set(a.id, await writeStoreRecord(dir, a));
       written++;
       continue;
     }
-    if (existing.hashVersion !== 3) {
-      // v1 基线迁移：按当前生产内容重算 v2 指纹，视为库已认可，不产生漂移
-      await writeStoreRecord(dir, a, { ...existing, migratedAt: new Date().toISOString() });
+    if (existing.hashVersion !== 4) {
+      // 口径迁移（v1-v3 → v4）：指纹口径演进必须提升版本并在此重算，否则存量记录全部假漂移。
+      // 关键：只对「库内副本自身内容」重算指纹（口径差自愈），不采纳当前生产内容——
+      // 库=真源，生产分叉仍由 store-drift 显式裁决（adopt/push），迁移不得静默吞掉真实漂移
+      const now = new Date().toISOString();
+      const record: StoreRecord = {
+        ...existing,
+        hashVersion: 4,
+        hash: contentFingerprint(existing.asset),
+        updatedAt: now,
+        migratedAt: existing.migratedAt ?? now,
+      };
+      await writeFile(join(dir, storeFileName(record.id)), JSON.stringify(record, null, 2));
+      records.set(record.id, record); // 内存 records 同步刷新：否则对账读到旧 hashVersion 记录会被跳过
       migrated++;
       continue;
     }
@@ -132,7 +143,7 @@ export async function syncFirstPartyStore(
     const prodContent = (a.payload as { content?: unknown }).content;
     const recContent = (existing.asset.payload as { content?: unknown }).content;
     if (existing.hash === contentFingerprint(a) && typeof prodContent === 'string' && typeof recContent !== 'string') {
-      await writeStoreRecord(dir, a, existing);
+      records.set(a.id, await writeStoreRecord(dir, a, existing));
       backfilled++;
       continue;
     }
@@ -145,7 +156,7 @@ export async function syncFirstPartyStore(
     ) {
       const body = await recoverBodyFromGit(existing.asset.source.path, existing.asset.source.sha256);
       if (body !== undefined) {
-        await writeStoreRecord(dir, { ...existing.asset, payload: { ...existing.asset.payload, content: body } }, existing);
+        records.set(a.id, await writeStoreRecord(dir, { ...existing.asset, payload: { ...existing.asset.payload, content: body } }, existing));
         backfilled++;
         continue;
       }
