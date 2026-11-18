@@ -91,6 +91,7 @@ const state: RegistryState = {
 
 const TOKEN = 'test-token-abc';
 const actionLog: Array<{ unit: string; action: string }> = [];
+const ruleToggles: Array<{ name: string; enabled: boolean }> = [];
 let server: Server;
 let base = '';
 
@@ -120,6 +121,12 @@ beforeAll(async () => {
         return { ok: false, output: `repo-sync-devforge 已手动停用（enabled=false），拒绝 ${action}；${detail}请检查 journalctl --user --since '-5 min'` };
       }
       return { ok: true, output: `fake ${action} ${unit}` };
+    },
+    toggleHookRule: async (name, enabled) => {
+      ruleToggles.push({ name, enabled });
+      return name === 'missing-rule'
+        ? { status: 'invalid', ok: false, output: `规则不存在：${name}` }
+        : { status: 'ok', ok: true, output: `${name} → ${enabled ? 'enabled' : 'disabled'}` };
     },
     getReconcileReport: () => ({
       generatedAt: '2026-11-05T00:00:00Z',
@@ -332,6 +339,23 @@ describe('api endpoints', () => {
     expect(deniedBody.output).toContain('enabled=false');
     expect(deniedBody.output).toContain("journalctl --user --since '-5 min'");
     expect(deniedBody.output.length).toBeLessThanOrEqual(400);
+  });
+
+  it('hooks rules toggle: 启停走 deps 并回传状态；不存在 404、参数非法 400', async () => {
+    const post = (body: unknown) =>
+      fetch(base + '/api/hooks/rules/toggle', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const ok = await post({ name: 'push-guard-master-gate', enabled: false });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ ok: true, name: 'push-guard-master-gate', enabled: false });
+    expect(ruleToggles.at(-1)).toEqual({ name: 'push-guard-master-gate', enabled: false });
+
+    expect((await post({ name: 'missing-rule', enabled: true })).status).toBe(404);
+    expect((await post({ name: 'x' })).status).toBe(400); // enabled 缺失
+    expect((await post({ name: '', enabled: true })).status).toBe(400); // name 为空
   });
 
   it('reconcile: 报告可读、写操作必须 confirm、gone 409、invalid 400', async () => {

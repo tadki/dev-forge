@@ -8,6 +8,7 @@ import { createHandler } from './app.js';
 import { createRepoSyncAction, DEFAULT_START_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS } from './repo-sync-action.js';
 import { executeReconcileAction } from './reconcile-action.js';
 import { executeAssetContentSave } from './asset-content-action.js';
+import { toggleHookRule as toggleHookRuleInFile } from './hook-rule-action.js';
 import { SSEBus } from './sse.js';
 
 const consoleRoot = join(import.meta.dirname, '..', '..', '..');
@@ -91,6 +92,12 @@ const handler = createHandler({
     // failed 也已部分执行（入库/写文件），同样刷新对账，避免卡片陈旧
     if (result.status !== 'invalid') await engine.refreshReconcileAfterAction();
     return { status: result.status, ok: result.ok, output: result.output };
+  },
+  toggleHookRule: async (name, enabled) => {
+    const result = await toggleHookRuleInFile(join(configRef.current.devforge, 'claude-hooks', 'unified'), name, enabled);
+    // 写回即引擎热生效（engine.js 每次事件现读）；快照立即重采，SSE 广播让前端缓存失效
+    if (result.status === 'ok') await engine.collectNow();
+    return { status: result.status, ok: result.status === 'ok', output: result.output };
   },
 });
 
