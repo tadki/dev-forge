@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet } from '../api';
+import { highlightBash, highlightJson } from '../highlight';
 import type { AssetLite, FireEvent } from '../types';
 import { Badge, DataTable, Panel, SectionHeader } from '../components/ui';
 import type { PageCtx } from './ctx';
@@ -73,7 +74,7 @@ function ScriptView({ path }: { path?: string }) {
   const content = (a?.payload as { content?: string } | undefined)?.content;
   if (q.isLoading) return <div className="dim">读取脚本…</div>;
   if (!a || typeof content !== 'string') return <div className="dim">未找到脚本资产 hook-script:{base}（脚本可能已被移除）</div>;
-  return <pre className="code">{content}</pre>;
+  return <pre className="code" dangerouslySetInnerHTML={{ __html: highlightBash(content) }} />;
 }
 
 function FieldDetail({ p, field }: { p: RulePayload; field: DetailField }) {
@@ -83,7 +84,9 @@ function FieldDetail({ p, field }: { p: RulePayload; field: DetailField }) {
       return (
         <>
           <div className="dim">{WHEN_KIND_LABELS[p.whenKind ?? 'none']}</div>
-          <pre className="code">{p.when ? JSON.stringify(p.when, null, 2) : '—（无 when，事件即触发）'}</pre>
+          {p.when
+            ? <pre className="code" dangerouslySetInnerHTML={{ __html: highlightJson(JSON.stringify(p.when, null, 2)) }} />
+            : <div className="dim">—（无 when，事件即触发）</div>}
         </>
       );
     case 'actions':

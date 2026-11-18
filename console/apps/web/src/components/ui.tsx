@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { highlightJson } from '../highlight';
 
 export function Panel({
   title,
@@ -147,7 +148,7 @@ export function JsonView({ data, max = 60 }: { data: unknown; max?: number }) {
     text = String(data);
   }
   if (text.length > max * 1000) text = text.slice(0, max * 1000) + '\n…(截断)';
-  return <pre className="code">{text}</pre>;
+  return <pre className="code" dangerouslySetInnerHTML={{ __html: highlightJson(text) }} />;
 }
 
 export function DiffView({ lines }: { lines: string[] }) {
