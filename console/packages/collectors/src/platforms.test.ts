@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Asset } from '@forge/schema';
 import { loadPlatforms, resolvePlatform, resolveWriteChannel, buildPlatformsView, DEFAULT_PLATFORMS, type PlatformDef } from './platforms.js';
+import { TRUTH_KINDS } from './store-content.js';
 
 const dir = join(tmpdir(), `forge-platforms-${Date.now()}`);
 /** 仓库真实声明（console/platforms.d）——顺带验证 YAML 文件本身可加载 */
@@ -75,23 +76,20 @@ describe('平台适配层（platforms.d）', () => {
   it('resolveWriteChannel：command 通道 platformId 解析（self / deployment）与 none 降级', () => {
     const { platforms } = { platforms: DEFAULT_PLATFORMS };
     const skill = mkAsset('skill:m', 'multica://skills/a', 'skill', { platformId: 'sk-1' }, ['multica']);
-    expect(resolveWriteChannel(skill, [skill], platforms)).toMatchObject({
+    expect(resolveWriteChannel(skill, platforms)).toMatchObject({
       platformId: 'sk-1',
       write: { type: 'command' },
     });
-    const agent = mkAsset('agent:fronti', 'multica://agents/f1', 'agent', {}, ['multica']);
-    const dep = mkAsset('deployment:multica:fronti', 'multica://agents/f1', 'deployment', { agent: 'Fronti', platformId: 'ag-9' }, ['multica']);
-    expect(resolveWriteChannel(agent, [agent, dep], platforms)).toMatchObject({ platformId: 'ag-9' });
+    const agent = mkAsset('agent:fronti', 'multica://agents/f1', 'agent', { deployments: [{ platform: 'multica', platformId: 'ag-9' }] }, ['multica']);
+    expect(resolveWriteChannel(agent, platforms)).toMatchObject({ platformId: 'ag-9' });
     const noId = mkAsset('skill:n', 'multica://skills/b', 'skill', {}, ['multica']);
-    expect(resolveWriteChannel(noId, [noId], platforms)?.write.type).toBe('none');
+    expect(resolveWriteChannel(noId, platforms)?.write.type).toBe('none');
     const ap = mkAsset('autopilot-registration:multica-z', 'multica://autopilots/z', 'autopilot-registration', {}, ['multica']);
-    expect(resolveWriteChannel(ap, [ap], platforms)?.write).toMatchObject({ type: 'none' });
+    expect(resolveWriteChannel(ap, platforms)?.write).toMatchObject({ type: 'none' });
     const file = mkAsset('instruction:l', '/home/x/CLAUDE.md', 'instruction', {}, ['claude-code']);
-    expect(resolveWriteChannel(file, [file], platforms)?.write.type).toBe('file-write');
-    const na = mkAsset('deployment:cc', '/does/not/happen', 'deployment', {}, ['claude-code']);
-    expect(resolveWriteChannel(na, [na], platforms)?.write).toMatchObject({ type: 'none', advice: expect.stringContaining('不适用') });
-    // 无平台声明 → 无写通道
-    expect(resolveWriteChannel(mkAsset('skill:u', '/x', 'skill'), [], platforms)).toBeUndefined();
+    expect(resolveWriteChannel(file, platforms)?.write.type).toBe('file-write');
+    // 投影 kind 已退役：platforms.d 契约中不再有 deployment 条目
+    expect(resolveWriteChannel(mkAsset('skill:u', '/x', 'skill'), platforms)).toBeUndefined();
   });
 
   afterAll(async () => {
@@ -192,18 +190,9 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     // multica 平台无 hooks 设置与挂载入口：三类 hook kind 均显式不适用（Owner 2026-11-11）
     expect(multica?.kinds?.['hook-rule']?.applicable).toBe(false);
     expect(multica?.kinds?.['hook-script']?.applicable).toBe(false);
-    expect(multica?.kinds?.['hook-registration']?.applicable).toBe(false);
     const cc = platforms.find((p) => p.id === 'claude-code');
     expect(cc?.kinds?.instruction?.discovery?.paths).toContain('<project>/CLAUDE.md');
     expect(cc?.kinds?.instruction?.read).toEqual({ how: 'file' });
-    // deployment 对 claude-code 是「不适用」（平台无此对象），非「未适配」
-    expect(cc?.kinds?.deployment).toEqual({
-      applicable: false,
-      note: expect.stringContaining('deployment'),
-    });
-    // hook-registration：settings.json 挂载点实测（scan）；dev-forge 注册清单工件经 registry.d 盖章（同 kind 混合，note 说明）
-    expect(cc?.kinds?.['hook-registration']?.discovery?.paths).toEqual(['~/.claude/settings.json']);
-    expect(cc?.kinds?.['hook-registration']?.write).toEqual({ type: 'file-write' });
     // hook-rule / patch：声明式发现——registry.d 条目盖章归属
     expect(cc?.kinds?.['hook-rule']?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-hooks-engine' });
     expect(cc?.kinds?.patch?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-patches' });
@@ -213,7 +202,7 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     // Claude Code 无 autopilot 体系：两类 autopilot kind 均「不适用」
     expect(cc?.kinds?.['autopilot-registration']?.applicable).toBe(false);
     expect(cc?.kinds?.['autopilot-script']?.applicable).toBe(false);
-    const TRUTH = ['instruction', 'skill', 'agent', 'hook-rule', 'hook-script', 'adapter', 'autopilot-script', 'autopilot-registration'];
+    const TRUTH = TRUTH_KINDS;
     for (const p of platforms) {
       for (const k of TRUTH) {
         const def = p.kinds?.[k];
@@ -244,12 +233,6 @@ describe('buildPlatformsView', () => {
     expect(agentRow?.assets[0]).not.toHaveProperty('instructions');
     const cc = v.platforms.find((p) => p.id === 'claude-code');
     expect(cc?.kinds.find((k) => k.kind === 'instruction')?.assetCount).toBe(1);
-    expect(cc?.kinds.find((k) => k.kind === 'deployment')).toMatchObject({
-      declared: true,
-      applicable: false,
-      assetCount: 0,
-      note: expect.stringContaining('deployment'),
-    });
     expect(v.unadapted.assetCount).toBe(1);
     expect(v.unadapted.kinds[0]).toMatchObject({ kind: 'service', count: 1 });
     expect(v.unadapted.kinds[0].assets[0]).toMatchObject({ id: 'service:grepai', path: 'systemd://user/grepai-watch.service' });

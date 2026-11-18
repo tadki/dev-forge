@@ -92,7 +92,7 @@ function updatedAsset(source: Asset, file: string | undefined, content: string):
 }
 
 /** 附带文件通道目标：fileWrite 声明（command 平台）或本体所在目录派生路径（file-write 平台） */
-function fileChannelTarget(asset: Asset, state: RegistryState, platforms: PlatformDef[], file: string): AssetContentSyncTarget {
+function fileChannelTarget(asset: Asset, _state: RegistryState, platforms: PlatformDef[], file: string): AssetContentSyncTarget {
   const platform = resolvePlatform(asset, platforms);
   if (!platform) {
     return { platform: '—', kind: 'file', label: `物化 ${file}`, executable: false, note: '资产不匹配任何平台适配（platforms.d）' };
@@ -106,9 +106,7 @@ function fileChannelTarget(asset: Asset, state: RegistryState, platforms: Platfo
     const from = kindDef.fileWrite.platformIdFrom ?? 'self';
     const platformId =
       from === 'deployment'
-        ? ((state.assets.find((a) => a.kind === 'deployment' && (a.payload as { agent?: string }).agent?.toLowerCase() === asset.name.toLowerCase())?.payload as
-            | { platformId?: string }
-            | undefined)?.platformId)
+        ? ((asset.payload as { deployments?: Array<{ platformId?: string }> }).deployments ?? []).find((d) => d.platformId)?.platformId
         : (asset.payload as { platformId?: string }).platformId;
     const args = kindDef.fileWrite.cmd.slice(1).map((a) => {
       if (a === '{platformId}') return platformId ?? '{platformId}';
@@ -175,7 +173,7 @@ function instanceTracksFiles(inst: Asset, platforms: PlatformDef[]): boolean {
 
 function channelTarget(asset: Asset, state: RegistryState, platforms: PlatformDef[], file?: string): AssetContentSyncTarget {
   if (file !== undefined) return fileChannelTarget(asset, state, platforms, file);
-  const resolved = resolveWriteChannel(asset, state.assets, platforms);
+  const resolved = resolveWriteChannel(asset, platforms);
   if (!resolved) {
     return { platform: '—', kind: 'file', label: `物化 ${asset.source.path}`, executable: false, note: '资产不匹配任何平台适配（platforms.d）' };
   }

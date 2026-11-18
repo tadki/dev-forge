@@ -151,7 +151,6 @@ export const multicaCollector: Collector = {
         seenAgentNames.add(a.name.toLowerCase());
         const instructions = a.instructions ?? '';
         const agentId = `agent:${a.name.toLowerCase()}`;
-        const deploymentId = `deployment:multica:${a.name.toLowerCase()}`;
         assets.push(
           asset({
             id: agentId,
@@ -177,34 +176,22 @@ export const multicaCollector: Collector = {
               mcpRedacted: a.mcp_config_redacted,
               customEnvKeyCount: a.custom_env_key_count ?? 0,
               customArgs: a.custom_args ?? [],
+              // 部署运行态折入 agent（kind 去重，Owner 2026-11-18）：platformId 供写通道寻址
+              deployments: [
+                {
+                  platform: 'multica',
+                  platformId: a.id,
+                  workspaceId: a.workspace_id,
+                  status: a.status,
+                  maxConcurrentTasks: a.max_concurrent_tasks,
+                  runtimeId: a.runtime_id,
+                  archived: !!a.archived_at,
+                },
+              ],
             },
             tags: [],
           })
         );
-        assets.push(
-          asset({
-            id: deploymentId,
-            kind: 'deployment',
-            name: `${a.name} @ multica`,
-            summary: `${a.status ?? '?'} · ws ${a.workspace_id?.slice(0, 8) ?? '—'} · 并发 ${a.max_concurrent_tasks ?? '—'}`,
-            attach: { level: 'platform', ref: 'multica' },
-            enforcement: 'enforced',
-            platforms: ['multica'],
-            enabled: !a.archived_at,
-            source: { collector: 'multica', path: 'multica://agents/' + a.id, locator: `$.agents[${a.id}]` },
-            payload: {
-              platform: 'multica',
-              agent: a.name,
-              platformId: a.id,
-              workspaceId: a.workspace_id,
-              status: a.status,
-              maxConcurrentTasks: a.max_concurrent_tasks,
-              runtimeId: a.runtime_id,
-            },
-            tags: ['multica', ...(a.status === 'idle' ? ['idle'] : ['working'])],
-          })
-        );
-        relations.push({ from: agentId, to: deploymentId, type: 'runs-as' });
         for (const [mcpName, def] of Object.entries(a.mcp_config?.mcpServers ?? {})) {
           assets.push(
             asset({

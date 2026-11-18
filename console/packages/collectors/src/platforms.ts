@@ -19,7 +19,7 @@ import { ASSET_KINDS, type Asset, type Diagnostic } from '@forge/schema';
 export interface PlatformWriteCommand {
   type: 'command';
   cmd: string[];
-  /** platformId 取值位置：self=资产 payload.platformId；deployment=该 agent 的 deployment 资产 payload.platformId */
+  /** platformId 取值位置：self=资产 payload.platformId；deployment=折入 agent 的 payload.deployments（kind 去重） */
   platformIdFrom?: 'self' | 'deployment';
 }
 export interface PlatformWriteNone {
@@ -140,7 +140,7 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           registry: 'devforge-hooks-engine',
           platformBasis: 'self',
           platformBasisField: 'harness',
-          note: '规则清单 JSON（devforge-hooks）；归属判据 self = 规则自身 harness 声明；settings.json 挂载由 claude-global 读（hook-registration）',
+          note: '规则清单 JSON（devforge-hooks）；归属判据 self = 规则自身 harness 声明；settings.json 挂载由 claude-global 读',
         },
         read: { how: 'file' },
         write: { type: 'file-write' },
@@ -182,17 +182,6 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
       'autopilot-script': {
         applicable: false,
         note: 'Claude Code 无 autopilot 体系：dev-forge 巡逻脚本/评审巡逻由 registry.d 声明归属 multica',
-      },
-      'hook-registration': {
-        discovery: {
-          mode: 'scan',
-          how: 'file',
-          collector: 'claude-global',
-          paths: ['~/.claude/settings.json'],
-          note: 'settings.json hooks 挂载点实测（claude-global 直接声明）；dev-forge 注册清单工件经 registry.d devforge-hook-registrations 盖章——同 kind 混合',
-        },
-        read: { how: 'file' },
-        write: { type: 'file-write' },
       },
       'mcp-endpoint': {
         discovery: {
@@ -240,10 +229,6 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
       service: {
         applicable: false,
         note: 'Claude Code 无 service 对象：systemd 运行时探针是 dev 机器对象（source.platform=none），不归属任何平台',
-      },
-      deployment: {
-        applicable: false,
-        note: 'Claude Code 无部署实例对象：deployment 是 multica 的 agent×运行环境绑定（platformId/workspaceId/status），本地文件系统平台不存在此概念',
       },
     },
   },
@@ -309,10 +294,6 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         read: { how: 'file' },
         write: { type: 'file-write' },
       },
-      'hook-registration': {
-        applicable: false,
-        note: 'multica 平台无 hooks 设置与挂载入口；hook 资产只归属 claude-code（Owner 2026-11-11）',
-      },
       'hook-rule': {
         applicable: false,
         note: 'multica 平台无 hooks 设置与挂载入口；hook 规则源在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）',
@@ -325,16 +306,17 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
         applicable: false,
         note: 'adapter 是跨平台胶水脚本，不归属任何平台（含 multica）：采集显式 platform=none（Owner 2026-11-11）',
       },
-      deployment: {
-        discovery: {
-          mode: 'scan',
-          how: 'cli',
-          collector: 'multica',
-          cmd: ['multica', 'agent', 'list'],
-          note: '部署实例与 agent 同一 JSON 产出（platformId/workspaceId/status 等运行态字段只落在 deployment）',
-        },
-        read: { how: 'api', cmd: ['multica', 'agent', 'list'], note: '运行态字段随 agent list JSON 返回' },
-        write: { type: 'none', advice: '部署绑定由 multica daemon 管理，无物化通道' },
+      patch: {
+        applicable: false,
+        note: 'multica 平台无补丁对象：补丁脚本收编在 dev-forge 仓库 patches/（platform=none），平台页不适用',
+      },
+      env: {
+        applicable: false,
+        note: 'multica 平台无独立 env 对象：agent custom_env 计数随 agent list 采集，不单独建模',
+      },
+      project: {
+        applicable: false,
+        note: 'multica 平台无 project 对象：项目由 console workspace 注册（git 身份）决定，与平台无关',
       },
       'mcp-endpoint': {
         discovery: {
@@ -499,7 +481,7 @@ export interface ResolvedWrite {
 }
 
 /** 解析「以库为准物化」通道。返回 undefined = 该资产无对应平台 */
-export function resolveWriteChannel(asset: Asset, assets: Asset[], platforms: PlatformDef[]): ResolvedWrite | undefined {
+export function resolveWriteChannel(asset: Asset, platforms: PlatformDef[]): ResolvedWrite | undefined {
   const platform = resolvePlatform(asset, platforms);
   if (!platform) return undefined;
   const kindDef = platform.kinds?.[asset.kind];
@@ -516,10 +498,9 @@ export function resolveWriteChannel(asset: Asset, assets: Asset[], platforms: Pl
     if (from === 'self') {
       platformId = (asset.payload as { platformId?: string }).platformId;
     } else {
-      const dep = assets.find(
-        (a) => a.kind === 'deployment' && (a.payload as { agent?: string }).agent?.toLowerCase() === asset.name.toLowerCase()
-      );
-      platformId = (dep?.payload as { platformId?: string } | undefined)?.platformId;
+      // platformIdFrom: 'deployment' → 部署运行态折入资产自身 payload.deployments（kind 去重）
+      platformId = ((asset.payload as { deployments?: Array<{ platformId?: string }> }).deployments ?? []).find((d) => d.platformId)
+        ?.platformId;
     }
     if (!platformId) {
       return { write: { type: 'none', advice: `未找到 platformId（${from}），需手动执行` }, platform };

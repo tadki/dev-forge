@@ -34,12 +34,6 @@ const state: RegistryState = {
       name: 'Fronti',
       payload: { model: 'agent-fronti[1m]', instructions: 'You are Fronti' },
     }),
-    mk('deployment:multica:fronti', 'deployment', {
-      name: 'Fronti @ multica',
-      attach: { level: 'platform', ref: 'multica' },
-      platforms: ['multica'],
-      payload: { platform: 'multica', agent: 'Fronti', platformId: 'f1', status: 'idle' },
-    }),
     mk('instruction:king-of-likes/CLAUDE.md', 'instruction', {
       attach: { level: 'project', ref: '/mnt/d/GodotProjects/king-of-likes' },
       payload: { basename: 'CLAUDE.md', lines: 144, content: '# KOL\nlong content...', contentHash: 'aaaa1111' },
@@ -228,10 +222,9 @@ describe('api endpoints', () => {
 
   it('overview aggregates counts, health', async () => {
     const r = await get('/api/overview', TOKEN);
-    expect(r.body.total).toBe(14);
+    expect(r.body.total).toBe(13);
     expect(r.body.counts['hook-rule']).toBe(1);
-    expect(r.body.counts['deployment']).toBe(1);
-    expect(r.body.health.status).toBe('GREEN');
+        expect(r.body.health.status).toBe('GREEN');
   });
 
   it('assets list filters by kind and strips heavy payload fields', async () => {
@@ -290,7 +283,7 @@ describe('api endpoints', () => {
     expect(ccRule.firstPartyCount).toBeLessThanOrEqual(ccRule.assetCount);
     expect(r.body.unadapted.assetCount).toBe(3);
     expect(r.body.unadapted.kinds[0].kind).toBe('service');
-    expect(r.body.declaredCount).toBe(11); // 唯一声明资产：cc 10（含库内注册的 store-only）+ multica 1
+    expect(r.body.declaredCount).toBe(10); // 唯一声明资产：cc 10（含库内注册的 store-only）；deployment fixture 已移除
     expect(Array.isArray(r.body.diagnostics)).toBe(true);
     expect(typeof r.body.generatedAt).toBe('string');
     for (const p of r.body.platforms as { kinds: { assets: Record<string, unknown>[] }[] }[]) {

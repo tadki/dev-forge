@@ -63,6 +63,10 @@ export const servicesCollector: Collector = {
       const mainPid = Number(prop('ExecMainPID') ?? 0);
       const seen = new Set<number>();
       const children = (mainPid > 1 ? childrenOf(mainPid) : []).filter((c) => (seen.has(c.pid) ? false : (seen.add(c.pid), true)));
+      // unit 定义正文（systemctl cat）：真源库指纹视图（service）的数据源；system 级无权限不采集
+      const unitContent = isUser
+        ? (await ctx.exec('systemctl', ['--user', 'cat', u.unit].filter(Boolean), 10_000)).stdout
+        : undefined;
       const triggerHuman = enabled === 'enabled'
         ? (isUser ? '用户级开机自启' : '系统开机自启')
         : enabled === 'static' ? 'static（被依赖时启动）'
@@ -81,6 +85,8 @@ export const servicesCollector: Collector = {
           enabled: enabled !== 'disabled',
           source: exemptSource('services', `systemd://${u.scope}/${u.unit}`),
           payload: {
+            unitName: u.unit,
+            unitContent: unitContent || undefined,
             scope: u.scope,
             active: u.active,
             sub: u.sub,

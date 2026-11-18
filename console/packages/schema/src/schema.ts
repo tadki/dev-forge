@@ -2,12 +2,10 @@ import { z } from 'zod';
 
 export const ASSET_KINDS = [
   'agent',
-  // 部署实例：agent 本体 × 运行环境（platform/workspace）的绑定。运行时状态（platformId、
-  // workspaceId、status 等）只允许出现在 deployment，agent 本体保持环境无关（Owner 原则 2026-11-03）
-  'deployment',
+  // deployment/hook-registration 两个投影 kind 已退役（Owner 2026-11-18）：部署运行态折入
+  // agent payload.deployments，挂载点事实由 hooks-registration.json manifest（custom）承载
   'instruction',
   'skill',
-  'hook-registration',
   'hook-rule',
   'hook-script',
   'service',
@@ -138,7 +136,7 @@ const agentPayload = z.looseObject({
   project: z.string().optional(),
   frontmatter: z.string().optional(),
   bodyLines: z.number().optional(),
-  // multica 平台 agent（环境无关字段；运行时状态归 deployment）
+  // multica 平台 agent（部署运行态折入 payload.deployments——kind 去重，Owner 2026-11-18）
   description: z.string().optional(),
   instructions: z.string().optional(),
   instructionsHash: z.string().optional(),
@@ -150,16 +148,6 @@ const agentPayload = z.looseObject({
   mcpRedacted: z.boolean().optional(),
   customEnvKeyCount: z.number().optional(),
   customArgs: z.array(z.string()).optional(),
-});
-
-const deploymentPayload = z.looseObject({
-  platform: z.string().optional(),
-  agent: z.string().optional(),
-  platformId: z.string().optional(),
-  workspaceId: z.string().optional(),
-  status: z.string().optional(),
-  maxConcurrentTasks: z.number().optional(),
-  runtimeId: z.string().optional(),
 });
 
 const instructionPayload = z.looseObject({
@@ -184,14 +172,6 @@ const skillPayload = z.looseObject({
   labels: z.array(z.string()).optional(),
   workspaceId: z.string().optional(),
   files: z.array(z.object({ path: z.string(), content: z.string().optional() })).optional(),
-});
-
-const hookRegistrationPayload = z.looseObject({
-  // settings.json hooks 挂载点
-  event: z.string().optional(),
-  matcher: z.string().optional(),
-  // dev-forge hooks-registration.json 清单（整份展开，含 hook_points/alias 等）
-  stateSentinels: z.number().optional(),
 });
 
 const hookRulePayload = z.looseObject({
@@ -320,10 +300,8 @@ const envPayload = z.looseObject({
 
 export const payloadSchemas: Record<AssetKind, z.ZodType> = {
   agent: agentPayload,
-  deployment: deploymentPayload,
   instruction: instructionPayload,
   skill: skillPayload,
-  'hook-registration': hookRegistrationPayload,
   'hook-rule': hookRulePayload,
   'hook-script': hookScriptPayload,
   service: servicePayload,

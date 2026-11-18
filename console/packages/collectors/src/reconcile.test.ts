@@ -148,15 +148,12 @@ describe('内容漂移', () => {
     const assets = [
       mk('agent:fronti', 'agent', {
         name: 'Fronti',
-        platforms: [],
-        payload: { instructions: 'You are Fronti v2', instructionsHash: 'abc' },
-        source: { collector: 'multica', path: 'multica://agents/f1' },
-      }),
-      mk('deployment:multica:fronti', 'deployment', {
-        name: 'Fronti @ multica',
         platforms: ['multica'],
-        attach: { level: 'platform', ref: 'multica' },
-        payload: { platformId: 'f1', agent: 'Fronti' },
+        payload: {
+          instructions: 'You are Fronti v2',
+          instructionsHash: 'abc',
+          deployments: [{ platform: 'multica', platformId: 'f1' }],
+        },
         source: { collector: 'multica', path: 'multica://agents/f1' },
       }),
       mk('custom:multica-materialized-instructions', 'custom', {
@@ -291,17 +288,15 @@ describe('store-drift（库 vs 生产）', () => {
     const prod = declared(
       mk('agent:fronti', 'agent', {
         platforms: ['multica'],
+        payload: {
+          instructions: '新',
+          deployments: [{ platform: 'multica', platformId: 'agent-uuid-9' }],
+        },
         source: { collector: 'multica', path: 'multica://agents/f1' },
-        payload: { instructions: '新' },
       })
     );
-    const dep = mk('deployment:multica:fronti', 'deployment', {
-      platforms: ['multica'],
-      source: { collector: 'multica', path: 'multica://agents/f1' },
-      payload: { agent: 'Fronti', platformId: 'agent-uuid-9' },
-    });
     const store = new Map([[prod.id, { ...v2Record(prod, '旧'), hash: 'x' }]] as const);
-    const report = buildReconcileReport({ assets: [prod, dep] }, [], new Date(), { store });
+    const report = buildReconcileReport({ assets: [prod] }, [], new Date(), { store });
     const item = report.items.find((i) => i.key === 'store:agent:fronti');
     expect(item?.relatedKeys).toEqual(['drift:multica:fronti']);
     const push = item?.actions.find((a) => a.id === 'push');
@@ -326,7 +321,7 @@ describe('store-drift（库 vs 生产）', () => {
     expect(push?.note).toBeTruthy();
   });
 
-  it('非内容型 kind 与未声明资产不进 store-drift；无 store 时不检测', () => {
+  it('声明资产参与 store-drift（含 service）；未声明不进；无 store 时不检测', () => {
     const svc = declared(mk('service:sysd-x', 'service', { payload: { active: 'active' } }));
     const undec = mk('skill:undeclared-x', 'skill', { payload: { content: 'x' } });
     const store = new Map([
@@ -334,7 +329,7 @@ describe('store-drift（库 vs 生产）', () => {
       [undec.id, { ...v2Record(undec, 'x'), hash: 'x' }],
     ] as const);
     const r1 = buildReconcileReport({ assets: [svc, undec] }, [], new Date(), { store });
-    expect(r1.summary.store).toBe(0);
+    expect(r1.summary.store).toBe(1); // service 已入真源库，参与漂移；未声明 skill 不参与
     const r2 = buildReconcileReport({ assets: [svc, undec] }, []);
     expect(r2.summary.store).toBe(0);
   });

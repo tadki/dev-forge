@@ -20,12 +20,6 @@ entries:
     match: { pathPrefix: "/home/jerry/tools/dev-forge/claude-hooks" }
     meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: claude-code, notes: "9 挂载点 → 统一引擎（settings.json hooks）" }
 
-  - id: devforge-hook-registrations
-    # 只认 devforge 统一入口的挂载点。hindsight 三钩（SessionStart/UserPromptSubmit/Stop →
-    # ~/.hindsight/coding-agents）是 Hindsight 平台自带旁挂，不算自建（Owner 2026-11-18）。
-    match: { idPrefix: "hook-registration:devforge:" }
-    platforms: [claude-code]
-    meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: claude-code }
 
   - id: kol-instructions
     match: { pathPrefix: "/mnt/d/GodotProjects/king-of-likes/CLAUDE.md" }

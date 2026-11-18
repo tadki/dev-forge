@@ -241,39 +241,6 @@
       }
     },
     {
-      "id": "deployment:multica:fronti",
-      "kind": "deployment",
-      "name": "Fronti @ multica",
-      "summary": "idle · ws ws-jerry · 并发 2",
-      "attach": {
-        "level": "platform",
-        "ref": "multica"
-      },
-      "enforcement": "enforced",
-      "platforms": [
-        "multica"
-      ],
-      "provenance": "first-party",
-      "tags": [
-        "multica",
-        "idle"
-      ],
-      "enabled": true,
-      "source": {
-        "collector": "fixture",
-        "path": "multica://agents/fronti-1"
-      },
-      "payload": {
-        "platform": "multica",
-        "agent": "Fronti",
-        "platformId": "fronti-1",
-        "workspaceId": "ws-jerry",
-        "status": "idle",
-        "maxConcurrentTasks": 2,
-        "runtimeId": "rt-1"
-      }
-    },
-    {
       "id": "agent:revy",
       "kind": "agent",
       "name": "Revy",
@@ -303,63 +270,6 @@
         ],
         "mcp": {},
         "customEnvKeyCount": 0
-      }
-    },
-    {
-      "id": "deployment:multica:revy",
-      "kind": "deployment",
-      "name": "Revy @ multica",
-      "summary": "working · 并发 —",
-      "attach": {
-        "level": "platform",
-        "ref": "multica"
-      },
-      "enforcement": "enforced",
-      "platforms": [
-        "multica"
-      ],
-      "provenance": "first-party",
-      "tags": [
-        "multica",
-        "working"
-      ],
-      "enabled": true,
-      "source": {
-        "collector": "fixture",
-        "path": "multica://agents/revy-2"
-      },
-      "payload": {
-        "platform": "multica",
-        "agent": "Revy",
-        "platformId": "revy-2",
-        "status": "working"
-      }
-    },
-    {
-      "id": "hook-registration:PreToolUse-0-devforge",
-      "kind": "hook-registration",
-      "name": "PreToolUse → dev-forge 统一入口",
-      "summary": "/e2e/dev-forge/claude-hooks/hook-wrapper.sh",
-      "attach": {
-        "level": "user"
-      },
-      "enforcement": "enforced",
-      "platforms": [
-        "claude-code"
-      ],
-      "provenance": "first-party",
-      "tags": [
-        "PreToolUse",
-        "devforge"
-      ],
-      "enabled": true,
-      "source": {
-        "collector": "fixture",
-        "path": "/e2e/settings.json"
-      },
-      "payload": {
-        "event": "PreToolUse",
-        "command": "/e2e/dev-forge/hook-wrapper.sh PreToolUse unified-hook"
       }
     },
     {

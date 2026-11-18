@@ -22,10 +22,8 @@
             "type": "string",
             "enum": [
               "agent",
-              "deployment",
               "instruction",
               "skill",
-              "hook-registration",
               "hook-rule",
               "hook-script",
               "service",
