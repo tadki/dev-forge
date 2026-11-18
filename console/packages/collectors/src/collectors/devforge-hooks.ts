@@ -191,27 +191,8 @@ export const devforgeHooksCollector: Collector = {
       );
     }
 
-    // 入口层脚本（wrapper / dispatcher / unified-hook）：非规则挂载体，是链路自身的环节；
-    // 采集它们让「使用方」分析能闭合 lib 脚本的间接引用（被入口层 source）
-    for (const f of (await listDir(hooksDir)).filter((x) => x.endsWith('.sh'))) {
-      const p = join(hooksDir, f);
-      const md = (await readText(p)) ?? '';
-      const purpose = md.split('\n').find((l) => l.startsWith('# ') && !l.includes('!/'))?.replace(/^#\s*/, '') ?? '';
-      assets.push(
-        asset({
-          id: `hook-script:entry-${f}`,
-          kind: 'hook-script',
-          name: f,
-          summary: purpose.slice(0, 100),
-          attach: { level: 'user' },
-          enforcement: 'enforced',
-          platforms: [],
-          source: { collector: 'devforge-hooks', path: p, sha256: sha256(md) },
-          payload: { lines: md.split('\n').length, purpose, content: md, entry: true },
-          tags: ['devforge', 'entry'],
-        })
-      );
-    }
+    // 入口层脚本（hook-wrapper / dispatcher / unified-hook，claude-hooks 根目录）是基础设施，
+    // 不进 hook-script 扫描（Owner 2026-11-18）；业务挂载脚本只认 scripts/ 与 scripts/lib/
 
     // lib 脚本
     const libDir = join(scriptsDir, 'lib');
