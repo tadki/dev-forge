@@ -126,6 +126,7 @@ beforeAll(async () => {
         ? { status: 'invalid', ok: false, output: `规则不存在：${name}` }
         : { status: 'ok', ok: true, output: `${name} → ${enabled ? 'enabled' : 'disabled'}` };
     },
+    projectionLinks: () => [],
     storeRecords: () => {
       // 镜像当前采集（生产=投影，库随采集收敛）；store-only 钉死分歧内容模拟漂移
       const m = new Map<string, StoreRecord>();

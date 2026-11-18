@@ -19,6 +19,8 @@ export interface StoreSyncResult {
   /** 旧记录缺正文 → 原地补写正文（生产侧指纹一致时取生产正文；漂移时经 git 考古按记录 sha256 复原旧版。不改哈希，不影响对账结论） */
   backfilled: number;
   unchanged: number;
+  /** 自产观测/杂项（非 declared）内容变化 → 自动采纳重写 */
+  adopted: number;
   /** 库内保留但本轮采集未见对应声明资产的条目数（消失资产 + 非内容型历史记录） */
   kept: number;
 }
@@ -72,10 +74,12 @@ export async function loadFirstPartyStore(dir: string): Promise<LoadedStore> {
 }
 
 function truthEntries(assets: Asset[]): Asset[] {
+  // Owner 2026-11-18：全 kind 入库。declared（创作型）漂移走对账裁决；
+  // 自产观测/杂项（first-party 未声明，如 activity-feed）变化即自动采纳，不产出 store-drift
   return assets.filter((a) => {
     if (!isTruthKind(a.kind)) return false;
     const reg = (a.payload as { registry?: { declared?: boolean } }).registry;
-    return reg?.declared === true;
+    return reg?.declared === true || a.provenance === 'first-party';
   });
 }
 
@@ -110,6 +114,7 @@ export async function syncFirstPartyStore(
   let migrated = 0;
   let backfilled = 0;
   let unchanged = 0;
+  let adopted = 0;
   const touched = new Set<string>();
 
   for (const a of truthEntries(assets)) {
@@ -161,10 +166,17 @@ export async function syncFirstPartyStore(
         continue;
       }
     }
+    // 自产观测/杂项（first-party 非 declared）：内容变化 → 自动采纳（以最新生产为准，不产出 store-drift）
+    const isDeclared = (a.payload as { registry?: { declared?: boolean } }).registry?.declared === true;
+    if (!isDeclared && existing.hash !== contentFingerprint(a)) {
+      records.set(a.id, await writeStoreRecord(dir, a, existing));
+      adopted++;
+      continue;
+    }
     unchanged++;
   }
 
   let kept = 0;
   for (const id of records.keys()) if (!touched.has(id)) kept++;
-  return { written, migrated, backfilled, unchanged, kept };
+  return { written, migrated, backfilled, unchanged, kept, adopted };
 }

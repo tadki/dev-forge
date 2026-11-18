@@ -15,6 +15,7 @@ export const TRUTH_KINDS: readonly AssetKind[] = [
   'agent',
   'hook-rule',
   'hook-script',
+  'hook-registration',
   'service',
   'adapter',
   'patch',
@@ -91,9 +92,12 @@ function contentView(asset: Asset): Record<string, unknown> {
     case 'project':
       // 仓库身份
       return pick(p, ['path', 'git', 'workspace', 'harnesses']);
+    case 'hook-registration':
+      // 挂载点投影：挂载内容变化即漂移（对照 manifest 声明裁决）
+      return pick(p, ['event', 'matcher', 'command']);
     case 'custom':
-      // 观测/杂项桶：只登记身份不参与内容对账（空视图 → 指纹恒定，不产生假漂移）
-      return {};
+      // 杂项桶：全量 payload 指纹（manifest/自托管脚本等创作型按内容对账；易变键由各资产自行剔除）
+      return p;
     case 'autopilot-script':
       // 本地脚本型 / 配置 / agent 评审型（content 已归档不进指纹）
       return { sha256: asset.source.sha256, ...pick(p, ['purpose', 'reviewKind', 'templates']) };

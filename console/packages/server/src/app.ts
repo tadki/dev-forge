@@ -33,6 +33,8 @@ export interface AppDeps {
   toggleHookRule: (name: string, enabled: boolean) => Promise<{ status: 'ok' | 'invalid'; ok: boolean; output: string }>;
   /** first-party store 真源记录（内容型自建资产展示的唯一真源；id → record） */
   storeRecords: () => Map<string, StoreRecord>;
+  /** 投影映射线（真源 ↔ 投影坐标） */
+  projectionLinks: () => Array<{ truthId: string; ref: string; status: string; linkedBy: string; linkedAt: string }>;
   onAfterAction?: () => void;
 }
 
@@ -243,9 +245,11 @@ export function createHandler(deps: AppDeps) {
         // 采集快照只提供发现与漂移标记。无库记录（未入库 kind/未盖章）回落采集快照。
         const rec = isTruthKind(a.kind) ? deps.storeRecords().get(id) : undefined;
         const drift = rec ? rec.hash !== contentFingerprint(a) : undefined;
+        const projections = deps.projectionLinks().filter((l) => l.truthId === id);
         return json(res, 200, {
           asset: rec ? rec.asset : a,
           relations: { inbound, outbound },
+          projections,
           truth: rec
             ? { source: 'store', recordHash: rec.hash.slice(0, 16), drift }
             : { source: 'collected' },
