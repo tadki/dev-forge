@@ -1,7 +1,7 @@
 import type { Asset } from '@forge/schema';
 import { join } from 'node:path';
 import { listDir, readText, sha256 } from '../util.js';
-import { asset, type Collector } from '../types.js';
+import { asset, exemptSource, type Collector } from '../types.js';
 
 const ENV_NAME = /\b([A-Z][A-Z0-9_]{4,})\b/g;
 
@@ -25,9 +25,10 @@ export const devforgeAdaptersCollector: Collector = {
           summary: purpose.slice(0, 120),
           attach: { level: 'user' },
           enforcement: 'derived',
-          // 跨平台胶水脚本，无平台归属语义：显式豁免（platform=none），归属/元信息仍由 registry.d 盖章
+          // 跨平台胶水脚本，无平台归属语义：显式豁免（详见 exemptSource）；个别脚本要归平台/换 kind
+          // 时在 registry.d 声明（kind 覆盖 + platforms 声明自动解除豁免 + sha256 指纹核对，Owner 2026-11-18）
           platforms: [],
-          source: { collector: 'devforge-adapters', path: p, sha256: sha256(md), platform: 'none' },
+          source: exemptSource('devforge-adapters', p, { sha256: sha256(md) }),
           payload: { envContract: envNames, lines: md.split('\n').length, content: md },
           tags: ['adapter', 'devforge'],
         })

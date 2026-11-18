@@ -1,7 +1,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isMap, isSeq, parse, parseDocument, type YAMLSeq } from 'yaml';
-import { registryEntrySchema, type Asset, type Diagnostic, type Meta } from '@forge/schema';
+import { registryEntrySchema, type Asset, type AssetKind, type Diagnostic, type Meta } from '@forge/schema';
 import type { RegistryState } from './registry.js';
 
 export interface RegistryMatch {
@@ -14,6 +14,10 @@ export interface RegistryMatch {
 export interface RegistryEntry {
   id: string;
   match: RegistryMatch;
+  /** kind 覆盖（账本说了算）：命中资产的 kind 改按声明，id 前缀同步改写 */
+  kind?: AssetKind;
+  /** 身份指纹：声明认可的那一版内容。声明后实测 source.sha256 不符 = 不是同一个东西，本条声明不生效 */
+  sha256?: string;
   /** 声明该资产已应用到的平台（claude-code / multica）。不写 = 不参与平台归属对账 */
   platforms?: string[];
   meta?: Meta;
@@ -73,7 +77,7 @@ export async function loadRegistryEntries(dir: string): Promise<LoadedRegistry> 
         continue;
       }
       const d = check.data;
-      out.push({ id: d.id, match: d.match ?? {}, platforms: d.platforms, meta: d.meta, file: join(dir, f) });
+      out.push({ id: d.id, match: d.match ?? {}, kind: d.kind, sha256: d.sha256, platforms: d.platforms, meta: d.meta, file: join(dir, f) });
     }
   }
   return { entries: out, diagnostics };
@@ -118,12 +122,31 @@ export async function editRegistryPlatforms(
  * 声明即归属：把 registry.d 的 meta/归属盖到匹配资产上（覆盖采集器推断）；
  * entry.platforms 声明平台归属时同步盖到 asset.platforms（Owner 2026-11-11：dev-forge 内部文件
  * 的扫描路径证明不了平台归属，归属由声明层决定；未声明 platforms 的 entry 不动资产声明）。
+ * entry.kind 声明 kind 覆盖时改写资产 kind 并同步改 id 前缀（保持 kind:name 不变量）；
+ * 声明 platforms 同时解除采集器写的 source.platform=none 机械豁免——账本说了算，声明优先于扫描
+ * （Owner 2026-11-18）。
+ * 指纹核对（Owner 2026-11-18）：核对「是不是同一个东西」不能只看名称/路径——entry 声明了 sha256 时
+ * 与实测 source.sha256 比对，不符则该条声明不生效（fallthrough 下一条 entry）+ warn 提醒重新认可。
  * 未匹配声明 → 合成 registry:unmatched-* 资产 + 诊断；自建未声明 → payload.registry.declared=false。
  */
 export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntry[]): RegistryState {
   const matchedEntryIds = new Set<string>();
+  const fingerprintWarns: Diagnostic[] = [];
   const assets = state.assets.map((asset) => {
-    const entry = entries.find((e) => matchesRegistryEntry(asset, e));
+    let entry: RegistryEntry | undefined;
+    for (const e of entries) {
+      if (!matchesRegistryEntry(asset, e)) continue;
+      if (e.sha256 !== undefined && e.sha256 !== asset.source.sha256) {
+        fingerprintWarns.push({
+          level: 'warn',
+          message: `[registry] 声明「${e.id}」指纹不符（声明 ${e.sha256.slice(0, 12)}… vs 实测 ${(asset.source.sha256 ?? '无').slice(0, 12)}…）：${asset.name} 不算同一资产，本条声明未生效；确认是新版请更新声明 sha256`,
+          path: e.file,
+        });
+        continue;
+      }
+      entry = e;
+      break;
+    }
     if (!entry) {
       if (asset.provenance === 'first-party') {
         return { ...asset, payload: { ...asset.payload, registry: { declared: false } } };
@@ -131,10 +154,16 @@ export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntr
       return asset;
     }
     matchedEntryIds.add(entry.id);
+    const idTail = asset.id.slice(asset.id.indexOf(':') + 1);
+    const kindOverride =
+      entry.kind !== undefined && entry.kind !== asset.kind ? { kind: entry.kind, id: `${entry.kind}:${idTail}` } : {};
+    const { platform: exempt, ...sourceRest } = asset.source;
     return {
       ...asset,
+      ...kindOverride,
       provenance: 'first-party' as const,
       ...(entry.platforms ? { platforms: entry.platforms } : {}),
+      ...(entry.platforms && exempt === 'none' ? { source: sourceRest } : {}),
       meta: { ...entry.meta, ...asset.meta },
       payload: {
         ...asset.payload,
@@ -143,7 +172,7 @@ export function applyRegistryOverlay(state: RegistryState, entries: RegistryEntr
     };
   });
 
-  const diagnostics = [...state.diagnostics];
+  const diagnostics = [...state.diagnostics, ...fingerprintWarns];
   const extra: Asset[] = [];
   for (const entry of entries) {
     if (matchedEntryIds.has(entry.id)) continue;

@@ -169,6 +169,11 @@ describe('registry.d 声明契约（元信息层）', () => {
     expect(registryEntrySchema.safeParse({ id: 'x', platforms: ['claude-code', 'multica'] }).success).toBe(true);
   });
 
+  it('kind 覆盖收紧到 ASSET_KINDS', () => {
+    expect(registryEntrySchema.safeParse({ id: 'x', kind: 'custom' }).success).toBe(true);
+    expect(registryEntrySchema.safeParse({ id: 'x', kind: 'not-a-kind' }).success).toBe(false);
+  });
+
   it('meta 枚举值拼写错误被拒绝（此前静默透传）', () => {
     expect(registryEntrySchema.safeParse({ id: 'x', meta: { lifecycle: 'stablee' } }).success).toBe(false);
     expect(registryEntrySchema.safeParse({ id: 'x', meta: { runtime: 'node' } }).success).toBe(false);

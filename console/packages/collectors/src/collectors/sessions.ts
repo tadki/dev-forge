@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { listDir, readJson } from '../util.js';
 import type { Asset } from '@forge/schema';
-import { asset, type Collector } from '../types.js';
+import { asset, exemptSource, type Collector } from '../types.js';
 
 export const sessionsCollector: Collector = {
   name: 'sessions',
@@ -32,7 +32,7 @@ export const sessionsCollector: Collector = {
         enforcement: 'derived',
         // 跨平台本地聚合（CC 会话目录 + multica workspaces），不隶属单一平台 → 未适配桶
         platforms: [],
-        source: { collector: 'sessions', path: join(ctx.paths.claude, 'projects'), platform: 'none' },
+        source: exemptSource('sessions', join(ctx.paths.claude, 'projects')),
         payload: { claudeProjects: projectDirs.length, multicaSeeds: seeds, multicaTasks: tasks },
         tags: ['sessions'],
       })

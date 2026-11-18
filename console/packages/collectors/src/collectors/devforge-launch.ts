@@ -1,7 +1,7 @@
 import type { Asset, Relation } from '@forge/schema';
 import { join } from 'node:path';
 import { listDir, matchesRepoSyncDaemonCmdline, readJson, readText } from '../util.js';
-import { asset, type Collector } from '../types.js';
+import { asset, exemptSource, type Collector } from '../types.js';
 
 export const devforgeLaunchCollector: Collector = {
   name: 'devforge-launch',
@@ -44,7 +44,7 @@ export const devforgeLaunchCollector: Collector = {
           platforms: [],
           enabled: !disabled,
           payload: { daemon: 'repo_sync_daemon.py', config: cfg, logDir: cfg.log_dir, enabled: !disabled, active, trigger },
-          source: { collector: 'devforge-launch', path: cfgPath, platform: 'none' },
+          source: exemptSource('devforge-launch', cfgPath),
           tags: ['repo-sync', 'devforge'],
         })
       );
@@ -65,7 +65,7 @@ export const devforgeLaunchCollector: Collector = {
           // 启动链 env 是自研运行时资产，不隶属任何 agent 平台（与 repo-sync 同族）
           platforms: [],
           payload: { values: Object.fromEntries(env.split('\n').filter((l) => l.includes('=')).map((l) => [l.split('=')[0], l.split('=').slice(1).join('=')])) },
-          source: { collector: 'devforge-launch', path: envFile, platform: 'none' },
+          source: exemptSource('devforge-launch', envFile),
           tags: ['launch', 'devforge'],
         })
       );

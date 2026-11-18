@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { exists } from '../util.js';
-import { asset, type CollectContext, type Collector } from '../types.js';
+import { asset, exemptSource, type CollectContext, type Collector } from '../types.js';
 
 export interface FireEvent {
   ts: string;
@@ -85,7 +85,7 @@ export const devforgeFirelogCollector: Collector = {
       enforcement: 'derived',
       // 活动流是 hook 运行时日志聚合（dev-forge 工具链产物），不隶属单一平台
       platforms: [],
-      source: { collector: 'devforge-firelog', path: logs[0].path, platform: 'none' },
+      source: exemptSource('devforge-firelog', logs[0].path),
       payload: { events: top, denyCount, globalLogBytes: globalSize },
       tags: ['report', 'activity', 'firelog'],
     });

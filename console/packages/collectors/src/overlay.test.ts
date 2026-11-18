@@ -122,6 +122,81 @@ describe('registry.d 声明盖戳（overlay）', () => {
     expect(diagnostics.map((d) => d.message).join(';')).toMatch(/bad-lifecycle/);
   });
 
+  it('kind 覆盖 + platform=none 豁免解除：指纹吻合才盖（Owner 2026-11-18）', async () => {
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'owned.yaml'),
+      `entries:
+  - id: ledger-wins
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/adapters/upgrade-multica-selfhost.sh" }
+    kind: custom
+    sha256: 751dfb2762c0abba
+    platforms: [multica]
+`
+    );
+    const { entries } = await loadRegistryEntries(dir);
+    const path = '/home/jerry/tools/dev-forge/adapters/upgrade-multica-selfhost.sh';
+    const a: Asset = {
+      ...mk('adapter:upgrade-multica-selfhost.sh', path),
+      kind: 'adapter',
+      platforms: [],
+      source: { collector: 'devforge-adapters', path, sha256: '751dfb2762c0abba', platform: 'none' },
+    };
+    const out = applyRegistryOverlay(stateOf([a]), entries);
+    const s = out.assets.find((x) => x.id === 'custom:upgrade-multica-selfhost.sh')!;
+    expect(s).toBeDefined();
+    expect(s.kind).toBe('custom');
+    expect(s.source.platform).toBeUndefined(); // 机械豁免被声明解除 → 进平台归桶
+    expect(s.platforms).toEqual(['multica']);
+    expect((s.payload as { registry?: { declaredBy?: string } }).registry?.declaredBy).toBe('ledger-wins');
+  });
+
+  it('指纹不符 = 不是同一个东西：整条声明不生效 + warn（不能只看名称）', async () => {
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'owned.yaml'),
+      `entries:
+  - id: ledger-wins
+    match: { pathPrefix: "/home/jerry/tools/dev-forge/adapters/upgrade-multica-selfhost.sh" }
+    kind: custom
+    sha256: blessed-but-stale
+    platforms: [multica]
+`
+    );
+    const { entries } = await loadRegistryEntries(dir);
+    const path = '/home/jerry/tools/dev-forge/adapters/upgrade-multica-selfhost.sh';
+    const a: Asset = {
+      ...mk('adapter:upgrade-multica-selfhost.sh', path),
+      kind: 'adapter',
+      platforms: [],
+      source: { collector: 'devforge-adapters', path, sha256: 'actually-new-version', platform: 'none' },
+    };
+    const out = applyRegistryOverlay(stateOf([a]), entries);
+    const s = out.assets.find((x) => x.id === 'adapter:upgrade-multica-selfhost.sh')!;
+    expect(s).toBeDefined();
+    expect(s.kind).toBe('adapter'); // 声明未盖：kind/id/归属/豁免全部维持采集器机械产出
+    expect(s.platforms).toEqual([]);
+    expect(s.source.platform).toBe('none');
+    expect((s.payload as { registry?: { declared?: boolean } }).registry?.declared).toBe(false);
+    expect(out.diagnostics.some((d) => d.level === 'warn' && d.message.includes('指纹不符') && d.message.includes('ledger-wins'))).toBe(true);
+  });
+
+  it('未声明 kind/platforms 的条目不动资产的 kind、id 与豁免', async () => {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'owned.yaml'), MANIFEST);
+    const { entries } = await loadRegistryEntries(dir);
+    const a: Asset = {
+      ...mk('adapter:glue.sh', '/x/glue.sh'),
+      kind: 'adapter',
+      platforms: [],
+      source: { collector: 'test', path: '/x/glue.sh', platform: 'none' },
+    };
+    const out = applyRegistryOverlay(stateOf([a]), entries.filter((e) => e.id === 'devforge-hooks'));
+    const s = out.assets.find((x) => x.id === 'adapter:glue.sh')!;
+    expect(s.kind).toBe('adapter');
+    expect(s.source.platform).toBe('none');
+  });
+
   it('match 语义：ids 精确 / exclude 剔除 / fallthrough 到下一条 entry', async () => {
     const entries: RegistryEntry[] = [
       { id: 'exact', match: { ids: ['skill:a', 'skill:b'] }, file: '/x' },

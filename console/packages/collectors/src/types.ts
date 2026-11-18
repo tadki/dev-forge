@@ -50,6 +50,19 @@ export function makeContext(
   };
 }
 
+/**
+ * 机械豁免源（platform=none，不归属任何平台）——「跳过逻辑」的唯一出处（Owner 2026-11-18 模块化）：
+ * 采集器对无平台归属语义的产物一律经此构造，不得手写 platform:'none' 字面量；
+ * 账本（registry.d）声明 platforms 可在 overlay 解除豁免（声明带 sha256 指纹核对后才盖）。
+ */
+export function exemptSource(
+  collector: string,
+  path: string,
+  extra?: { sha256?: string; locator?: string; mtime?: string }
+): Asset['source'] {
+  return { collector, path, platform: 'none', ...extra };
+}
+
 export function asset(partial: {
   id: string;
   kind: Asset['kind'];

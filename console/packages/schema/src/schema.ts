@@ -89,9 +89,13 @@ export const sourceSchema = z.object({
 export const PLATFORM_IDS = ['claude-code', 'multica'] as const;
 
 /**
- * registry.d 声明 entry 契约：元信息层（归属/生命周期/平台声明），与资产 payload 契约互不重叠。
+ * registry.d 声明 entry 契约：元信息层（归属/生命周期/平台声明）+ kind 覆盖，与资产 payload 契约互不重叠。
  * match 三档粒度：idPrefix/pathPrefix 前缀（自有文件系统域）、ids 精确清单（平台命名空间推荐）、
  * exclude 前缀命中后排除（平台自带资产剔除）。命中 = include 命中 && 无 exclude 命中。
+ * kind 覆盖（Owner 2026-11-18 账本说了算）：命中资产的 kind 改按声明，id 前缀同步改写保持 kind:name 不变量；
+ * 声明 platforms 同时解除采集器给该资产写的 source.platform=none 机械豁免——声明优先于扫描。
+ * sha256 指纹核对（Owner 2026-11-18）：核对「是不是同一个东西」不能只看名称/路径——声明了 sha256 时
+ * 与实测 source.sha256 逐字节比对，不符则整条声明不生效（fallthrough 下一条）+ warn 诊断，提醒重新认可。
  */
 export const registryEntrySchema = z.object({
   id: z.string().min(1),
@@ -109,6 +113,9 @@ export const registryEntrySchema = z.object({
         .optional(),
     })
     .optional(),
+  kind: z.enum(ASSET_KINDS).optional(),
+  /** 身份指纹：声明认可的那一版内容。声明后指纹不符的实测资产不算同一个东西，本条声明不盖 */
+  sha256: z.string().optional(),
   platforms: z.array(z.enum(PLATFORM_IDS)).optional(),
   meta: metaSchema.optional(),
 });
