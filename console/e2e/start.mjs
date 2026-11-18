@@ -15,6 +15,22 @@ writeFileSync(
     .replace('STORE_DIR_PLACEHOLDER', join(here, 'test-results', 'first-party'))
 );
 
+// 种子库记录 = fixture 完整内容 + 库内版本标注：内容等价（agents 详情断言仍命中）、
+// 指纹与采集不同（触发 store-drift 展示，Owner 模型：展示以库为唯一真源）
+const coreFixture = JSON.parse(readFileSync(join(here, 'fixtures', 'core.json'), 'utf8'));
+const findAssetById = (o, id) => {
+  if (Array.isArray(o)) { for (const x of o) { const hit = findAssetById(x, id); if (hit) return hit; } return null; }
+  if (o && typeof o === 'object') {
+    if (o.id === id) return o;
+    for (const v of Object.values(o)) { const hit = findAssetById(v, id); if (hit) return hit; }
+  }
+  return null;
+};
+const frontiFixture = findAssetById(coreFixture, 'agent:fronti');
+const seededPayload = frontiFixture
+  ? { ...frontiFixture.payload, instructions: `${frontiFixture.payload.instructions}\n\n（库内真源版本——指纹与采集不符，供对账用例）` }
+  : { instructions: '库内旧版本（真源）' };
+
 // 预置一条与 fixture 指纹不符的库内副本（hash 故意不匹配）→ 触发 store-drift 双向动作用例
 const storeDir = join(here, 'test-results', 'first-party');
 rmSync(storeDir, { recursive: true, force: true });
@@ -43,7 +59,10 @@ writeFileSync(
         tags: [],
         enabled: true,
         source: { collector: 'multica', path: 'multica://agents/fronti-1' },
-        payload: { instructions: '# Fronti\n\n库内旧版本（真源）', registry: { declared: true, declaredBy: 'multica-platform-agents' } },
+        payload: {
+          ...seededPayload,
+          registry: { declared: true, declaredBy: 'multica-platform-agents' },
+        },
       },
     },
     null,
