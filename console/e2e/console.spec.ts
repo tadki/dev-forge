@@ -278,7 +278,9 @@ test('registry: mgmt section shows declared/undeclared/unmatched', async ({ page
 
 test('registry: reconcile section lists drift and executes dry-run after confirm', async ({ page }) => {
   await page.goto('/registry');
-  await expect(page.getByText('平台对账', { exact: false })).toBeVisible();
+  // 对账条目收在「平台对账」标签页；标签带未处理数标志
+  await page.getByText('平台对账 RECONCILE').click();
+  await expect(page.getByText('平台对账', { exact: false }).first()).toBeVisible();
   // fixture：Fronti instructions 与物化 CLAUDE.md 分叉 → drift 项 + 双向动作
   await expect(page.getByText('multica · drift:multica:fronti', { exact: false }).first()).toBeVisible();
   await expect(page.locator('.diff-plus').first()).toBeVisible(); // 漂移内容逐行 diff（+ 绿 / - 红着色）
@@ -304,6 +306,8 @@ test('registry: reconcile section lists drift and executes dry-run after confirm
 
 test('registry: store drift（库 vs 生产）adopt/push 双向 dry-run', async ({ page }) => {
   await page.goto('/registry');
+  // 对账内容收在「平台对账」标签页（默认停在注册表 dashboard）
+  await page.getByText('平台对账 RECONCILE').click();
   // start.mjs 预置了 agent:fronti 的 v2 库内副本（hash 与 fixture 生产指纹不符）→ store-drift
   const panel = page.locator('.panel', { hasText: 'store:agent:fronti' });
   await expect(panel.getByText('库与生产分叉', { exact: false })).toBeVisible();

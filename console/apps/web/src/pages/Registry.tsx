@@ -16,7 +16,6 @@ const RECONCILE_LABEL: Record<ReconcileItem['type'], string> = {
   'uncovered-assets': '未纳入对账',
   'ledger-orphan': '名册孤儿记录',
   'ledger-dangling': 'declaredBy 悬空',
-  'ledger-selfhash': '名册自指纹不符',
   'ledger-unregistered': '声明未入册',
 };
 

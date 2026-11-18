@@ -17,7 +17,6 @@ export type ReconcileItemType =
   | 'uncovered-assets'
   | 'ledger-orphan'
   | 'ledger-dangling'
-  | 'ledger-selfhash'
   | 'ledger-unregistered';
 export type ReconcileDirection = 'platform-to-local' | 'local-to-platform';
 
@@ -175,18 +174,6 @@ function buildLedgerConsistencyItems(
       });
       continue;
     }
-    if (rec.hashVersion === 3 && rec.hash !== contentFingerprint(rec.asset)) {
-      items.push({
-        key: `ledger-selfhash:${id}`,
-        type: 'ledger-selfhash',
-        severity: 'error',
-        platform: 'local',
-        name: rec.asset.name,
-        detail: '名册记录自身指纹与内容不符（手工编辑或写入损坏），该记录不可作为真源采信',
-        copies: [{ assetId: rec.asset.id, name: `${rec.asset.name}（库内）`, path: rec.asset.source.path, sha: rec.hash.slice(0, 16), platforms: ['store'] }],
-        actions: [{ id: 'adopt', direction: 'platform-to-local', label: '以生产为准：重算并重写库记录', executable: true, steps: [{ type: 'store-write', assetId: rec.asset.id }] }],
-      });
-    }
     if (rec.declaredBy && !entryIds.has(rec.declaredBy)) {
       items.push({
         key: `ledger-dangling:${id}`,
@@ -246,7 +233,7 @@ function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): 
     const reg = (a.payload as { registry?: { declared?: boolean } }).registry;
     if (reg?.declared !== true) continue;
     const record = store.get(a.id);
-    if (!record || record.hashVersion !== 3) continue; // 未入库/待迁移 → 不比
+    if (!record || record.hashVersion !== 4) continue; // 未入库/待迁移 → 不比
     const fp = contentFingerprint(a);
     if (fp === record.hash) continue;
 
@@ -726,7 +713,6 @@ export function reconcileDiagnostics(report: ReconcileReport, limit = 30): Array
     'uncovered-assets': '未纳入对账',
     'ledger-orphan': '名册孤儿记录',
     'ledger-dangling': 'declaredBy 悬空',
-    'ledger-selfhash': '名册自指纹不符',
     'ledger-unregistered': '声明未入册',
   };
   return report.items.slice(0, limit).map((i) => ({

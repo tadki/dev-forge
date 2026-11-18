@@ -235,7 +235,7 @@ describe('store-drift（库 vs 生产）', () => {
       name: asset.name,
       savedAt: '2026-11-06T00:00:00Z',
       updatedAt: '2026-11-06T00:00:00Z',
-      hashVersion: 3,
+      hashVersion: 4,
       hash: 'irrelevant-will-be-set',
       asset: { ...asset, payload: { ...asset.payload, content } },
     };
@@ -422,7 +422,7 @@ describe('账本一致性（规则层 ↔ 名册层）', () => {
       declaredBy: (asset.payload as { registry?: { declaredBy?: string } }).registry?.declaredBy,
       savedAt: '2026-11-06T00:00:00Z',
       updatedAt: '2026-11-06T00:00:00Z',
-      hashVersion: 3,
+      hashVersion: 4,
       hash: hashOverride ?? contentFingerprint(asset),
       asset,
     };
@@ -444,15 +444,6 @@ describe('账本一致性（规则层 ↔ 名册层）', () => {
     const report = buildReconcileReport({ assets: [orphanEntry] }, entries, new Date(), { store: new Map([[orphanEntry.id, rec]]) });
     const item = report.items.find((i) => i.type === 'ledger-dangling');
     expect(item?.detail).toContain('removed-entry');
-  });
-
-  it('记录自指纹不符 → ledger-selfhash（error + adopt 重写动作）', () => {
-    const a = declared(mk('instruction:hash/CLAUDE.md', 'instruction', { payload: { content: '真实内容' } }));
-    const rec = v3(a, 'bogus-hash');
-    const report = buildReconcileReport({ assets: [a] }, entries, new Date(), { store: new Map([[a.id, rec]]) });
-    const item = report.items.find((i) => i.type === 'ledger-selfhash');
-    expect(item?.severity).toBe('error');
-    expect(item?.actions.find((x) => x.id === 'adopt')?.executable).toBe(true);
   });
 
   it('声明为自建但未入库 → ledger-unregistered（adopt 登记入库）', () => {

@@ -72,7 +72,7 @@ export interface ReconcileAction {
 
 export interface ReconcileItem {
   key: string;
-  type: 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'store-drift' | 'patch-drift' | 'uncovered-assets' | 'ledger-orphan' | 'ledger-dangling' | 'ledger-selfhash' | 'ledger-unregistered';
+  type: 'missing-on-platform' | 'undeclared-platform' | 'content-drift' | 'store-drift' | 'patch-drift' | 'uncovered-assets' | 'ledger-orphan' | 'ledger-dangling' | 'ledger-unregistered';
   severity: string;
   platform: string;
   entryId?: string;
