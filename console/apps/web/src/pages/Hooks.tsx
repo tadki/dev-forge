@@ -17,75 +17,165 @@ import {
   type RulePayload,
 } from './hook-rule-search';
 
+type DetailField = 'harness' | 'on' | 'agents' | 'repo' | 'when' | 'actions' | 'blocking' | 'owner' | 'overlay' | 'versionNote' | 'fileScope' | 'oneshot' | 'status';
+
+const WHEN_KIND_LABELS: Record<string, string> = { none: '无 when', payload: '条件读 hook payload（零 I/O）', ops: '条件使用引擎算子（command/file/content 等）', mixed: 'payload 与引擎算子混用' };
+
+function WhenBadges({ p }: { p: RulePayload }) {
+  const kind = p.whenKind;
+  if (kind === 'none' || !kind) return <span className="dim">—</span>;
+  const badges = kind === 'payload' ? [['PAYLOAD', 'off'] as const] : kind === 'ops' ? [['OPS', 'plain'] as const] : [['PAYLOAD', 'off'], ['OPS', 'plain']] as const;
+  return (
+    <span style={{ display: 'inline-flex', gap: 4 }}>
+      {badges.map(([b, tone]) => <Badge key={b} tone={tone} title={WHEN_KIND_LABELS[kind]}>{b}</Badge>)}
+    </span>
+  );
+}
+
+/* 表格列与详情栏共用的徽章渲染：两处必须同源，避免样式漂移 */
+function AgentBadge({ p }: { p: RulePayload }) {
+  const g = p.agents;
+  return g?.include?.length
+    ? <Badge tone="ok">{g.include.join(',')}</Badge>
+    : g?.except?.length
+      ? <Badge tone="warn">except {g.except.join(',')}</Badge>
+      : <Badge title="无 agent 门控">all</Badge>;
+}
+
+function RepoBadge({ p }: { p: RulePayload }) {
+  const g = p.repoGating;
+  if (g?.in?.length) return <Badge tone="ok" title="仓库门控：repos.json 注册表 origin 作用域">{g.in.join(',')}</Badge>;
+  if (g?.registered) return <Badge tone="ok" title="仓库门控：任意已注册仓库">registered</Badge>;
+  return <Badge title="无仓库门控（作用域不限仓库）">all</Badge>;
+}
+
+function scriptNamesOf(p: RulePayload): string[] {
+  return p.actions?.filter((a) => a.op === 'run_script').map((a) => (a.path ?? '').split('/').pop()).filter((x): x is string => !!x) ?? [];
+}
+
+function ActionBadge({ p }: { p: RulePayload }) {
+  const acts = p.actions ?? [];
+  if (!acts.length) return <span className="dim">—</span>;
+  const ops = acts.map((a) => a.op);
+  const label = ops.map((o) => (o === 'run_script' ? 'SCRIPT' : o.toUpperCase())).join('+');
+  return ops.includes('deny') ? <Badge tone="bad">{label}</Badge> : ops.includes('context') ? <Badge tone="plain">{label}</Badge> : <Badge>{label}</Badge>;
+}
+
+function ScriptView({ path }: { path?: string }) {
+  const base = (path ?? '').split('/').pop() ?? '';
+  const q = useQuery({
+    queryKey: ['hook-script-content', base],
+    queryFn: () => apiGet<{ asset: AssetLite }>(`/api/assets/hook-script%3A${base}`),
+    enabled: !!base,
+  });
+  if (!base) return <div className="dim">动作未声明脚本路径</div>;
+  const a = q.data?.asset;
+  const content = (a?.payload as { content?: string } | undefined)?.content;
+  if (q.isLoading) return <div className="dim">读取脚本…</div>;
+  if (!a || typeof content !== 'string') return <div className="dim">未找到脚本资产 hook-script:{base}（脚本可能已被移除）</div>;
+  return <pre className="code">{content}</pre>;
+}
+
+function FieldDetail({ p, field }: { p: RulePayload; field: DetailField }) {
+  switch (field) {
+    case 'when':
+      // 左栏「条件 WHEN」行已是 whenHuman 翻译投影；这里只放算子原文，避免同一内容写两遍
+      return (
+        <>
+          <div className="dim">{WHEN_KIND_LABELS[p.whenKind ?? 'none']}</div>
+          <pre className="code">{p.when ? JSON.stringify(p.when, null, 2) : '—（无 when，事件即触发）'}</pre>
+        </>
+      );
+    case 'actions':
+      return (
+        <>
+          {(p.actions ?? []).map((a, i) => (
+            <div key={i} style={{ marginBottom: 6 }}>
+              <Badge tone={a.op === 'deny' ? 'bad' : a.op === 'context' ? 'plain' : undefined}>{a.op === 'run_script' ? 'SCRIPT' : a.op.toUpperCase()}</Badge>
+              {a.message && <div className="dim" style={{ marginTop: 2 }}>{a.message}</div>}
+            </div>
+          ))}
+          {(p.actions ?? []).filter((a) => a.op === 'run_script').map((a, i) => (
+            <ScriptView key={`s${i}`} path={a.path} />
+          ))}
+          {!p.actions?.length && <div className="dim">—</div>}
+        </>
+      );
+    case 'agents':
+      return p.agents?.include?.length
+        ? <span className="mono">include {p.agents.include.join(', ')}</span>
+        : p.agents?.except?.length
+          ? <span className="mono">except {p.agents.except.join(', ')}</span>
+          : <span className="dim">不限</span>;
+    case 'repo':
+      return p.repoGating?.in?.length
+        ? <span className="mono">{p.repoGating.in.join(', ')}</span>
+        : p.repoGating?.registered
+          ? <span>任意已注册仓库（repos.json）</span>
+          : <span className="dim">不限仓库</span>;
+    case 'versionNote':
+      return <div className="dim">{p.versionNote}</div>;
+    case 'fileScope':
+      return <div className="dim">{p.fileDeclaredScope}</div>;
+    default:
+      return null;
+  }
+}
+
 function RuleDetail({ rule }: { rule: AssetLite }) {
   const p = rule.payload as RulePayload;
+  const [sel, setSel] = useState<DetailField | null>(null);
+  const hasBlocking = !!(p.blocking || p.actions?.some((a) => a.op === 'deny'));
+  const hasAgents = !!(p.agents?.include?.length || p.agents?.except?.length);
+  const hasRepo = !!(p.repoGating?.in?.length || p.repoGating?.registered);
+  const hasActions = !!p.actions?.length;
+
+  const rows: Array<{ key: DetailField; label: string; inline: React.ReactNode; selectable?: boolean }> = [
+    { key: 'status', label: '状态', inline: <Badge tone={rule.enabled ? 'ok' : 'off'}>{rule.enabled ? '启用' : '停用'}</Badge> },
+    { key: 'harness', label: '生效 HARNESS', inline: p.harness?.length
+      ? <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>{p.harness.map((h) => <Badge key={h} tone="plain" title={`生效 harness：${h}`}>{HARNESS_LABELS[h] ?? h}</Badge>)}</span>
+      : <span className="dim">—</span> },
+    { key: 'on', label: '事件 ON', inline: <span className="mono dim">{(p.on ?? []).join(',')}{p.onExcept?.length ? ` （除 ${p.onExcept.join('/')}）` : ''}</span> },
+    { key: 'agents', label: 'AGENT 门控', inline: <AgentBadge p={p} />, selectable: hasAgents },
+    { key: 'repo', label: 'REPO 门控', inline: <RepoBadge p={p} />, selectable: hasRepo },
+    { key: 'when', label: '条件 WHEN', inline: <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><WhenBadges p={p} /><span className="dim">{p.whenHuman?.slice(0, 40)}</span></span>, selectable: true },
+    { key: 'actions', label: '动作 ACTION', inline: <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}><ActionBadge p={p} />{scriptNamesOf(p).map((s) => <span key={s} className="mono dim" title={`run_script → ${s}`}>{s}</span>)}</span>, selectable: hasActions },
+    { key: 'oneshot', label: '单发 ONE-SHOT', inline: <span className="mono dim">{p.oneShot}</span> },
+    { key: 'blocking', label: '阻断 BLOCKING', inline: hasBlocking ? <Badge tone="bad" title="deny 动作或脚本动态拦截会阻断工具调用">✓</Badge> : <span className="dim">—</span> },
+    { key: 'owner', label: 'Owner', inline: rule.owner ? <span className="mono dim">{rule.owner}</span> : <span className="dim">—</span> },
+    { key: 'overlay', label: '来源', inline: <span className="dim">{p.overlay ? 'rules.d 覆盖层' : 'rules-v2 主表'}</span> },
+    { key: 'versionNote', label: '版本注记', inline: p.versionNote ? <span className="dim">{p.versionNote.slice(0, 30)}…</span> : <span className="dim">—</span>, selectable: !!p.versionNote },
+    { key: 'fileScope', label: '文件级作用域', inline: p.fileDeclaredScope ? <span className="dim">{p.fileDeclaredScope.slice(0, 30)}…</span> : <span className="dim">—</span>, selectable: !!p.fileDeclaredScope },
+  ];
+
+  const selected = rows.find((r) => r.key === sel);
   return (
     <Panel title={`规则详情 · ${rule.name}`} en="RULE DETAIL">
       <div className="rule-detail-body">
-      <div className="kv kv-tight">
-        <dt>状态</dt>
-        <dd><Badge tone={rule.enabled ? 'ok' : 'off'}>{rule.enabled ? '启用' : '停用'}</Badge></dd>
-        <dt>HARNESS</dt>
-        <dd>
-          {p.harness?.length
-            ? p.harness.map((h) => <Badge key={h} tone="plain" title={`生效 harness：${h}`}>{HARNESS_LABELS[h] ?? h}</Badge>)
-            : <span className="dim">—</span>}
-        </dd>
-        <dt>事件 ON</dt>
-        <dd className="mono dim">{(p.on ?? []).join(',')}{p.onExcept?.length ? ` （除 ${p.onExcept.join('/')}）` : ''}</dd>
-        <dt>AGENT 门控</dt>
-        <dd>
-          {p.agents?.include
-            ? <span className="mono">{p.agents.include.join(', ')}</span>
-            : p.agents?.except
-              ? <span className="mono dim">except {p.agents.except.join(', ')}</span>
-              : <span className="dim">不限</span>}
-        </dd>
-        <dt>REPO 门控</dt>
-        <dd>
-          {p.repoGating?.in?.length
-            ? <span className="mono">{p.repoGating.in.join(', ')}</span>
-            : p.repoGating?.registered
-              ? '已注册仓库'
-              : <span className="dim">不限仓库</span>}
-        </dd>
-        <dt>单发</dt>
-        <dd className="mono dim">{p.oneShot}</dd>
-        {p.blocking && (
-          <>
-            <dt>阻断</dt>
-            <dd><Badge tone="bad" title="DENY 动作会拦截工具调用">BLOCKING</Badge></dd>
-          </>
-        )}
-        {rule.owner && (
-          <>
-            <dt>Owner</dt>
-            <dd className="mono dim">{rule.owner}</dd>
-          </>
-        )}
-      </div>
-      <div className="kv kv-tight" style={{ marginTop: 8 }}>
-        <dt>when 投影</dt>
-        <dd>{p.whenHuman}</dd>
-        <dt>来源</dt>
-        <dd className="dim">{p.overlay ? 'rules.d 覆盖层' : 'rules-v2 主表'}</dd>
-        {p.versionNote && (
-          <>
-            <dt>版本注记</dt>
-            <dd className="dim">{p.versionNote}</dd>
-          </>
-        )}
-        {p.fileDeclaredScope && (
-          <>
-            <dt>文件级作用域</dt>
-            <dd className="dim">{p.fileDeclaredScope}</dd>
-          </>
-        )}
-        <dt>源文件</dt>
-        <dd className="mono dim">{rule.source.path}</dd>
-      </div>
-      <pre className="code">{JSON.stringify(p.actions, null, 2)}</pre>
-      <pre className="code">{JSON.stringify(p.when, null, 2)}</pre>
+        <div className="rule-detail-split">
+          <div className="rule-fields" role="listbox" aria-label="规则字段">
+            {rows.map((r) => (
+              <div
+                key={r.key}
+                role={r.selectable ? 'option' : undefined}
+                aria-selected={r.selectable ? sel === r.key : undefined}
+                tabIndex={r.selectable ? 0 : undefined}
+                className={`rule-field${r.selectable ? ' is-selectable' : ''}${sel === r.key ? ' is-active' : ''}`}
+                onClick={r.selectable ? () => setSel(r.key) : undefined}
+                onKeyDown={r.selectable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSel(r.key); } } : undefined}
+              >
+                <span className="rule-field-label">{r.label}</span>
+                <span className="rule-field-value">{r.inline}</span>
+                <span className="rule-field-go" aria-hidden>{r.selectable ? '›' : ''}</span>
+              </div>
+            ))}
+          </div>
+          <div className="rule-detail-pane">
+            {selected
+              ? <><div className="panel-title" style={{ fontSize: 'var(--fs-l1)' }}>{selected.label}</div><FieldDetail p={p} field={selected.key} /></>
+              : <div className="dim">点击左栏可切换的字段，这里显示该字段详情（算子原文在「条件 WHEN」，脚本内容在「动作 ACTION」）</div>}
+          </div>
+        </div>
       </div>
     </Panel>
   );
@@ -221,20 +311,12 @@ export function HooksPage(_props: { ctx: PageCtx }) {
           {
             key: 'agent',
             head: 'AGENT 门控',
-            render: (r) => {
-              const g = (r.payload as RulePayload).agents;
-              return g?.include ? <Badge tone="ok">{g.include.join(',')}</Badge> : g?.except ? <Badge tone="warn">except {g.except.join(',')}</Badge> : <Badge title="无 agent 门控">all</Badge>;
-            },
+            render: (r) => <AgentBadge p={r.payload as RulePayload} />,
           },
           {
             key: 'repo',
             head: 'REPO 门控',
-            render: (r) => {
-              const g = (r.payload as RulePayload).repoGating;
-              if (g?.in?.length) return <Badge tone="ok" title="仓库门控：repos.json 注册表 origin 作用域">{g.in.join(',')}</Badge>;
-              if (g?.registered) return <Badge tone="ok" title="仓库门控：任意已注册仓库">registered</Badge>;
-              return <Badge title="无仓库门控（作用域不限仓库）">all</Badge>;
-            },
+            render: (r) => <RepoBadge p={r.payload as RulePayload} />,
           },
           {
             key: 'when',
@@ -255,13 +337,7 @@ export function HooksPage(_props: { ctx: PageCtx }) {
           {
             key: 'action',
             head: '动作 ACTION',
-            render: (r) => {
-              const acts = (r.payload as RulePayload).actions ?? [];
-              const ops = acts.map((a) => a.op);
-              if (!ops.length) return <span className="dim">—</span>;
-              const label = ops.map((o) => (o === 'run_script' ? 'SCRIPT' : o.toUpperCase())).join('+');
-              return ops.includes('deny') ? <Badge tone="bad">{label}</Badge> : ops.includes('context') ? <Badge tone="plain">{label}</Badge> : <Badge>{label}</Badge>;
-            },
+            render: (r) => <ActionBadge p={r.payload as RulePayload} />,
           },
           { key: 'oneshot', head: '单发 ONE-SHOT', render: (r) => <span className="mono dim">{(r.payload as RulePayload).oneShot}</span> },
         ]}
