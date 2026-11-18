@@ -327,9 +327,10 @@ export function HooksPage(_props: { ctx: PageCtx }) {
                   className={`btn small ${r.enabled ? 'btn-amber' : 'btn-mint'} rule-toggle`}
                   title={r.enabled ? '已启用 · 点击停用' : '已停用 · 点击启用'}
                   aria-pressed={r.enabled}
+                  disabled={toggleRule.isPending}
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleRule.mutate({ name: r.name, enabled: !r.enabled });
+                    if (!toggleRule.isPending) toggleRule.mutate({ name: r.name, enabled: !r.enabled });
                   }}
                 >
                   {r.enabled ? '■' : '▶'}
