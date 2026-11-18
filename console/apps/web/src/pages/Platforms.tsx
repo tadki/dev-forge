@@ -25,12 +25,12 @@ const WRITE_TYPE_LABEL: Record<PlatformWriteChannel['type'], string> = {
   command: 'CLI 物化',
   none: '仅建议',
 };
-/** 归属判据统一渲染：所有声明式 kind 同一规则——basis 由契约声明（缺省 stamp），值按判据来源取 */
-function attributionBasisText(discovery: PlatformDiscoveryChannel, registryPlatforms?: string[]): string {
+/** 归属判据短语：结果（资产 platforms 属性）之后的溯源标注，所有声明式 kind 同一规则 */
+function attributionCriterionText(discovery: PlatformDiscoveryChannel): string {
   const basis = discovery.platformBasis ?? 'stamp';
-  if (basis === 'self') return `${discovery.platformBasisField ?? '自身字段'}（资产自身声明）`;
-  if (basis === 'usage') return '使用链继承（挂载/引用链）';
-  return registryPlatforms?.length ? `platforms: ${registryPlatforms.join(' · ')}（registry 盖章）` : 'registry 盖章（条目未声明 platforms）';
+  if (basis === 'self') return `${discovery.platformBasisField ?? '自身字段'} 自声明`;
+  if (basis === 'usage') return '使用链继承';
+  return 'registry 盖章';
 }
 
 const SMALL = { fontSize: 'var(--fs-l1)' } as const;
@@ -69,7 +69,7 @@ function FieldLine({ label, children }: { label: string; children: React.ReactNo
 }
 
 /** 发现通道全字段：怎么确定资产适配本平台（归属判据）。缺失字段显示 — */
-function DiscoveryCell({ discovery, registryPlatforms, notApplicable }: { discovery?: PlatformDiscoveryChannel; registryPlatforms?: string[]; notApplicable?: boolean }) {
+function DiscoveryCell({ discovery, kindPlatforms, notApplicable }: { discovery?: PlatformDiscoveryChannel; kindPlatforms?: string[]; notApplicable?: boolean }) {
   return (
     <div>
       <FieldLine label="方式">
@@ -109,16 +109,13 @@ function DiscoveryCell({ discovery, registryPlatforms, notApplicable }: { discov
         )}
       </FieldLine>
       <FieldLine label="注册条目">
-        {discovery?.registry ? (
-          <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
-            <Chip>registry.d: {discovery.registry}</Chip>
-            <span
-              className="mono"
-              style={SMALL}
-              title="平台归属判据：stamp=条目代盖 platforms / self=资产自身声明字段 / usage=使用链继承"
-            >
-              归属判据: {attributionBasisText(discovery, registryPlatforms)}
-            </span>
+        {discovery?.registry ? <Chip>registry.d: {discovery.registry}</Chip> : <Dash />}
+      </FieldLine>
+      <FieldLine label="平台 PLATFORM">
+        {kindPlatforms?.length ? (
+          <span className="mono" style={SMALL} title="该 kind 资产自身的 platforms 属性（盖章/自声明/继承均落在此）">
+            platforms: {kindPlatforms.join(' · ')}
+            {discovery ? <span className="dim">（判据: {attributionCriterionText(discovery)}）</span> : null}
           </span>
         ) : (
           <Dash />
@@ -321,6 +318,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
           ...(decl?.applicable === false ? { applicable: false as const } : {}),
           ...(decl?.note !== undefined ? { note: decl.note } : {}),
           discovery: decl?.discovery,
+          platforms: decl?.platforms,
           ...(decl?.registryPlatforms?.length ? { registryPlatforms: decl.registryPlatforms } : {}),
           read: decl?.read,
           write: decl?.write,
@@ -589,7 +587,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
                       发现通道 DISCOVERY
                     </div>
-                    <DiscoveryCell discovery={sel.discovery} registryPlatforms={sel.registryPlatforms} notApplicable={sel.declared && sel.applicable === false} />
+                    <DiscoveryCell discovery={sel.discovery} kindPlatforms={sel.platforms} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>

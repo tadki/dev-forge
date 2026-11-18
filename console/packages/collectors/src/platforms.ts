@@ -549,6 +549,8 @@ export interface PlatformKindView {
   discovery?: PlatformDiscovery;
   /** declared 发现时盖章条目（discovery.registry）在 registry.d 里的 platforms 声明——展示完整归属链 */
   registryPlatforms?: string[];
+  /** 该 kind 实际归属资产自身的 platforms 属性并集（盖章/自声明/继承都落在此，页面以此展示结果） */
+  platforms: string[];
   read?: PlatformRead;
   write?: PlatformWrite;
   assetCount: number;
@@ -657,6 +659,7 @@ export function buildPlatformsView(
           : {}),
         ...(d?.read ? { read: d.read } : {}),
         ...(d?.write ? { write: d.write } : {}),
+        platforms: [...new Set(list.flatMap((a) => a.platforms))].sort(),
         assetCount: list.length,
         firstPartyCount: list.filter((a) => a.provenance === 'first-party').length,
         collectors: [...new Set(list.map((a) => a.source.collector))].sort(),
