@@ -87,10 +87,16 @@ export function resolveEffective(
     });
   }
 
-  // 02 hooks：命中规则（挂载点事实由 hooks-registration.json manifest 承载，hook-registration kind 已退役）
+  // 02 hooks：挂载点 + 命中规则
+  const registrations = assets.filter((a) => a.kind === 'hook-registration' && a.attach.level === 'user');
   const rules = assets.filter((a) => a.kind === 'hook-rule' && a.enabled);
   const gated = rules.filter((r) => agentGates(r, agentDef?.name ?? agentName));
   const hooksItems: EffectiveItem[] = [
+    {
+      label: 'user 层挂载点',
+      detail: `${registrations.length} 条注册（dev-forge 统一入口 + hindsight 旁挂）`,
+      sources: [{ path: '~/.claude/settings.json', scope: 'USER' }],
+    },
     {
       label: '生效规则（agents 门控后）',
       detail: `${gated.length}/${rules.length} 条命中 ${agentName ?? '（人机会话）'}`,

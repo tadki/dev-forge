@@ -82,6 +82,15 @@ kinds:
   autopilot-script:
     applicable: false
     note: 'Claude Code 无 autopilot 体系：dev-forge 巡逻脚本/评审巡逻由 registry.d 声明归属 multica'
+  hook-registration:
+    discovery:
+      mode: scan
+      how: file
+      collector: claude-global
+      paths: ["~/.claude/settings.json"]
+      note: 'settings.json hooks 挂载点实测（claude-global 直接声明）；dev-forge 注册清单工件经 registry.d devforge-hook-registrations 盖章——同 kind 混合'
+    read: { how: file }
+    write: { type: file-write }    # hooks 块在 settings.json，本地文件直接编辑（执行器白名单 + 备份）
   mcp-endpoint:
     discovery:
       mode: scan

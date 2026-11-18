@@ -71,7 +71,7 @@ describe('resolveEffective', () => {
     expect(eff.project.workspace).toBe('jerry');
     expect(eff.agent?.platform).toBe('multica');
     const hooks = eff.sections.find((s) => s.id === 'hooks')!;
-    expect(hooks.items[0].detail).toContain('2/3'); // fronti-gate + global-gate 命中
+    expect(hooks.items[1].detail).toContain('2/3'); // fronti-gate + global-gate 命中
     const mcp = eff.sections.find((s) => s.id === 'mcp')!;
     expect(mcp.items.map((i) => i.label)).toContain('godot-mcp');
     expect(mcp.items.map((i) => i.label)).toContain('hindsight（Fronti）');
@@ -80,13 +80,13 @@ describe('resolveEffective', () => {
   it('agent gating excludes non-matching agents', () => {
     const eff = resolveEffective(assets, [], 'king-of-likes', 'Revy');
     const hooks = eff.sections.find((s) => s.id === 'hooks')!;
-    expect(hooks.items[0].detail).toContain('2/3');
+    expect(hooks.items[1].detail).toContain('2/3');
   });
 
   it('human session (no agent) passes all gates', () => {
     const eff = resolveEffective(assets, [], 'king-of-likes');
     const hooks = eff.sections.find((s) => s.id === 'hooks')!;
-    expect(hooks.items[0].detail).toContain('3/3');
+    expect(hooks.items[1].detail).toContain('3/3');
   });
 
   it('includes CLAUDE.md and platform skills for Fronti', () => {

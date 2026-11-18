@@ -190,9 +190,13 @@ describe('DEFAULT_PLATFORMS 与 YAML 锁步 + read 声明', () => {
     // multica 平台无 hooks 设置与挂载入口：三类 hook kind 均显式不适用（Owner 2026-11-11）
     expect(multica?.kinds?.['hook-rule']?.applicable).toBe(false);
     expect(multica?.kinds?.['hook-script']?.applicable).toBe(false);
+    expect(multica?.kinds?.['hook-registration']?.applicable).toBe(false);
     const cc = platforms.find((p) => p.id === 'claude-code');
     expect(cc?.kinds?.instruction?.discovery?.paths).toContain('<project>/CLAUDE.md');
     expect(cc?.kinds?.instruction?.read).toEqual({ how: 'file' });
+    // hook-registration：settings.json 挂载点实测（scan）；dev-forge 注册清单工件经 registry.d 盖章（同 kind 混合，note 说明）
+    expect(cc?.kinds?.['hook-registration']?.discovery?.paths).toEqual(['~/.claude/settings.json']);
+    expect(cc?.kinds?.['hook-registration']?.write).toEqual({ type: 'file-write' });
     // hook-rule / patch：声明式发现——registry.d 条目盖章归属
     expect(cc?.kinds?.['hook-rule']?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-hooks-engine' });
     expect(cc?.kinds?.patch?.discovery).toMatchObject({ mode: 'declared', registry: 'devforge-patches' });

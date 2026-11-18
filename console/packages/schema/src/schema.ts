@@ -2,10 +2,11 @@ import { z } from 'zod';
 
 export const ASSET_KINDS = [
   'agent',
-  // deployment/hook-registration 两个投影 kind 已退役（Owner 2026-11-18）：部署运行态折入
-  // agent payload.deployments，挂载点事实由 hooks-registration.json manifest（custom）承载
+  // deployment 已退役（Owner 2026-11-18）：部署运行态折入 agent payload.deployments。
+  // hook-registration 保留为投影 kind（挂载点实测），可对照真源清单做漂移检测
   'instruction',
   'skill',
+  'hook-registration',
   'hook-rule',
   'hook-script',
   'service',
@@ -148,6 +149,14 @@ const agentPayload = z.looseObject({
   mcpRedacted: z.boolean().optional(),
   customEnvKeyCount: z.number().optional(),
   customArgs: z.array(z.string()).optional(),
+});
+
+const hookRegistrationPayload = z.looseObject({
+  // settings.json hooks 挂载点
+  event: z.string().optional(),
+  matcher: z.string().optional(),
+  // dev-forge hooks-registration.json 清单（整份展开，含 hook_points/alias 等）
+  stateSentinels: z.number().optional(),
 });
 
 const instructionPayload = z.looseObject({
@@ -300,6 +309,7 @@ const envPayload = z.looseObject({
 
 export const payloadSchemas: Record<AssetKind, z.ZodType> = {
   agent: agentPayload,
+  'hook-registration': hookRegistrationPayload,
   instruction: instructionPayload,
   skill: skillPayload,
   'hook-rule': hookRulePayload,

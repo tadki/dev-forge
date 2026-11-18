@@ -79,6 +79,9 @@ kinds:
       note: 'dev-forge 巡逻脚本 + 配置 + agent 评审巡逻，归属由 registry.d 条目确认（multica autopilot 引用执行）'
     read: { how: file }
     write: { type: file-write }
+  hook-registration:
+    applicable: false
+    note: 'multica 平台无 hooks 设置与挂载入口；hook 资产只归属 claude-code（Owner 2026-11-11）'
   hook-rule:
     applicable: false
     note: 'multica 平台无 hooks 设置与挂载入口；hook 规则源在 dev-forge 仓库，归属 claude-code（Owner 2026-11-11）'
