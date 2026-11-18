@@ -473,11 +473,6 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                       </div>
                     );
                   })}
-                  {k.count > k.assets.length && (
-                    <div className="dim" style={{ ...SMALL, padding: '2px 6px' }}>
-                      …其余 {k.count - k.assets.length} 个
-                    </div>
-                  )}
                 </div>
               ))
             )}
@@ -631,7 +626,6 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                         </span>
                       </div>
                     ))}
-                    {sel.assetCount > sel.assets.length && <div className="dim">…其余 {sel.assetCount - sel.assets.length} 个</div>}
                   </div>
                 )}
               </div>

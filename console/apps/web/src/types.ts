@@ -156,7 +156,7 @@ export interface PlatformKindContract {
   read?: PlatformReadChannel;
   write?: PlatformWriteChannel;
   assetCount: number;
-  /** 自建（provenance=first-party）资产数——全量计数，不受清单截断影响 */
+  /** 自建（provenance=first-party）资产数 */
   firstPartyCount: number;
   collectors: string[];
   assets: PlatformAssetLite[];
