@@ -129,19 +129,24 @@ describe('claude-global collector（hook-registration 归属按声明清单判�
     if (hookRoot) await rm(hookRoot, { recursive: true, force: true });
   });
 
-  it('wrapper 路径命中清单 → first-party/devforge；hindsight 根 → hindsight；其余 → 外部', async () => {
+  it('wrapper 路径命中清单 → first-party/devforge；hindsight 与其余 → third-party', async () => {
     const r = await claudeGlobalCollector.collect(makeContext(defaultConfig({ home: hookRoot, devforge: hookRoot })));
-    const pre = r.assets.find((a) => a.id === 'hook-registration:PreToolUse-0-0-devforge');
+    const pre = r.assets.find((a) => a.id === 'hook-registration:devforge:PreToolUse-0-0');
     expect(pre).toBeDefined();
     expect(pre!.provenance).toBe('first-party');
     expect(pre!.tags).toContain('devforge');
     expect(pre!.name).toContain('统一入口');
 
     // 同一 matcher entry 内的多条命令全部采集（schema 全量遍历，不只取首条）
-    const ss = r.assets.filter((a) => a.id.startsWith('hook-registration:SessionStart-0-'));
-    expect(ss.map((a) => a.id)).toEqual(['hook-registration:SessionStart-0-0-devforge', 'hook-registration:SessionStart-0-1-hindsight']);
+    const ss = r.assets.filter((a) => a.id.includes(':SessionStart-0-'));
+    expect(ss.map((a) => a.id)).toEqual(['hook-registration:devforge:SessionStart-0-0', 'hook-registration:hindsight:SessionStart-0-1']);
 
-    const ext = r.assets.find((a) => a.id === 'hook-registration:Notification-0-0-other');
+    // hindsight 旁挂是平台自带钩子，不算自建（Owner 2026-11-18）
+    const hs = r.assets.find((a) => a.id === 'hook-registration:hindsight:SessionStart-0-1');
+    expect(hs!.provenance).toBe('third-party');
+    expect(hs!.tags).toContain('hindsight');
+
+    const ext = r.assets.find((a) => a.id === 'hook-registration:other:Notification-0-0');
     expect(ext!.provenance).toBe('third-party');
     expect(ext!.tags).toContain('custom');
   });
@@ -155,7 +160,7 @@ describe('claude-global collector（hook-registration 归属按声明清单判�
         JSON.stringify({ hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: '/opt/anywhere/claude-hooks/hook-wrapper.sh PreToolUse unified-hook' }] }] } })
       );
       const r = await claudeGlobalCollector.collect(makeContext(defaultConfig({ home: noManifest, devforge: noManifest })));
-      const pre = r.assets.find((a) => a.id === 'hook-registration:PreToolUse-0-0-other');
+      const pre = r.assets.find((a) => a.id === 'hook-registration:other:PreToolUse-0-0');
       expect(pre).toBeDefined();
       expect(pre!.provenance).toBe('third-party');
     } finally {
