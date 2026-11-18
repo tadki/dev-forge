@@ -124,6 +124,36 @@ select.search { width: auto; min-width: 110px; padding: 3px 4px; }
 .split-rules > aside .panel { height: 520px; display: flex; flex-direction: column; }
 .rule-detail-body { flex: 1; min-height: 0; overflow-y: auto; }
 
+/* 规则详情主从两栏：复刻平台页契约卡分割——竖线 = 右栏 borderLeft(khaki 1px)+paddingLeft，
+   条目分割 = borderBottom(khaki 1px)，选中 = 左侧 accent 竖条 + cream 底 + 加粗；
+   左栏行高锁死均分整个详情高度（点击不抖动） */
+.rule-detail-split { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: var(--sp-3); align-items: stretch; height: 100%; min-height: 0; }
+.rule-fields { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.rule-field {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) 10px;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--khaki);
+  border-left: 3px solid transparent;
+  font-size: var(--fs-l1);
+}
+.rule-field:last-child { border-bottom: none; }
+.rule-field.is-selectable { cursor: pointer; }
+.rule-field.is-selectable:hover { background: var(--paper); }
+.rule-field.is-selectable:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.rule-field.is-active { background: var(--cream); border-left-color: var(--accent); }
+.rule-field.is-active .rule-field-label { font-weight: 700; }
+.rule-field-label { color: var(--gray); font-family: var(--font-mono); font-size: var(--fs-label); letter-spacing: 1px; }
+.rule-field.is-selectable .rule-field-label { color: var(--text-sub); }
+/* 可选中条目的常驻标记：行尾 ›；选中态叠加 accent 竖条 + cream 底 */
+.rule-field-go { color: var(--gray); text-align: right; }
+.rule-field.is-selectable .rule-field-go { color: var(--text-sub); }
+.rule-field-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-detail-pane { min-width: 0; border-left: 1px solid var(--khaki); padding-left: var(--sp-3); font-size: var(--fs-l1); overflow-y: auto; max-height: 100%; }
+.rule-detail-pane .code { max-height: 300px; overflow: auto; margin-top: var(--sp-2); }
+
 /* ===== 满页双卡片（指令库）：卡片对齐视口高度，内容内部滚动 ===== */
 .fill-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .fill-grid { flex: 1; min-height: 0; }
