@@ -25,6 +25,17 @@ const WRITE_TYPE_LABEL: Record<PlatformWriteChannel['type'], string> = {
   command: 'CLI 物化',
   none: '仅建议',
 };
+/** kind 级平台显示：资产归属一致才标注判据；混合 kind 不代全体下判断，逐资产见 ASSETS */
+function platformsDisplayOf(sel: PlatformKindContract): string | undefined {
+  const assets = sel.assets ?? [];
+  const distinct = [...new Set(assets.flatMap((a) => a.platforms ?? []))].sort();
+  if (!distinct.length) return undefined;
+  const uniform = assets.every((a) => (a.platforms ?? []).join() === (assets[0].platforms ?? []).join());
+  if (uniform && sel.discovery) return `platforms: ${distinct.join(' · ')}（判据: ${attributionCriterionText(sel.discovery)}）`;
+  if (uniform) return `platforms: ${distinct.join(' · ')}`;
+  return `platforms: ${distinct.join(' · ')}（混合——逐资产见 ASSETS）`;
+}
+
 /** 归属判据短语：结果（资产 platforms 属性）之后的溯源标注，所有声明式 kind 同一规则 */
 function attributionCriterionText(discovery: PlatformDiscoveryChannel): string {
   const basis = discovery.platformBasis ?? 'stamp';
@@ -69,7 +80,7 @@ function FieldLine({ label, children }: { label: string; children: React.ReactNo
 }
 
 /** 发现通道全字段：怎么确定资产适配本平台（归属判据）。缺失字段显示 — */
-function DiscoveryCell({ discovery, kindPlatforms, notApplicable }: { discovery?: PlatformDiscoveryChannel; kindPlatforms?: string[]; notApplicable?: boolean }) {
+function DiscoveryCell({ discovery, platformsDisplay, notApplicable }: { discovery?: PlatformDiscoveryChannel; platformsDisplay?: string; notApplicable?: boolean }) {
   return (
     <div>
       <FieldLine label="方式">
@@ -112,10 +123,9 @@ function DiscoveryCell({ discovery, kindPlatforms, notApplicable }: { discovery?
         {discovery?.registry ? <Chip>registry.d: {discovery.registry}</Chip> : <Dash />}
       </FieldLine>
       <FieldLine label="平台 PLATFORM">
-        {kindPlatforms?.length ? (
-          <span className="mono" style={SMALL} title="该 kind 资产自身的 platforms 属性（盖章/自声明/继承均落在此）">
-            platforms: {kindPlatforms.join(' · ')}
-            {discovery ? <span className="dim">（判据: {attributionCriterionText(discovery)}）</span> : null}
+        {platformsDisplay ? (
+          <span className="mono" style={SMALL} title="该 kind 资产自身的 platforms 属性（盖章/自声明/继承均落在此）；混合 kind 逐资产见下方 ASSETS">
+            {platformsDisplay}
           </span>
         ) : (
           <Dash />
@@ -587,7 +597,7 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
                       发现通道 DISCOVERY
                     </div>
-                    <DiscoveryCell discovery={sel.discovery} kindPlatforms={sel.platforms} notApplicable={sel.declared && sel.applicable === false} />
+                    <DiscoveryCell discovery={sel.discovery} platformsDisplay={platformsDisplayOf(sel)} notApplicable={sel.declared && sel.applicable === false} />
                   </div>
                   <div>
                     <div className="mono dim" style={{ ...LABEL, marginBottom: 4 }}>
@@ -631,6 +641,9 @@ export function PlatformsPage(_props: { ctx: PageCtx }) {
                         <span className="mono dim" style={{ ...SMALL, flex: 1 }}>
                           {a.path}
                           {a.platformId ? ` · id ${a.platformId}` : ''}
+                        </span>
+                        <span className="mono dim" style={SMALL} title="该资产自身的 platforms">
+                          {a.platforms?.length ? a.platforms.join(' · ') : '—'}
                         </span>
                       </div>
                       ))}

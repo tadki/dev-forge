@@ -99,6 +99,7 @@ const handler = createHandler({
     if (result.status === 'ok') await engine.collectNow();
     return { status: result.status, ok: result.status === 'ok', output: result.output };
   },
+  storeRecords: () => engine.getStoreRecords(),
 });
 
 await engine.start();
