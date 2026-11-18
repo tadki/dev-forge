@@ -25,11 +25,13 @@ const WRITE_TYPE_LABEL: Record<PlatformWriteChannel['type'], string> = {
   command: 'CLI 物化',
   none: '仅建议',
 };
-/** 派生资产的归属筛选字段（注册条目不代盖 platforms 时，注册条目行显示归属判据） */
-const PLATFORM_FILTER_LABEL: Record<string, string> = {
-  harness: 'harness（规则自身声明）',
-  usage: 'usage（挂载/引用链继承）',
-};
+/** 归属判据统一渲染：所有声明式 kind 同一规则——basis 由契约声明（缺省 stamp），值按判据来源取 */
+function attributionBasisText(discovery: PlatformDiscoveryChannel, registryPlatforms?: string[]): string {
+  const basis = discovery.platformBasis ?? 'stamp';
+  if (basis === 'self') return `${discovery.platformBasisField ?? '自身字段'}（资产自身声明）`;
+  if (basis === 'usage') return '使用链继承（挂载/引用链）';
+  return registryPlatforms?.length ? `platforms: ${registryPlatforms.join(' · ')}（registry 盖章）` : 'registry 盖章（条目未声明 platforms）';
+}
 
 const SMALL = { fontSize: 'var(--fs-l1)' } as const;
 const LABEL = { fontSize: 'var(--fs-label)' } as const;
@@ -110,20 +112,13 @@ function DiscoveryCell({ discovery, registryPlatforms, notApplicable }: { discov
         {discovery?.registry ? (
           <span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
             <Chip>registry.d: {discovery.registry}</Chip>
-            {discovery.platformFilter && !registryPlatforms?.length ? (
-              <span
-                className="mono"
-                style={SMALL}
-                title="注册条目不代盖 platforms——归属按此筛选字段随采集自动同步（无待裁决漂移）"
-              >
-                筛选字段: {PLATFORM_FILTER_LABEL[discovery.platformFilter] ?? discovery.platformFilter}
-              </span>
-            ) : null}
-            {registryPlatforms?.length ? (
-              <span className="mono" style={SMALL} title="该 registry.d 条目的 platforms 声明——据此盖章归属">
-                platforms: {registryPlatforms.join(' · ')}
-              </span>
-            ) : null}
+            <span
+              className="mono"
+              style={SMALL}
+              title="平台归属判据：stamp=条目代盖 platforms / self=资产自身声明字段 / usage=使用链继承"
+            >
+              归属判据: {attributionBasisText(discovery, registryPlatforms)}
+            </span>
           </span>
         ) : (
           <Dash />
