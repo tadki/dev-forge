@@ -20,6 +20,7 @@ import {
   type PlatformDef,
 } from '@forge/collectors';
 import { fixtureCollector } from '@forge/collectors';
+import { loadProjectionLinks, saveProjectionLinks, reconcileProjectionLinks, type ProjectionLink } from '@forge/collectors';
 import { loadExternalCollectors } from '@forge/collectors';
 import { watch } from 'chokidar';
 import { join } from 'node:path';
@@ -41,6 +42,7 @@ export class Engine {
   /** 库（真源）目录与最近一次采集加载的副本（store-write 采纳 / ContentRef.from=store 用） */
   private storeDirPath = '';
   private storeRecords: Map<string, StoreRecord> = new Map();
+  private projectionLinks: ProjectionLink[] = [];
   /** 平台适配（console/platforms.d；缺失回退 DEFAULT_PLATFORMS） */
   private platforms: PlatformDef[] = DEFAULT_PLATFORMS;
   private collectors: Collector[];
@@ -101,6 +103,16 @@ export class Engine {
 
   getStoreRecords(): Map<string, StoreRecord> {
     return this.storeRecords;
+  }
+
+  getProjectionLinks(): ProjectionLink[] {
+    return this.projectionLinks;
+  }
+
+  /** 从磁盘加载投影映射（服务启动时一次；采集管线随后增量维护） */
+  async loadProjectionLinksState(): Promise<void> {
+    const linksFile = join(this.config.devforge, 'console', 'state', 'projection-links.json');
+    this.projectionLinks = (await loadProjectionLinks(linksFile)).links;
   }
 
   getPlatforms(): PlatformDef[] {
@@ -189,6 +201,17 @@ export class Engine {
         if (synced.backfilled > 0) this.storeRecords = (await loadFirstPartyStore(storeDir)).records;
       } catch (e) {
         state.diagnostics.push({ level: 'warn', message: `[first-party-store] 入库失败：${String(e).slice(0, 200)}`, path: storeDir });
+      }
+
+      // 投影映射对账（Owner 2026-11-18）：登记缺失的线、标记失联坐标——映射与真源/采集保持对齐
+      try {
+        const linksFile = join(storeDir, '..', 'projection-links.json');
+        const lf = await loadProjectionLinks(linksFile);
+        const linkResult = reconcileProjectionLinks(lf.links, state.assets);
+        if (linkResult.changed) await saveProjectionLinks(linksFile, lf.links);
+        this.projectionLinks = lf.links;
+      } catch (e) {
+        state.diagnostics.push({ level: 'warn', message: `[projection-links] 对账失败：${String(e).slice(0, 200)}` });
       }
       // 保留 push 型自定义资产
       const pushed = this.state.assets.filter((a) => a.source.collector === 'push');

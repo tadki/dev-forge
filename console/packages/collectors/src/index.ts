@@ -42,6 +42,8 @@ export { loadExternalCollectors } from './external.js';
 export { loadRegistryEntries, applyRegistryOverlay, matchesRegistryEntry, editRegistryPlatforms } from './overlay.js';
 export type { RegistryEntry, RegistryMatch, LoadedRegistry } from './overlay.js';
 export { syncFirstPartyStore, loadFirstPartyStore, writeStoreRecord, storeFileName } from './first-party-store.js';
+export { loadProjectionLinks, saveProjectionLinks, upsertLink, markLinkLost, reconcileProjectionLinks } from './projection-links.js';
+export type { ProjectionLink, LinksFile } from './projection-links.js';
 export type { StoreSyncResult, StoreRecord, LoadedStore } from './first-party-store.js';
 export { contentFingerprint, isTruthKind, TRUTH_KINDS } from './store-content.js';
 export { splitDiff } from './split-diff.js';

@@ -47,13 +47,14 @@ describe('first-party store（真源：create-only）', () => {
     expect(rec.hashVersion).toBe(4);
   });
 
-  it('内容型 kind（含 service）均入库；未声明资产不入库', async () => {
+  it('全 kind 入库（自产含未声明观测，自动采纳）；第三方未声明不入库', async () => {
     const sub = join(dir, 'gating');
+    const tp = { ...mkAsset('skill:tp-undeclared', { declared: false }), provenance: 'third-party' as const };
     const r = await syncFirstPartyStore(
-      [mkAsset('service:x', { kind: 'service' }), mkAsset('skill:undeclared', { declared: false })],
+      [mkAsset('service:x', { kind: 'service' }), tp],
       sub
     );
-    expect(r.written).toBe(1); // service 入库；未声明的 skill 不入
+    expect(r.written).toBe(1); // 自建 service 入库；第三方未声明不入
     expect((await readdir(sub)).filter((f) => f.endsWith('.json'))).toHaveLength(1);
   });
 

@@ -100,6 +100,7 @@ const handler = createHandler({
     return { status: result.status, ok: result.status === 'ok', output: result.output };
   },
   storeRecords: () => engine.getStoreRecords(),
+  projectionLinks: () => engine.getProjectionLinks(),
 });
 
 await engine.start();
