@@ -157,6 +157,8 @@ export interface PlatformKindContract {
   discovery?: PlatformDiscoveryChannel;
   /** 声明式发现盖章条目（registry.d）内的 platforms 声明——归属链可视化 */
   registryPlatforms?: string[];
+  /** 该 kind 资产自身 platforms 属性并集（页面显示结果；契约声明侧无此字段） */
+  platforms?: string[];
   read?: PlatformReadChannel;
   write?: PlatformWriteChannel;
   assetCount: number;
