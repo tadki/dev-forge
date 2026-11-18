@@ -11,8 +11,9 @@ entries:
     meta: { owner: jerry, category: infra, lifecycle: experimental, criticality: low, runtime: standalone, since: "2026-11-03" }
 
   - id: devforge-hooks-engine
+    # 平台归属不在此代盖（Owner 2026-11-18）：hook-rule 平台 = 自身 harness 声明；
+    # hook-script 平台不自行设置，由使用链继承（derive 框架传递并集）
     match: { pathPrefix: "/home/jerry/tools/dev-forge/claude-hooks" }
-    platforms: [claude-code]
     meta: { owner: atlas, category: governance, lifecycle: stable, criticality: high, runtime: claude-code, notes: "9 挂载点 → 统一引擎（settings.json hooks）" }
 
   - id: devforge-hook-registrations

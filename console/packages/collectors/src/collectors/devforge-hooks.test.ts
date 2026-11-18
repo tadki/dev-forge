@@ -82,3 +82,42 @@ describe('devforge-hooks collector repoGating 投影', () => {
     await rm(root, { recursive: true, force: true });
   });
 });
+
+describe('devforge-hooks collector 平台继承（derive 框架）', () => {
+  it('规则平台 = 自身 harness；脚本平台 = 挂载规则并集；lib = 引用链传递并集', async () => {
+    const root = join(tmpdir(), `forge-hooks-derive-${Date.now()}`);
+    await mkdir(join(root, 'claude-hooks', 'unified', 'rules.d'), { recursive: true });
+    await mkdir(join(root, 'claude-hooks', 'scripts', 'lib'), { recursive: true });
+    await writeFile(
+      join(root, 'claude-hooks', 'unified', 'rules.d', 'mix.json'),
+      JSON.stringify({
+        rules: [
+          { name: 'cc-rule', harness: ['claude-code'], action: [{ op: 'run_script', path: '${HOOKS_DIR}/scripts/cc.sh' }] },
+          { name: 'mc-rule', harness: ['multica'], action: [{ op: 'run_script', path: '${HOOKS_DIR}/scripts/mc.sh' }] },
+          { name: 'both-rule', harness: ['claude-code', 'multica'], action: [{ op: 'run_script', path: '${HOOKS_DIR}/scripts/both.sh' }] },
+        ],
+      })
+    );
+    await writeFile(join(root, 'claude-hooks', 'scripts', 'cc.sh'), '#!/bin/bash\n. "${HOOKS_DIR}/scripts/lib/shared.lib.sh"\n');
+    await writeFile(join(root, 'claude-hooks', 'scripts', 'mc.sh'), '#!/bin/bash\n. "${HOOKS_DIR}/scripts/lib/shared.lib.sh"\n');
+    await writeFile(join(root, 'claude-hooks', 'scripts', 'both.sh'), '#!/bin/bash\ntrue\n');
+    await writeFile(join(root, 'claude-hooks', 'scripts', 'lib', 'shared.lib.sh'), '#!/bin/bash\n');
+
+    const r = await devforgeHooksCollector.collect(makeContext(defaultConfig({ devforge: root })));
+    const p = (name: string) =>
+      r.assets.find((x) => x.id === `hook-script:${name}` || x.id === `hook-script:lib-${name}`)?.platforms;
+    const rule = (name: string) => r.assets.find((x) => x.id === `hook-rule:${name}`)?.platforms;
+
+    expect(rule('cc-rule')).toEqual(['claude-code']);
+    expect(rule('mc-rule')).toEqual(['multica']);
+    expect(rule('both-rule')).toEqual(['claude-code', 'multica']);
+    expect(p('cc.sh')).toEqual(['claude-code']);
+    expect(p('mc.sh')).toEqual(['multica']);
+    expect(p('both.sh')).toEqual(['claude-code', 'multica']);
+    // lib 不自行声明：两个平台共用 → 传递并集
+    expect(p('shared.lib.sh')).toEqual(['claude-code', 'multica']);
+    const lib = r.assets.find((x) => x.id === 'hook-script:lib-shared.lib.sh');
+    expect(((lib!.payload as { usage?: { referencedBy: string[] } }).usage)?.referencedBy).toEqual(expect.arrayContaining(['cc.sh', 'mc.sh']));
+    await rm(root, { recursive: true, force: true });
+  });
+});
