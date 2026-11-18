@@ -28,6 +28,8 @@ export interface AppDeps {
   reconcileAction: (key: string, actionId: string) => Promise<{ status: 'ok' | 'invalid' | 'gone' | 'failed'; ok: boolean; output: string }>;
   /** 技能编辑保存并同步（内容来自编辑器，路径/命令由服务端从 state+platforms.d 推导；file=附带文件相对路径；failed=部分执行后中断，仍 200） */
   saveAssetContent: (assetId: string, content: string, file?: string) => Promise<{ status: 'ok' | 'invalid' | 'failed'; ok: boolean; output: string }>;
+  /** 钩子规则启停（写回 rules JSON，引擎每次事件从磁盘现读 → 写回即热生效；快照刷新由实现方负责） */
+  toggleHookRule: (name: string, enabled: boolean) => Promise<{ status: 'ok' | 'invalid'; ok: boolean; output: string }>;
   onAfterAction?: () => void;
 }
 
@@ -277,6 +279,23 @@ export function createHandler(deps: AppDeps) {
         const result = await deps.serviceAction(unit, action as 'start' | 'stop' | 'restart');
         deps.onAfterAction?.();
         return json(res, 200, { ok: result.ok, unit, action, output: clipServiceOutput(result.output) });
+      }
+
+      if (path === '/api/hooks/rules/toggle' && req.method === 'POST') {
+        let body: { name?: unknown; enabled?: unknown };
+        try {
+          body = JSON.parse(await readBody(req, 16 * 1024)) as typeof body;
+        } catch {
+          return json(res, 400, { error: 'invalid json' });
+        }
+        const name = typeof body.name === 'string' ? body.name.trim() : '';
+        if (!name || name.length > 200 || typeof body.enabled !== 'boolean') {
+          return json(res, 400, { error: 'name 必填（≤200 字符）且 enabled 必须为布尔' });
+        }
+        const result = await deps.toggleHookRule(name, body.enabled);
+        if (!result.ok) return json(res, 404, { ok: false, name, error: result.output });
+        deps.onAfterAction?.();
+        return json(res, 200, { ok: true, name, enabled: body.enabled, output: result.output });
       }
 
       if (path === '/api/custom/assets' && req.method === 'POST') {

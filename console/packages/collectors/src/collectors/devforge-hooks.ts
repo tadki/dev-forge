@@ -104,6 +104,8 @@ export const devforgeHooksCollector: Collector = {
 
     // 规则：rules-v2.json + rules.d/*.json
     const ruleFiles = [join(unified, 'rules-v2.json'), ...(await listDir(join(unified, 'rules.d'))).map((f) => join(unified, 'rules.d', f))];
+    // 使用方分析（采集侧算好，payload.usage 供 UI 展示）：run_script 路径 basename → 挂载规则
+    const mountedBy = new Map<string, Set<string>>();
     for (const file of ruleFiles) {
       const doc = await readJson<{ rules?: RuleDef[]; description?: string }>(file);
       if (!doc?.rules) continue;
@@ -112,6 +114,14 @@ export const devforgeHooksCollector: Collector = {
       for (const rule of doc.rules) {
         const whenHuman = rule.when ? humanizeWhen(rule.when) : '—（无 when，事件即触发）';
         const repoGating = repoGatingOf(rule.when);
+        for (const a of rule.action ?? []) {
+          if (a.op !== 'run_script') continue;
+          const f = a.path?.split('/').pop();
+          if (f) {
+            if (!mountedBy.has(f)) mountedBy.set(f, new Set());
+            mountedBy.get(f)!.add(rule.name);
+          }
+        }
         assets.push(
           asset({
             id: `hook-rule:${rule.name}`,
@@ -181,6 +191,28 @@ export const devforgeHooksCollector: Collector = {
       );
     }
 
+    // 入口层脚本（wrapper / dispatcher / unified-hook）：非规则挂载体，是链路自身的环节；
+    // 采集它们让「使用方」分析能闭合 lib 脚本的间接引用（被入口层 source）
+    for (const f of (await listDir(hooksDir)).filter((x) => x.endsWith('.sh'))) {
+      const p = join(hooksDir, f);
+      const md = (await readText(p)) ?? '';
+      const purpose = md.split('\n').find((l) => l.startsWith('# ') && !l.includes('!/'))?.replace(/^#\s*/, '') ?? '';
+      assets.push(
+        asset({
+          id: `hook-script:entry-${f}`,
+          kind: 'hook-script',
+          name: f,
+          summary: purpose.slice(0, 100),
+          attach: { level: 'user' },
+          enforcement: 'enforced',
+          platforms: [],
+          source: { collector: 'devforge-hooks', path: p, sha256: sha256(md) },
+          payload: { lines: md.split('\n').length, purpose, content: md, entry: true },
+          tags: ['devforge', 'entry'],
+        })
+      );
+    }
+
     // lib 脚本
     const libDir = join(scriptsDir, 'lib');
     for (const f of (await listDir(libDir)).filter((x) => x.endsWith('.sh'))) {
@@ -199,6 +231,25 @@ export const devforgeHooksCollector: Collector = {
           tags: ['devforge', 'lib'],
         })
       );
+    }
+
+    // 使用方回填：mountedBy = 规则直接挂载；referencedBy = 其他脚本正文引用（lib 间接使用的依据）
+    const scriptAssets = assets.filter((a) => a.kind === 'hook-script');
+    for (const target of scriptAssets) {
+      const variants = [target.name, target.name.startsWith('lib-') ? `lib/${target.name.slice(4)}` : target.name];
+      const referencedBy = scriptAssets
+        .filter((o) => o !== target)
+        .filter((o) => {
+          const c = (o.payload as { content?: string }).content ?? '';
+          return variants.some((v) => c.includes(v));
+        })
+        .map((o) => o.name);
+      const mount = new Set<string>(mountedBy.get(target.name) ?? []);
+      for (const v of variants) for (const n of mountedBy.get(v) ?? []) mount.add(n);
+      (target.payload as Record<string, unknown>).usage = {
+        mountedBy: [...mount],
+        referencedBy: [...new Set(referencedBy)],
+      };
     }
 
     return { assets, relations, diagnostics: ctx.diagnostics };

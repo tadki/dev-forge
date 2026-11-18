@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet } from '../api';
+import { apiGet, apiPost } from '../api';
 import { highlightBash, highlightJson } from '../highlight';
 import type { AssetLite, FireEvent } from '../types';
 import { Badge, DataTable, Panel, SectionHeader } from '../components/ui';
@@ -185,7 +185,25 @@ function RuleDetail({ rule }: { rule: AssetLite }) {
 }
 
 export function HooksPage(_props: { ctx: PageCtx }) {
+  const qc = useQueryClient();
   const rules = useQuery({ queryKey: ['assets', 'hook-rule'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=hook-rule') });
+  // 规则启停：写回 rules JSON（引擎每次事件现读 → 热生效）；乐观翻转 + 失败回滚 + settle 后对账
+  const toggleRule = useMutation({
+    mutationFn: (v: { name: string; enabled: boolean }) => apiPost('/api/hooks/rules/toggle', v),
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: ['assets', 'hook-rule'] });
+      const prev = qc.getQueryData<{ assets: AssetLite[] }>(['assets', 'hook-rule']);
+      qc.setQueryData<{ assets: AssetLite[] } | undefined>(['assets', 'hook-rule'], (old) =>
+        old ? { ...old, assets: old.assets.map((a) => (a.name === v.name ? { ...a, enabled: v.enabled } : a)) } : old
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['assets', 'hook-rule'], ctx.prev);
+    },
+    // 不做 onSettled 立即 invalidate：服务端写文件后需 collectNow（秒级）才出新快照，
+    // 过早 refetch 会拉回旧数据冲掉乐观翻转；等 collectNow 的 SSE registry 广播全局失效即可
+  });
   const scripts = useQuery({ queryKey: ['assets', 'hook-script'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=hook-script') });
   const regs = useQuery({ queryKey: ['assets', 'hook-registration'], queryFn: () => apiGet<{ assets: AssetLite[] }>('/api/assets?kind=hook-registration') });
   const [selRule, setSelRule] = useState<string | null>(null);
@@ -197,6 +215,25 @@ export function HooksPage(_props: { ctx: PageCtx }) {
   });
 
   const ruleRows = rules.data?.assets ?? [];
+  // 已生效 Harness：从规则的 harness 声明聚合（未来不止 Claude Code）；挂载链路收进 tooltip
+  const harnessBadges = useMemo(() => {
+    const CHAINS: Record<string, string> = {
+      'claude-code': 'CC 挂载点 → hook-wrapper.sh → dispatcher.sh → engine.js → rules-v2 + rules.d → scripts/',
+    };
+    const hs = [...new Set(ruleRows.flatMap((r) => { const h = (r.payload as RulePayload).harness; return h?.length ? h : ['claude-code']; }))];
+    return hs.map((h) => (
+      <Badge key={h} tone="plain" title={`钩子挂载链路：${CHAINS[h] ?? '链路待登记'}`}>{HARNESS_LABELS[h] ?? h}</Badge>
+    ));
+  }, [ruleRows]);
+  // 挂载脚本使用方：采集侧算好（payload.usage）——mountedBy=规则直接挂载，referencedBy=脚本互引（间接）
+  const scriptUsage = useMemo(
+    () =>
+      (scripts.data?.assets ?? []).map((s) => {
+        const u = (s.payload as { usage?: { mountedBy?: string[]; referencedBy?: string[] } }).usage;
+        return { s, direct: !!u?.mountedBy?.length, refs: u?.mountedBy?.length ? u.mountedBy : u?.referencedBy ?? [] };
+      }),
+    [scripts.data]
+  );
   const [nameQuery, setNameQuery] = useState('');
   const [facets, setFacets] = useState<Partial<Record<RuleFacetKey, string>>>({});
   const filters: RuleFilters = useMemo(() => ({ nameQuery, facets }), [nameQuery, facets]);
@@ -246,13 +283,9 @@ export function HooksPage(_props: { ctx: PageCtx }) {
         </div>
       </div>
 
-      <div className="pipeline">
-        {['CC 9 挂载点', 'hook-wrapper.sh', 'dispatcher.sh', 'engine.js', 'rules-v2 + rules.d', 'scripts/'].map((n, i, arr) => (
-          <div key={n} style={{ display: 'flex', alignItems: 'center' }}>
-            <div className="pipe-node">{n}</div>
-            {i < arr.length - 1 && <span className="pipe-arrow">→</span>}
-          </div>
-        ))}
+      <div className="row" style={{ marginBottom: 'var(--sp-3)' }}>
+        <span className="tagline" style={{ marginRight: 'var(--sp-2)' }}>已生效 HARNESS</span>
+        {harnessBadges}
       </div>
 
       <SectionHeader
@@ -289,8 +322,18 @@ export function HooksPage(_props: { ctx: PageCtx }) {
             key: 'name',
             head: '名称 NAME',
             render: (r) => (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Badge tone={r.enabled ? 'ok' : 'off'} title={r.enabled ? '已启用' : '已停用'}>{r.enabled ? '●' : '○'}</Badge>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button
+                  className={`btn small ${r.enabled ? 'btn-amber' : 'btn-mint'} rule-toggle`}
+                  title={r.enabled ? '已启用 · 点击停用' : '已停用 · 点击启用'}
+                  aria-pressed={r.enabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleRule.mutate({ name: r.name, enabled: !r.enabled });
+                  }}
+                >
+                  {r.enabled ? '■' : '▶'}
+                </button>
                 <span className="mono">{r.name}</span>
               </span>
             ),
@@ -359,10 +402,18 @@ export function HooksPage(_props: { ctx: PageCtx }) {
       <div className="grid grid-2 mt">
         <Panel title="挂载脚本" en={`MOUNTED SCRIPTS · ${scripts.data?.assets.length ?? 0}`}>
           <div style={{ maxHeight: 300, overflow: 'auto' }}>
-            {(scripts.data?.assets ?? []).map((s) => (
+            {scriptUsage.map(({ s, direct, refs }) => (
               <div key={s.id} className="row" style={{ padding: '2px 0', fontSize: 'var(--fs-l1)' }}>
                 <span className="mono" style={{ minWidth: 220 }}>{s.name}</span>
-                <span className="dim">{s.summary.slice(0, 70)}</span>
+                {direct
+                  ? <span className="dim" title={`被规则挂载：${refs.join(', ')}`}>← {refs.join(', ')}</span>
+                  : refs.length
+                    ? <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }} title={`未被规则直接挂载；被脚本引用：${refs.join(', ')}`}>
+                        <Badge tone="warn">间接</Badge>
+                        <span className="mono dim">{refs.join(', ')}</span>
+                      </span>
+                    : <span className="dim">—</span>}
+                <span className="dim" style={{ marginLeft: 'auto' }}>{s.summary.slice(0, 60)}</span>
                 {s.attach.level === 'project' && <Badge tone="plain">{s.attach.ref?.split('/').pop()}</Badge>}
               </div>
             ))}
