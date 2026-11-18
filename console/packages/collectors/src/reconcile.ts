@@ -37,7 +37,9 @@ export type WriteStep =
   /** cmd 中值为 '{content}' 的参数由执行端用 contentFrom 解析的内容替换 */
   | { type: 'command'; cmd: string[]; note: string; contentFrom?: ContentRef }
   /** 采纳生产：以当前采集资产重写库内副本（first-party store） */
-  | { type: 'store-write'; assetId: string };
+  | { type: 'store-write'; assetId: string }
+  /** 孤儿裁决：清空名册记录（先备份到 .trash） */
+  | { type: 'store-delete'; assetId: string };
 
 export interface ReconcileAction {
   /** 同方向多动作时用 #n 区分（POST 按此 id 寻址，不用 direction） */
@@ -124,6 +126,40 @@ function buildLedgerConsistencyItems(
   for (const [id, rec] of store) {
     const collected = collectedById.get(id);
     if (!collected) {
+      // 裁决两个方向：以生产为准 → 清名册；以库为准 → 按写通道物化回生产（可执行才给按钮）
+      const resolved = resolveWriteChannel(rec.asset, state.assets, opts.platforms ?? DEFAULT_PLATFORMS);
+      const field = contentFieldOf(rec.asset);
+      const storeText = field ? (rec.asset.payload as Record<string, unknown>)[field] : undefined;
+      let restore: ReconcileAction;
+      if (!resolved) {
+        restore = { id: 'restore', direction: 'local-to-platform', label: '以库为准：物化回生产', executable: false, note: '资产不匹配任何平台适配（platforms.d）——确认退役请清名册', steps: [] };
+      } else if (resolved.write.type === 'file-write' && rec.asset.source.path.startsWith('/') && typeof storeText === 'string') {
+        restore = {
+          id: 'restore',
+          direction: 'local-to-platform',
+          label: `以库为准：物化回 ${rec.asset.source.path}`,
+          executable: true,
+          steps: [{ type: 'file-write', path: rec.asset.source.path, contentFrom: { assetId: rec.asset.id, field: field!, from: 'store' } }],
+        };
+      } else if (resolved.write.type === 'command' && field !== undefined && typeof storeText === 'string') {
+        const cmd = resolved.write.cmd.map((arg) => (arg === '{platformId}' ? (resolved.platformId ?? '{platformId}') : arg));
+        restore = {
+          id: 'restore',
+          direction: 'local-to-platform',
+          label: `以库为准：执行 ${resolved.platform.id} 更新命令`,
+          executable: true,
+          steps: [{ type: 'command', cmd, note: `${resolved.platform.label ?? resolved.platform.id} 写通道`, contentFrom: { assetId: rec.asset.id, field: field!, from: 'store' } }],
+        };
+      } else {
+        restore = {
+          id: 'restore',
+          direction: 'local-to-platform',
+          label: `以库为准：物化到 ${resolved.platform.id}`,
+          executable: false,
+          note: (resolved.write as { advice?: string }).advice ?? '库内副本缺少可写入的文本字段（content/instructions），需手动同步',
+          steps: [],
+        };
+      }
       items.push({
         key: `ledger-orphan:${id}`,
         type: 'ledger-orphan',
@@ -132,7 +168,10 @@ function buildLedgerConsistencyItems(
         name: rec.asset.name,
         detail: `名册记录在采集面已消失（declaredBy: ${rec.declaredBy ?? '—'}）——规则改动或资产下线后名册未清`,
         copies: [{ assetId: rec.asset.id, name: `${rec.asset.name}（库内）`, path: rec.asset.source.path, sha: rec.hash.slice(0, 16), platforms: ['store'] }],
-        actions: [],
+        actions: [
+          { id: 'clear', direction: 'platform-to-local', label: '以生产为准：清空名册记录', executable: true, steps: [{ type: 'store-delete', assetId: rec.asset.id }] },
+          restore,
+        ],
       });
       continue;
     }
@@ -183,22 +222,24 @@ function buildLedgerConsistencyItems(
 }
 
 /** 库 vs 生产对账：真源副本指纹与当前采集内容分叉 → adopt（采纳生产）/ push（以库为准物化） */
+function contentFieldOf(a: Asset): 'content' | 'instructions' | undefined {
+  if (a.kind === 'agent') return 'instructions';
+  if (a.kind === 'instruction' || a.kind === 'skill') return 'content';
+  // 文件型 kind（autopilot-script 脚本/配置/评审巡逻、hook-script、adapter）：正文已随 payload 归档（content），
+  // 生产侧真有正文且是绝对路径文件时走全文 diff / 可执行 push；缺正文 → 内容视图逐字段对照
+  if (a.kind === 'autopilot-script' || a.kind === 'hook-script' || a.kind === 'adapter') {
+    const path = a.source.path;
+    if (path.startsWith('/') && typeof (a.payload as { content?: unknown }).content === 'string') return 'content';
+  }
+  return undefined;
+}
+
 function buildStoreDriftItems(state: { assets: Asset[] }, opts: ReconcileOpts): ReconcileItem[] {
   const store = opts.store;
   if (!store) return [];
   const platforms = opts.platforms ?? DEFAULT_PLATFORMS;
   const items: ReconcileItem[] = [];
-  const contentField = (a: Asset): 'content' | 'instructions' | undefined => {
-    if (a.kind === 'agent') return 'instructions';
-    if (a.kind === 'instruction' || a.kind === 'skill') return 'content';
-    // 文件型 kind（autopilot-script 脚本/配置/评审巡逻、hook-script、adapter）：正文已随 payload 归档（content），
-    // 生产侧真有正文且是绝对路径文件时走全文 diff / 可执行 push；缺正文 → 内容视图逐字段对照
-    if (a.kind === 'autopilot-script' || a.kind === 'hook-script' || a.kind === 'adapter') {
-      const path = a.source.path;
-      if (path.startsWith('/') && typeof (a.payload as { content?: unknown }).content === 'string') return 'content';
-    }
-    return undefined;
-  };
+  const contentField = contentFieldOf;
 
   for (const a of state.assets) {
     if (!isTruthKind(a.kind)) continue;
