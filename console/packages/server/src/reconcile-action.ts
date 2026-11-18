@@ -1,5 +1,6 @@
-import { copyFile, readFile, writeFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { basename, isAbsolute, join } from 'node:path';
 import { editRegistryPlatforms, spliceAgentInstructions, writeStoreRecord, storeFileName } from '@forge/collectors';
 import type { ContentRef, RegistryState, ReconcileItem, StoreRecord, WriteStep } from '@forge/collectors';
 
@@ -102,6 +103,19 @@ async function runStoreWrite(step: Extract<WriteStep, { type: 'store-write' }>, 
   return `已采纳生产进库：${step.assetId}（指纹重算${backupNote}）`;
 }
 
+/** 孤儿裁决：清空名册记录（备份到 .trash 后删除，可回捞） */
+async function runStoreDelete(step: Extract<WriteStep, { type: 'store-delete' }>, deps: ReconcileExecDeps): Promise<string> {
+  if (!deps.storeDir) throw new Error('storeDir 未配置，无法清册');
+  const target = join(deps.storeDir, storeFileName(step.assetId));
+  if (deps.dryRun) return `[dry-run] 将删除库内记录 ${target}`;
+  if (!existsSync(target)) return `库记录不存在（已清）：${step.assetId}`;
+  const trashDir = join(deps.storeDir, '.trash');
+  await mkdir(trashDir, { recursive: true });
+  const trash = join(trashDir, `${basename(target)}.bak-${Date.now()}`);
+  await rename(target, trash);
+  return `已清名册：${step.assetId}（旧记录备份 ${basename(trash)}）`;
+}
+
 async function runCommand(step: Extract<WriteStep, { type: 'command' }>, state: RegistryState, deps: ReconcileExecDeps): Promise<string> {
   const resolved = step.cmd.map((arg) => {
     if (arg !== '{content}') return arg;
@@ -147,6 +161,8 @@ export async function executeReconcileAction(
         lines.push(await runFileWrite(step, state, deps));
       } else if (step.type === 'store-write') {
         lines.push(await runStoreWrite(step, state, deps));
+      } else if (step.type === 'store-delete') {
+        lines.push(await runStoreDelete(step, deps));
       } else {
         lines.push(await runCommand(step, state, deps));
       }
