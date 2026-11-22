@@ -308,7 +308,7 @@ INPUT="${INPUT%$'\n'}"
 
 ## 5. Hook 脚本清单（v2 终态）
 
-v2 单轨下「注册项」与「脚本」解耦：settings 共 10 条 unified-hook 注册（每时点一条）；业务脚本经 run_script 挂载规则触发（规则定义在 `unified/rules.d/runscript-mounts.json`），配置化规则在 `unified/rules-v2.json`。
+v2 单轨下「注册项」与「脚本」解耦：settings 共 11 条 unified-hook 注册（每时点一条）；业务脚本经 run_script 挂载规则触发（规则定义在 `unified/rules.d/runscript-mounts.json`），配置化规则在 `unified/rules-v2.json`。
 
 > **维护条款：本表与 `unified/rules-v2.json` + `unified/rules.d/` + `hooks-registration.json` 同步更新。** 任何规则增删、挂载或通道调整，都必须同时更新规则配置与本表，二者不一致视为文档缺陷。拦截型（阻断）hook 必须在表中登记 owner，无 owner 的拦截不允许存在。
 
@@ -495,6 +495,7 @@ INPUT="${INPUT%$'\n'}"
 
 *文档版本：2026-11-22（PostCompact 第 11 时点增补）*
 *更新记录：SEE-1621 code（2026-11-22，Bachi 实施）—— validate-rules.js HOOK_POINTS/NO_TOOL_PAYLOAD 增至 11 时点（新增 PostCompact：压缩完成后触发，matcher manual/auto，载荷含 trigger/compact_summary，无决策控制位，context 注入与 PreCompact 同型）；bootstrap/hooks-registration.json hook_points 同步 11；rules-v2.json 新增 atlas-postcompact-reminder（agents include [Atlas]、无 when/repo 过滤全仓生效、无 one_shot 每次压缩重提醒、context 非阻断，文案覆盖压缩事实 / /task-explore / /recall owner-order + 页面 ID kp-cb6e073b333974583acdc872916438ff / Leader /task-run）；§1/§2/§2.3/§5.1 时点计数 10→11 与规则数 13→14 同步；测试新增 tests/test_postcompact_atlas_reminder.sh（真实引擎行为：Atlas 隔离、跨仓库命中、同 session 重复提醒、无 deny、他事件不误触发）并同步 validator.test.mjs / test_v2_installer_p0.sh / test_hook_registration_see270.sh / test_v2_unified_engine_p0.sh / test_see764_unified_engine_regression.sh 时点与数量断言；hooks-usage-rules.md 补 PostCompact 载荷语义。*
+*更新记录：SEE-1621 tidy（2026-11-22，Refacty 实施）—— §5 导语 settings unified-hook 注册计数 10→11（本批 code 漏同步的现役计数，维护条款「二者不一致视为文档缺陷」；声明真源 `bootstrap/hooks-registration.json` 已为 11 时点）。零行为：仅文档计数字。*
 *更新记录：SEE-1559 tidy 补充轮（2026-11-10，Leader 裁定 O4/O5）—— §2.3「规则配置真源」表补登 `rules.d/push-guard-gates.json`（存量缺口）与 `rules.d/stop-guard-subagents.json` 两行；stop-guard-subagents.json version_note 失实依据更正（when-ops.js payload 分支实读语义：equals:false 对缺省字段 undefined/null/false 视为未置位命中，非「求值不稳」；脚本内自检为权威道的设计不变）。零行为：仅文档表行与注释文字。*
 *更新记录：SEE-1559 tidy（2026-11-10）—— §5.1 表补登 stop-guard-live-subagents 行（rules.d/stop-guard-subagents.json，Stop 时点 sub-agent 存活防线，Archi 实施）；同步 bootstrap/hooks-registration.json runtime_artifacts 登记 `scripts/stop-guard-subagents.sh` 与 `unified/rules.d/stop-guard-subagents.json`（维护条款「规则增删须与本表 + hooks-registration.json 同步」）。零行为：仅文档与清单登记，未改规则配置/脚本/引擎。*
 *更新记录：SEE-1527 修复轮（2026-11-05）—— push-guard gates belt 豁免去字面量化：旧「命令串含 `/dev-forge` 子串」锚点路径敏感（dev-forge 检出目录名不含字面量时 KOL/gqt 会话合法 push 被跨仓误拦，生产可达），改为 push 有效目标仓 origin URL ∈ 注册表 devforge 项判定（repo op `target:"push"`：段内 `-C <dir>` 优先、其次前置 cd 链、否则会话 cwd；多 push 段 all 口径；任一目标不可解析即不豁免，保守方向 = 门禁照常）。配套：validate-rules.js repo target 值域校验 + variantOf 映射 cmd-cur；§5.1 两行条件列同步；测试 test_push_guard_devforge_exempt.sh B8 家族重锚（allow/deny 两侧对照、断言与套件检出位置解耦）*
