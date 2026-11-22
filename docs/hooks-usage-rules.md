@@ -57,6 +57,8 @@ Hooks 在特定的生命周期节点执行。官方事件按触发周期划分�
 | `Elicitation` | MCP 服务器请求用户输入时 | MCP 服务器名称 |
 | `ElicitationResult` | 用户响应 MCP elicitation 之后 | MCP 服务器名称 |
 
+> `PostCompact`（SEE-1621 起由团队钩子引擎正式承载）在上下文压缩完成后触发；matcher 为 `manual` / `auto`（手动 `/compact` 或自动压缩），载荷额外包含 `trigger`（压缩触发方式）与 `compact_summary`（压缩摘要），**不支持决策控制**（无 deny/allow 语义，仅可做 context 注入等非阻断动作）。团队注册链在压缩完成后注入任务状态恢复提醒（`atlas-postcompact-reminder`，仅 Atlas 生效）。
+
 ### 1.5 不支持 Matcher 的事件
 
 以下事件忽略 `matcher` 字段，总是在每次触发时执行：

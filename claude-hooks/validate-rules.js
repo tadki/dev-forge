@@ -10,13 +10,15 @@
 const HOOK_POINTS = [
   'PreToolUse', 'PostToolUse', 'SessionStart', 'SessionEnd',
   'Stop', 'SubagentStop', 'UserPromptSubmit', 'Notification', 'PreCompact',
-  'PermissionRequest',
+  // SEE-1621：CC 压缩完成后触发（matcher manual/auto，载荷含 trigger/compact_summary，
+  // 无决策控制位），context 注入语义与 PreCompact 同型
+  'PostCompact', 'PermissionRequest',
 ];
 const ALL_POINTS = new Set(HOOK_POINTS);
 // Points whose payload carries no tool_name / tool_input.command / file_path
 const NO_TOOL_PAYLOAD = new Set([
   'Stop', 'SubagentStop', 'SessionStart', 'SessionEnd',
-  'UserPromptSubmit', 'Notification', 'PreCompact',
+  'UserPromptSubmit', 'Notification', 'PreCompact', 'PostCompact',
 ]);
 
 // M1 lookup: op variant -> set of hook points where the op is evaluable.

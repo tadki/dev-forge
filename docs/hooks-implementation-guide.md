@@ -12,9 +12,9 @@
 ### 1.1 调用链路（v2 单轨）
 
 ```
-CC hook 事件（10 时点 × matcher *）
+CC hook 事件（11 时点 × matcher *）
   ↓
-settings.json（全局 ~）：10 时点统一注册，绝对路径直指本仓检出
+settings.json（全局 ~）：11 时点统一注册，绝对路径直指本仓检出
   "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh <HookType> unified-hook"
 ~/tools/dev-forge/claude-hooks/hook-wrapper.sh（记录日志 + exec dispatcher.sh unified-hook）
   ↓
@@ -57,7 +57,7 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 | Multica Agent 在 workdir 运行 | 全局 `~/.claude/settings.json` | 同上（注册链始终指向 dev-forge 检出） |
 | 其他项目 / workdir 无代码 | 全局 `~/.claude/settings.json` | dispatcher 静默跳过（透传） |
 
-> **注意**：项目级 `.claude/settings.json` 不定义 hooks；settings 注册唯一真源为仓库 `bootstrap/hooks-registration.json`（声明式清单），由安装器渲染到全局 `~/.claude/settings.json`。10 时点 = PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / SubagentStop / UserPromptSubmit / Notification / PreCompact / PermissionRequest，matcher 全 `*`，触发面收敛在引擎内 when 树。
+> **注意**：项目级 `.claude/settings.json` 不定义 hooks；settings 注册唯一真源为仓库 `bootstrap/hooks-registration.json`（声明式清单），由安装器渲染到全局 `~/.claude/settings.json`。11 时点 = PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / SubagentStop / UserPromptSubmit / Notification / PreCompact / PostCompact / PermissionRequest，matcher 全 `*`，触发面收敛在引擎内 when 树。
 
 ---
 
@@ -96,12 +96,15 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
     ],
     "PreCompact": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh PreCompact unified-hook" } ] }
+    ],
+    "PostCompact": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh PostCompact unified-hook" } ] }
     ]
   }
 }
 ```
 
-> **v2 终态形态**：10 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `bootstrap/hooks-registration.json`，由 `bootstrap/bootstrap.sh` 调 `registry-patch.js` 渲染（备份 + 幂等校验；回滚走 `bootstrap/rollback.sh`）。PermissionRequest 时点于 2026-11-03 增补（plan-mode 自动放行迁移，见 §5.1）。
+> **v2 终态形态**：11 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `bootstrap/hooks-registration.json`，由 `bootstrap/bootstrap.sh` 调 `registry-patch.js` 渲染（备份 + 幂等校验；回滚走 `bootstrap/rollback.sh`）。PermissionRequest 时点于 2026-11-03 增补（plan-mode 自动放行迁移，见 §5.1）；PostCompact 时点于 2026-11-22 增补（SEE-1621，压缩完成后触发，matcher `manual` / `auto`，载荷含 `trigger` / `compact_summary`，无决策控制位）。
 >
 > **路径说明**：生产环境使用上述 dev-forge 检出的绝对路径，避免 WSL 中 `~` 展开不一致；注册链不经过 `~/.claude/hooks/` 部署位。
 
@@ -114,21 +117,21 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
    command 只写脚本路径 + 参数，不要添加 bash 前缀或引号嵌套。
 
 2. **每个 command 携带两个参数：HookType + Alias**
-   - `HookType`（$1）：CC 官方事件名（10 时点）
+   - `HookType`（$1）：CC 官方事件名（11 时点）
    - `Alias`（$2）：v2 终态恒为 `unified-hook`（dispatcher 仅路由该 alias）
 
 3. **matcher 全 `*`（v2 语义反转）**
    - v1 按 hook 拆多个注册项并在 matcher 层按工具过滤；v2 全时点统一 `*`，触发窗口收敛到引擎内 `when` 树（tool op / file op / command op / payload op / branch op 等组合）——单一注册 + 配置驱动，规则增删零 settings 变更
 
 4. **注册真源为声明式清单**
-   - `bootstrap/hooks-registration.json`：10 时点列表 + runtime_artifacts 部署清单 + per-phase 启用/禁用语义（P0–P3 历史 cutover 留档）
+   - `bootstrap/hooks-registration.json`：11 时点列表 + runtime_artifacts 部署清单 + per-phase 启用/禁用语义（P0–P3 历史 cutover 留档）
    - 任何 hooks 变更先改清单，再由安装器落地；禁止手工直改 settings
 
 ### 2.3 规则配置真源（v2 新增）
 
 | 文件 | 内容 | 维护约束 |
 |---|---|---|
-| `claude-hooks/unified/rules-v2.json` | 13 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
+| `claude-hooks/unified/rules-v2.json` | 14 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard + atlas-postcompact-reminder（SEE-1621）；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
 | `claude-hooks/unified/rules.d/runscript-mounts.json` | 8 条 run_script 挂载规则（push-guard / mention-check / gdformat-gdlint / taskflow×3 / auto-pr / repo-checkout）：`deny_exit_codes` / `on_fail` / `timeout_ms` | 挂载 lane 与 rules-v2 规则段互不交叉编辑 |
 | `claude-hooks/unified/rules.d/plan-mode-auto-allow.json` | 1 条 PermissionRequest 挂载规则（plan 模式自动放行，2026-11-03 自 Mac 全局 settings jq 一行式迁入）：payload op 字符串等值 + run_script 协议直通 | 同上；引擎侧依赖 validate-rules.js HOOK_POINTS 第 10 时点 + when-ops.js payload 字符串等值 |
 | `claude-hooks/unified/rules.d/push-guard-gates.json` | 2 条声明式 deny 规则（push-guard-master-gate / push-guard-force-push-gate，SEE-1430b；owner/blocking 由 SEE-1516 §SPEC-018 补登）：`push_refspec` 结构化 op × `repo` op（repos.json 注册表判定 kol/gqt；devforge belt 豁免 SEE-1527；排除 `--delete`） | 配置化 deny（文案内置，无脚本挂载）；改动须过 validate-rules.js 状态机 |
@@ -323,6 +326,7 @@ v2 单轨下「注册项」与「脚本」解耦：settings 共 10 条 unified-h
 | `mention-confirm-check`（rules-v2） | PreToolUse | command `multica issue comment add` × content 提及正则；one_shot{scope:run} | 配置化（deny 文案内置） | **是**（permissionDecision=deny，SEE-1388 SPEC-005 修正：此前误登为提醒） | Atlas（评论 mention 自查规则，SEE-1151 系） |
 | `child-issue-guard`（rules-v2，SEE-1388 SPEC-005 补登） | PreToolUse | command `multica issue (create\|update)` × has_flag --parent | 配置化（deny 文案内置） | **是**（permissionDecision=deny） | Atlas（单 issue 任务纪律，SEE-747 系） |
 | `grepai-search-reminder`（rules-v2，SEE-1388 SPEC-005 补登） | PostToolUse | command grep/rg/ag/ack 或 tool Grep | 配置化（context 文案内置） | 否（additionalContext） | Atlas（grepai 语义检索引导，SEE-1238 系） |
+| `atlas-postcompact-reminder`（rules-v2，SEE-1621） | PostCompact | agents include [Atlas]；无 when/repo 过滤（任意仓库/工作目录生效）；无 one_shot（每次压缩均重提醒） | 配置化（context 文案内置：压缩事实 + /task-explore 探索 + /recall owner-order 及页面 ID kp-cb6e073b333974583acdc872916438ff + Leader /task-run） | 否（additionalContext，非阻断） | Atlas（压缩后任务状态恢复提醒） |
 | `atlas-taskflow-mark-a-mount` | PostToolUse | tool Skill（脚本内 taskflow 判定） | `atlas-taskflow-mark-a.sh` | 否（写 /taskflow 状态标记） | Atlas |
 | `atlas-taskflow-mark-b-mount` | PostToolUse | tool Bash（脚本内 issue create 判定） | `atlas-taskflow-mark-b.sh` | 否（写状态标记） | Atlas |
 | `atlas-taskflow-exit-reminder-mount` | PreToolUse | tool Bash（脚本内 comment add 判定；仅 Atlas 生效） | `atlas-taskflow-exit-reminder.sh` | 条件阻断（对新建任务 issue 评论时 deny） | Atlas（/taskflow 编排闭环） |
@@ -489,7 +493,8 @@ INPUT="${INPUT%$'\n'}"
 
 ---
 
-*文档版本：2026-11-03（PermissionRequest 第 10 时点增补）*
+*文档版本：2026-11-22（PostCompact 第 11 时点增补）*
+*更新记录：SEE-1621 code（2026-11-22，Bachi 实施）—— validate-rules.js HOOK_POINTS/NO_TOOL_PAYLOAD 增至 11 时点（新增 PostCompact：压缩完成后触发，matcher manual/auto，载荷含 trigger/compact_summary，无决策控制位，context 注入与 PreCompact 同型）；bootstrap/hooks-registration.json hook_points 同步 11；rules-v2.json 新增 atlas-postcompact-reminder（agents include [Atlas]、无 when/repo 过滤全仓生效、无 one_shot 每次压缩重提醒、context 非阻断，文案覆盖压缩事实 / /task-explore / /recall owner-order + 页面 ID kp-cb6e073b333974583acdc872916438ff / Leader /task-run）；§1/§2/§2.3/§5.1 时点计数 10→11 与规则数 13→14 同步；测试新增 tests/test_postcompact_atlas_reminder.sh（真实引擎行为：Atlas 隔离、跨仓库命中、同 session 重复提醒、无 deny、他事件不误触发）并同步 validator.test.mjs / test_v2_installer_p0.sh / test_hook_registration_see270.sh / test_v2_unified_engine_p0.sh / test_see764_unified_engine_regression.sh 时点与数量断言；hooks-usage-rules.md 补 PostCompact 载荷语义。*
 *更新记录：SEE-1559 tidy 补充轮（2026-11-10，Leader 裁定 O4/O5）—— §2.3「规则配置真源」表补登 `rules.d/push-guard-gates.json`（存量缺口）与 `rules.d/stop-guard-subagents.json` 两行；stop-guard-subagents.json version_note 失实依据更正（when-ops.js payload 分支实读语义：equals:false 对缺省字段 undefined/null/false 视为未置位命中，非「求值不稳」；脚本内自检为权威道的设计不变）。零行为：仅文档表行与注释文字。*
 *更新记录：SEE-1559 tidy（2026-11-10）—— §5.1 表补登 stop-guard-live-subagents 行（rules.d/stop-guard-subagents.json，Stop 时点 sub-agent 存活防线，Archi 实施）；同步 bootstrap/hooks-registration.json runtime_artifacts 登记 `scripts/stop-guard-subagents.sh` 与 `unified/rules.d/stop-guard-subagents.json`（维护条款「规则增删须与本表 + hooks-registration.json 同步」）。零行为：仅文档与清单登记，未改规则配置/脚本/引擎。*
 *更新记录：SEE-1527 修复轮（2026-11-05）—— push-guard gates belt 豁免去字面量化：旧「命令串含 `/dev-forge` 子串」锚点路径敏感（dev-forge 检出目录名不含字面量时 KOL/gqt 会话合法 push 被跨仓误拦，生产可达），改为 push 有效目标仓 origin URL ∈ 注册表 devforge 项判定（repo op `target:"push"`：段内 `-C <dir>` 优先、其次前置 cd 链、否则会话 cwd；多 push 段 all 口径；任一目标不可解析即不豁免，保守方向 = 门禁照常）。配套：validate-rules.js repo target 值域校验 + variantOf 映射 cmd-cur；§5.1 两行条件列同步；测试 test_push_guard_devforge_exempt.sh B8 家族重锚（allow/deny 两侧对照、断言与套件检出位置解耦）*
