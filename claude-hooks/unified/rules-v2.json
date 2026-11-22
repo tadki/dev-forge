@@ -452,6 +452,28 @@
       "blocking": false
     },
     {
+      "name": "atlas-postcompact-reminder",
+      "on": {
+        "in": [
+          "PostCompact"
+        ]
+      },
+      "agents": {
+        "include": [
+          "Atlas"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "context",
+          "message": "[post-compact-reminder] 上下文已经被压缩。你必须先完成以下动作，再继续当前任务：\n[post-compact-reminder] 1) 激活 /task-explore 技能，针对被压缩上下文的关键点进行探索；\n[post-compact-reminder] 2) 召回 owner-order 页面并遵守其中规则：\n[post-compact-reminder]    /recall owner-order\n[post-compact-reminder]    或直接读取：mcp__hindsight__read_knowledge_page(page_id=\"kp-cb6e073b333974583acdc872916438ff\")\n[post-compact-reminder] 3) 若你当前是 Leader，必须激活 /task-run 技能，并严格遵守其工作流程与编排要求。"
+        }
+      ],
+      "owner": "Atlas",
+      "blocking": false
+    },
+    {
       "name": "tscn-tres-guard",
       "on": {
         "in": [

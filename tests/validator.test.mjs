@@ -86,15 +86,29 @@ test('transSchema: 非对象/缺 name/坏 enabled 均 INVALID', () => {
 });
 
 test('transOn: 缺省=全时点; in/except 互斥 INVALID; 未知时点 INVALID; except 求补', () => {
-  assert.equal(V.HOOK_POINTS.length, 10); // plan-mode-allow 迁移新增第 10 时点
-  assert.equal(V.transOn('SCHEMA_OK', undefined).S_on.size, 10);
+  assert.equal(V.HOOK_POINTS.length, 11); // SEE-1621 PostCompact 新增第 11 时点
+  assert.equal(V.transOn('SCHEMA_OK', undefined).S_on.size, 11);
   const bad = V.transOn('SCHEMA_OK', { in: [PRE], except: ['Stop'] });
   assert.equal(bad.ok, false);
   assert.equal(bad.path, 'on');
   assert.ok(V.transOn('SCHEMA_OK', { in: ['Nope'] }).ok === false);
   const ex = V.transOn('SCHEMA_OK', { except: ['Stop'] });
-  assert.equal(ex.S_on.size, 9);
+  assert.equal(ex.S_on.size, 10);
   assert.ok(!ex.S_on.has('Stop'));
+});
+
+test('PostCompact 正式接纳（SEE-1621）：validator 接纳 + 无 tool 载荷约束仍拒绝 + context 协议合法', () => {
+  assert.ok(POINTS.includes('PostCompact'), 'PostCompact 必须在 HOOK_POINTS');
+  const on = V.transOn('SCHEMA_OK', { in: ['PostCompact'] });
+  assert.equal(on.ok, true, 'PostCompact 必须是已知时点（不再判未知）');
+  // M1：无 tool 载荷时点上 tool/file/command op 全时点不可用 → INVALID（既有约束保持）
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: { op: 'tool', in: ['Bash'] } }), undefined, 'when', '无对应载荷');
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: { op: 'file', patterns: ['*.md'] } }), undefined, 'when', '无对应载荷');
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: { op: 'command', scope: 'current', pattern: 'git push' } }), undefined, 'when', '无对应载荷');
+  // M5：event(仅 PostCompact) × tool 恒 false —— 证明 PostCompact ∈ NO_TOOL_PAYLOAD
+  assertInvalid(baseRule({ when: { op: 'all', args: [{ op: 'event', in: ['PostCompact'] }, { op: 'tool', in: ['Bash'] }] } }), undefined, 'when', '恒 false');
+  // context action 在 PostCompact 协议合法（M2 继承 HOOK_POINTS），缺省 when 恒真
+  assertValid(baseRule({ on: { in: ['PostCompact'] }, when: undefined }));
 });
 
 test('transAgents: 数组 desugar 形式 / 交集非空 INVALID / 双空 INVALID / 仅单边 VALID', () => {

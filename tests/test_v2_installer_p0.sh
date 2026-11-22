@@ -33,7 +33,7 @@ SETTINGS="$FIXTURE/home/.claude/settings.json"
 
 trap 'rm -rf "$FIXTURE"' EXIT
 
-POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact PermissionRequest)
+POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact PostCompact PermissionRequest)
 
 count_v2_entries() {
     # 统计 settings 中 unified-hook 注册条目数
@@ -69,8 +69,8 @@ separator "0. Prerequisites + CLI hygiene"
 [ -f "$ROLLBACK" ] && pass "rollback.sh exists" || fail "rollback.sh MISSING"
 [ -f "$PATCHER" ] && pass "registry-patch.js exists" || fail "registry-patch.js MISSING"
 [ -f "$MANIFEST" ] && pass "hooks-registration.json exists" || { fail "manifest MISSING"; exit 1; }
-node -e "const m=require('$MANIFEST'); if (m.hook_points.length !== 10) process.exit(1)" 2>/dev/null \
-    && pass "manifest declares 10 hook points" || fail "manifest hook_points != 10"
+node -e "const m=require('$MANIFEST'); if (m.hook_points.length !== 11) process.exit(1)" 2>/dev/null \
+    && pass "manifest declares 11 hook points" || fail "manifest hook_points != 11"
 node -e "const m=require('$MANIFEST'); process.exit(m.phases.P0.disable_v1.length===0?0:1)" 2>/dev/null \
     && pass "manifest P0 disable_v1 empty (first-install keeps v1)" || fail "P0 disable_v1 not empty — fixture v1 expectations stale"
 
@@ -118,7 +118,7 @@ cp "$SETTINGS" "$FIXTURE/original-settings.json"
 pass "fixture settings prepared (v1 registrations + unrelated fields)"
 
 #####################################################################
-# 1. 首次安装：10 时点注册渲染（指向本仓检出）+ 无关字段/v1 保留
+# 1. 首次安装：11 时点注册渲染（指向本仓检出）+ 无关字段/v1 保留
 #####################################################################
 separator "1. First install"
 bash "$INSTALLER" "$SETTINGS" > "$FIXTURE/install1.log" 2>&1
@@ -134,7 +134,7 @@ const ok = groups.some(g => (g.hooks||[]).some(h => h.command === want && g.matc
 process.exit(ok ? 0 : 1);
 " 2>/dev/null || MISSING=1
 done
-[ "$MISSING" -eq 0 ] && pass "1b: all 10 points registered, matcher=*, command→repo checkout" || fail "1b: some points missing/wrong path/matcher"
+[ "$MISSING" -eq 0 ] && pass "1b: all 11 points registered, matcher=*, command→repo checkout" || fail "1b: some points missing/wrong path/matcher"
 
 node -e "
 const s = require('$SETTINGS');
@@ -165,7 +165,7 @@ BAK_COUNT_2=$(ls "$(dirname "$SETTINGS")" | grep -c "settings.json.bak-bootstrap
 [ "$BAK_COUNT_2" -eq "$((BAK_COUNT_1 + 1))" ] && pass "2c: backup +1 per run (unconditional pre-merge contract)" \
     || fail "2c: backup count $BAK_COUNT_1 → $BAK_COUNT_2"
 V2_N=$(count_v2_entries)
-[ "$V2_N" -eq 10 ] && pass "2d: no duplicate v2 entries (count=10)" || fail "2d: v2 entries = $V2_N (duplication?)"
+[ "$V2_N" -eq 11 ] && pass "2d: no duplicate v2 entries (count=11)" || fail "2d: v2 entries = $V2_N (duplication?)"
 
 # 无关临时文件无残留
 TMP_LEFT=$(ls "$(dirname "$SETTINGS")" | grep -c "\.tmp\." || true)

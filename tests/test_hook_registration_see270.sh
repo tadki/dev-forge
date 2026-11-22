@@ -1,7 +1,7 @@
 #!/bin/bash
 # test_hook_registration_see270.sh — v2 终态重写（SEE-1330 P4 收敛批）
 # 原版断言 v1 散装注册（11 alias wrapper 行）；P4 收敛后注册契约 =
-# 9 时点仅存 unified-hook（matcher `*`）、v1 wrapper 行清零。
+# 11 时点仅存 unified-hook（matcher `*`，SEE-1621 增补 PostCompact）、v1 wrapper 行清零。
 # 注册清单真源 = .claude/hooks/hooks-registration.json（installer §9a 完整性探针承接部署面）。
 set -uo pipefail
 
@@ -19,9 +19,9 @@ if [ -z "$SETTINGS" ] || [ ! -f "$SETTINGS" ]; then
   exit 1
 fi
 
-EXPECTED_HOOK_POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact)
+EXPECTED_HOOK_POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact PostCompact PermissionRequest)
 
-separator "1. unified-hook 9 时点注册完整性"
+separator "1. unified-hook 11 时点注册完整性"
 for hp in "${EXPECTED_HOOK_POINTS[@]}"; do
   if jq -e --arg hp "$hp" '.hooks[$hp][] | select(.matcher=="*") | .hooks[] | select(.command | contains("unified-hook"))' "$SETTINGS" >/dev/null 2>&1; then
     pass "$hp: unified-hook 注册在位（matcher *）"
