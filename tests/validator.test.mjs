@@ -185,11 +185,13 @@ test('M1 注记: 多值 on 部分可用 → 无 event 收窄 ⚠️；有 event 
 // ================================================================
 
 for (const point of POINTS) {
-  for (const actionOp of ['deny', 'context', 'modify', 'run_script']) {
+  for (const actionOp of ['deny', 'context', 'modify', 'run_script', 'pending_set', 'pending_context']) {
     const cellOk = V.M2_ACTION_POINTS[actionOp].has(point);
-    const action = actionOp === 'run_script'
-      ? { op: 'run_script', path: '/tmp/x.sh' }
-      : { op: actionOp, message: 'm' };
+    let action;
+    if (actionOp === 'run_script') action = { op: 'run_script', path: '/tmp/x.sh' };
+    else if (actionOp === 'pending_set') action = { op: 'pending_set', key: 'k' };
+    else if (actionOp === 'pending_context') action = { op: 'pending_context', key: 'k', message: 'm' };
+    else action = { op: actionOp, message: 'm' };
     const label = `M2[${point} × ${actionOp}] ${cellOk ? '✅' : '❌'}`;
     test(label, () => {
       // 隔离 action 维度：when 缺省，避免 M1 先行拒绝
@@ -199,6 +201,17 @@ for (const point of POINTS) {
     });
   }
 }
+
+test('pending ops（SEE-1621 R2）：时点约束 + key/message 参数校验', () => {
+  // pending_set 仅 PostCompact；pending_context 仅 PreToolUse
+  assertValid(baseRule({ on: { in: ['PostCompact'] }, when: undefined, action: [{ op: 'pending_set', key: 'k' }] }));
+  assertValid(baseRule({ on: { in: ['PreToolUse'] }, when: undefined, action: [{ op: 'pending_context', key: 'k', message: 'm' }] }));
+  assertInvalid(baseRule({ on: { in: ['PreToolUse'] }, when: undefined, action: [{ op: 'pending_set', key: 'k' }] }), undefined, 'action[0].op', 'M2');
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: undefined, action: [{ op: 'pending_context', key: 'k', message: 'm' }] }), undefined, 'action[0].op', 'M2');
+  // key 必填非空；pending_context message 必填
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: undefined, action: [{ op: 'pending_set' }] }), undefined, 'action[0].key', 'key');
+  assertInvalid(baseRule({ on: { in: ['PreToolUse'] }, when: undefined, action: [{ op: 'pending_context', key: 'k' }] }), undefined, 'action[0].message', 'message');
+});
 
 // ================================================================
 // M3: when op × action（8×4 全格；modify 列判定目标存在性）

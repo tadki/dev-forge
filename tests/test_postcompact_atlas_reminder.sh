@@ -187,12 +187,13 @@ run_entry "Atlas" "$ATLAS_POSTCOMPACT" "$REPO_A"
 assert_context_has "4a: first PostCompact fires" "已经被压缩"
 run_entry "Atlas" "$ATLAS_POSTCOMPACT" "$REPO_A"
 assert_context_has "4b: second PostCompact fires again" "已经被压缩"
-SENTINEL_LEFT=$(ls "$STATE" 2>/dev/null | grep -c "postcompact" || true)
+# 无 one_shot 哨兵（.hook-fired-*）；pending-* 标记是 R2 补投路线的合法状态，不计入。
+SENTINEL_LEFT=$(ls "$STATE" 2>/dev/null | grep -c "^\.hook-fired-" || true)
 SENTINEL_TMP=$(ls /tmp/.hook-fired-atlas-postcompact-reminder* 2>/dev/null | wc -l)
 if [ "$SENTINEL_LEFT" -eq 0 ] && [ "$SENTINEL_TMP" -eq 0 ]; then
-    pass "4c: zero sentinel writes (repeatable by design, no one_shot)"
+    pass "4c: zero one_shot sentinel writes (repeatable by design)"
 else
-    fail "4c: sentinel residue state=$SENTINEL_LEFT tmp=$SENTINEL_TMP (unexpected one_shot behavior)"
+    fail "4c: one_shot sentinel residue state=$SENTINEL_LEFT tmp=$SENTINEL_TMP"
 fi
 
 #####################################################################
