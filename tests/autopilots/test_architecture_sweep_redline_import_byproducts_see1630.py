@@ -1,0 +1,320 @@
+"""SEE-1630: redline false positives from Godot import byproducts + content-blind
+REDLINE dedup.
+
+Two defects from the 2026-11-23 L1 escalation:
+- §SPEC-001: the L1 self-produced GUT step runs ``godot --headless --import``,
+  which writes generated import byproducts (``*.import`` metadata, a ``.godot/``
+  import cache) into the vendored ``addons/godot_mcp/`` redline tree. The
+  manifest-vs-worktree comparison treated any new file as ``REDLINE_NEW:critical``
+  — a pure false positive (the redline body itself was 0 missing / 0 mismatched).
+  The vendored submodule's own ``.gitignore`` declares both shapes ignored and
+  pins zero of them, so they are never versioned redline content and must be
+  neither reported nor blessed into the manifest. Real add / modify / delete of
+  versioned redline content must still be critical (§SPEC-002).
+- §SPEC-003: the REDLINE dedup key (``file:line:rule:severity``) carried no
+  content identity, so a *different* violation at the same path/rule/severity
+  (a re-added or re-modified file with new bytes) was swallowed by the stale
+  baseline key. Findings that differ in content must reach ``new_findings``;
+  byte-identical repeats must still dedup.
+
+Fixtures build a synthetic parent repo whose ``addons/godot_mcp`` is a real git
+repo registered as a 160000 gitlink and materialized, with a tracked PNG — the
+exact "tracked asset + generated ``.import``" shape from the incident.
+"""
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "autopilots"))
+
+import architecture_sweep as sweep
+
+
+ADDON = "addons/godot_mcp"
+PNG_REL = f"{ADDON}/frames/amber-frame.png"
+IMPORT_REL = f"{ADDON}/frames/amber-frame.png.import"
+IMPORT_BODY = (
+    '[remap]\n\n'
+    'importer="texture"\n'
+    'type="CompressedTexture2D"\n'
+    'uid="uid://b7see1630"\n'
+    'path="res://.godot/imported/amber-frame.png-4e6f3e55.ctex"\n'
+)
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"amber-pixels-v1\x00\x01\x02"
+
+
+def _git(*args, cwd):
+    subprocess.run(
+        ["git", "-C", str(cwd)] + list(args),
+        check=True,
+        capture_output=True,
+    )
+
+
+def _git_out(*args, cwd):
+    return subprocess.run(
+        ["git", "-C", str(cwd)] + list(args),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _write_bytes(path, data: bytes):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+def _write(path, text):
+    _write_bytes(path, text.encode("utf-8"))
+
+
+def _read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+@pytest.fixture()
+def materialized_repo(tmp_path):
+    """Parent repo pinning (and materializing) a gitlink whose pinned commit
+    ships a tracked PNG — the incident's tracked-asset shape."""
+    base = tmp_path / "fixture"
+    sub = base / "subrepo"
+    sub.mkdir(parents=True)
+    _git("init", "-q", "-b", "main", cwd=sub)
+    _git("config", "user.email", "t@t.dev", cwd=sub)
+    _git("config", "user.name", "t", cwd=sub)
+    _write_bytes(str(sub / "frames" / "amber-frame.png"), PNG_BYTES)
+    _write(str(sub / "main.gd"), "extends Node\n")
+    _git("add", "-A", cwd=sub)
+    _git("commit", "-q", "-m", "s1", cwd=sub)
+    s1 = _git_out("rev-parse", "HEAD", cwd=sub)
+
+    parent = base / "parent"
+    parent.mkdir(parents=True)
+    _git("init", "-q", "-b", "main", cwd=parent)
+    _git("config", "user.email", "t@t.dev", cwd=parent)
+    _git("config", "user.name", "t", cwd=parent)
+    addon = parent / "addons" / "godot_mcp"
+    _git("clone", "-q", str(sub), str(addon), cwd=parent)
+    _git("update-index", "--add", "--cacheinfo", f"160000,{s1},addons/godot_mcp", cwd=parent)
+    _write(str(parent / "README.md"), "# fixture\n")
+    _git("add", "README.md", cwd=parent)
+    _git("commit", "-q", "-m", "pin s1", cwd=parent)
+    return parent, s1
+
+
+@pytest.fixture()
+def patrol(tmp_path, monkeypatch):
+    """Isolated redline state files (never the production arch-patrol dir)."""
+    home = tmp_path / "arch-patrol"
+    home.mkdir()
+    monkeypatch.setattr(sweep, "REDLINE_MANIFEST", str(home / "redline.manifest"))
+    monkeypatch.setattr(sweep, "REDLINE_POINTER_FILE", str(home / "redline.pointer"))
+    return home
+
+
+def _store_manifest(manifest):
+    with open(sweep.REDLINE_MANIFEST, "w", encoding="utf-8") as f:
+        json.dump(manifest, f)
+
+
+def _load_manifest():
+    with open(sweep.REDLINE_MANIFEST, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _crit(findings):
+    return [f for f in findings if f["severity"] == sweep.SEVERITY_CRITICAL]
+
+
+def _critical_rules(findings):
+    return sorted(f["rule_id"] for f in _crit(findings))
+
+
+# ---------------------------------------------------------------------------
+# §SPEC-001 — generated import byproducts are neither reported nor blessed
+# ---------------------------------------------------------------------------
+
+
+def test_generated_import_byproduct_yields_no_redline_critical(patrol, materialized_repo):
+    """Tracked PNG + generated .import: the byproduct is not a REDLINE_NEW."""
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    _write(str(parent / IMPORT_REL), IMPORT_BODY)
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    assert _crit(findings) == []
+    assert [f for f in findings if f["file"].endswith(".import")] == []
+
+
+def test_first_run_manifest_does_not_bless_import_byproduct(patrol, materialized_repo):
+    """A first-run (empty stored) manifest is written without the byproduct,
+    while the tracked PNG stays present."""
+    parent, _s1 = materialized_repo
+    _write(str(parent / IMPORT_REL), IMPORT_BODY)
+
+    findings = sweep.check_redline(str(parent), dry_run=False)
+
+    assert [f["rule_id"] for f in findings] == ["REDLINE_INIT"]
+    stored = _load_manifest()
+    assert not any(rel.endswith(".import") for rel in stored)
+    assert PNG_REL in stored
+
+
+def test_godot_cache_dir_not_treated_as_redline_content(patrol, materialized_repo):
+    """A `.godot/` import cache under the addon is generated, never redline."""
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    _write_bytes(
+        str(parent / ADDON / ".godot" / "imported" / "amber-frame.png-4e6f3e55.ctex"),
+        b"CACHE-BYTES",
+    )
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    assert _crit(findings) == []
+    assert [f for f in findings if ".godot/" in f["file"]] == []
+
+
+def test_rebless_does_not_write_import_byproduct_into_manifest(patrol, materialized_repo):
+    """A compliant-artifact reset re-blesses the manifest from `current`, which
+    excludes the byproduct — the generated .import is never written back."""
+    parent, _s1 = materialized_repo
+    stale = sweep.compute_redline_manifest(str(parent))
+    stale[PNG_REL] = "0" * 64  # stale baseline -> the matching pinned file is a bump artifact
+    _store_manifest(stale)
+    _write(str(parent / IMPORT_REL), IMPORT_BODY)
+
+    findings = sweep.check_redline(str(parent), dry_run=False)
+
+    assert [f["rule_id"] for f in findings] == ["REDLINE_BASELINE_RESET"]
+    refreshed = _load_manifest()
+    assert not any(rel.endswith(".import") for rel in refreshed)
+    assert refreshed == sweep.compute_redline_manifest(str(parent))
+
+
+# ---------------------------------------------------------------------------
+# §SPEC-002 — real add / modify / delete stay critical even beside a byproduct
+# ---------------------------------------------------------------------------
+
+
+def test_real_new_file_still_critical_beside_import_byproduct(patrol, materialized_repo):
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    _write(str(parent / IMPORT_REL), IMPORT_BODY)
+    _write(str(parent / ADDON / "rogue.gd"), "extends Node\n# injected\n")
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    assert _critical_rules(findings) == ["REDLINE_NEW"]
+    assert [f["file"] for f in findings if f["rule_id"] == "REDLINE_NEW"] == [
+        f"{ADDON}/rogue.gd"
+    ]
+
+
+def test_real_modification_still_critical_and_blocks_reset(patrol, materialized_repo):
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    _write(str(parent / IMPORT_REL), IMPORT_BODY)
+    before = _read_bytes(sweep.REDLINE_MANIFEST)
+    _write_bytes(str(parent / PNG_REL), b"tampered-byte-payload")
+
+    findings = sweep.check_redline(str(parent), dry_run=False)
+
+    assert "REDLINE_MODIFIED" in _critical_rules(findings)
+    assert not [f for f in findings if f["rule_id"] == "REDLINE_BASELINE_RESET"]
+    assert _read_bytes(sweep.REDLINE_MANIFEST) == before
+
+
+def test_real_deletion_still_critical_beside_import_byproduct(patrol, materialized_repo):
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    _write(str(parent / IMPORT_REL), IMPORT_BODY)
+    os.remove(str(parent / PNG_REL))
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    assert _critical_rules(findings) == ["REDLINE_DELETED"]
+    assert [f["file"] for f in findings if f["rule_id"] == "REDLINE_DELETED"] == [PNG_REL]
+
+
+# ---------------------------------------------------------------------------
+# §SPEC-003 — REDLINE dedup discriminates content
+# ---------------------------------------------------------------------------
+
+
+def _new_at(findings, rel, rule_id):
+    return [
+        f
+        for f in findings
+        if f["rule_id"] == rule_id and f["file"] == rel
+    ]
+
+
+def test_redline_new_dedup_distinguishes_content(patrol, materialized_repo):
+    """Same path/rule/severity but different bytes must not be swallowed; a
+    byte-identical repeat must still dedup."""
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    rogue = parent / ADDON / "rogue.gd"
+    rel = f"{ADDON}/rogue.gd"
+
+    _write(str(rogue), "extends Node\n# content A\n")
+    keys1, new1 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), set()
+    )
+    assert _new_at(new1, rel, "REDLINE_NEW"), "first content must be reported"
+
+    _write(str(rogue), "extends Node\n# content B DIFFERENT\n")
+    keys2, new2 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), keys1
+    )
+    assert _new_at(new2, rel, "REDLINE_NEW"), (
+        "different content at the same path must not be silenced by the old key"
+    )
+
+    _write(str(rogue), "extends Node\n# content A\n")
+    keys3, new3 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), keys1
+    )
+    assert not _new_at(new3, rel, "REDLINE_NEW"), (
+        "byte-identical content must still dedup"
+    )
+
+
+def test_redline_modified_dedup_distinguishes_content(patrol, materialized_repo):
+    """A re-modification to new bytes is a new signal; the identical bytes
+    dedup."""
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    png = parent / PNG_REL
+
+    _write_bytes(str(png), b"tamper-A-payload")
+    keys1, new1 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), set()
+    )
+    assert _new_at(new1, PNG_REL, "REDLINE_MODIFIED")
+
+    _write_bytes(str(png), b"tamper-B-different-payload")
+    keys2, new2 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), keys1
+    )
+    assert _new_at(new2, PNG_REL, "REDLINE_MODIFIED"), (
+        "a different modification must reach new_findings"
+    )
+
+    _write_bytes(str(png), b"tamper-A-payload")
+    keys3, new3 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), keys1
+    )
+    assert not _new_at(new3, PNG_REL, "REDLINE_MODIFIED"), (
+        "an identical modification must dedup"
+    )
