@@ -174,7 +174,7 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 ### 检查维度
 
 **L0 每日**（每次执行都跑）：
-- `REDLINE_INIT/DELETED/MODIFIED/NEW` — `addons/godot_mcp/` SHA256 manifest 校验
+- `REDLINE_INIT/DELETED/MODIFIED/NEW` — `addons/godot_mcp/` SHA256 manifest 校验；仅豁免 pinned gitlink 树中未版本化的 Godot `*.import` / `.godot/` 导入副产物，且这些副产物不写入或重祝福 manifest；已版本化的同形文件仍按新增/修改/删除检出，pinned tree 无法读取时不豁免（fail-closed）
 - `REDLINE_SKIPPED_UNINITIALIZED`（warn）— `addons/godot_mcp` gitlink 未物化时（`git submodule update --init` 未执行或失败）跳过整段红线比对，仅产出一条显式降级告警；此告警入 baseline，增量机制不会重复捕获，恢复覆盖需先物化 submodule（SEE-1460）
 - `DEPRECATED_BRIDGE` — `@deprecated` 兼容桥存量
 - `SEE_COMMENT` — `SEE-\d+` 注释存量
@@ -203,14 +203,14 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 
 ### 防疲劳
 
-- dedup key = `file:line + rule_id + severity`，已在 baseline 中的 finding 不重复出现在 `new_findings`
+- dedup key 基础为 `file:line + rule_id + severity`；`REDLINE_NEW/MODIFIED/DELETED` 另追加 `content_id` 内容哈希，同路径但内容不同的信号仍进入 `new_findings`，内容相同的重复信号继续去重。已在 baseline 中的 finding 不重复出现在 `new_findings`；`content_id` 仅用于 baseline 去重，不写入对外 report 的 `findings` / `new_findings`，report schema 不变，其他 finding 沿用原 key
 - 心跳独立追加，无论是否有新告警
 - 异常升级为滚动台账 issue 草稿由 Chekky 上游层消费（本脚本不自动 @）
 
 ### 严禁行为（脚本内部保证）
 
 - 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程、不开 PR、不 @ 任何成员
-- 所有写操作仅落在 `~/.multica/arch-patrol/`（例外：① wrapper 层 `git submodule update --init --recursive` 物化——按 gitlink pinned commit 恢复 `addons/godot_mcp/` 内容，属覆盖性恢复而非改动；② L1 自产 junit——写入被检检出内 gitignored 的 `tests/reports/` 与 `.godot` 导入缓存，不触碰受版本控制文件、不写共享分支）
+- 所有写操作仅落在 `~/.multica/arch-patrol/`（例外：① wrapper 层 `git submodule update --init --recursive` 物化——按 gitlink pinned commit 恢复 `addons/godot_mcp/` 内容，属覆盖性恢复而非改动；② L1 自产 junit——写入被检检出内未版本化的 `tests/reports/`、`.godot/` 导入缓存及 `*.import` 副产物，不触碰受版本控制文件、不写共享分支）
 
 ### 退出码
 
