@@ -17,11 +17,11 @@
 #  - SEE-1388 SPEC-004 物理删除 doc-reminder 死规则（v1 PostToolUse-only 断言已按
 #    "不触发" 语义收紧）；9753dc0 起 atlas-workflow-skill-check 为唯一有意停用规则
 #   （enabled=false → 引擎在 when 求值前 continue，永不触发）。
-#  - 规则集 16 条 = 6 deny（4 agent skill-check + mention-confirm-check +
-#    child-issue-guard；其中 atlas-workflow-skill-check 停用）+ 8 context（4 agent
-#    reminder + recall-reminder + grepai-search-reminder + tscn-tres-guard +
-#    atlas-postcompact-reminder）+ 2 pending 补投（atlas-postcompact-arm /
-#    atlas-postcompact-deliver，op=pending_set/pending_context，SEE-1621 R2），enabled=15。
+#  - 规则集 15 条 = 6 deny（4 agent skill-check + mention-confirm-check +
+#    child-issue-guard；其中 atlas-workflow-skill-check 停用）+ 7 context（4 agent
+#    reminder + recall-reminder + grepai-search-reminder + tscn-tres-guard）
+#    + 2 pending 补投（atlas-postcompact-arm / atlas-postcompact-deliver，
+#    op=pending_set/pending_context，SEE-1621 R2），enabled=14。
 #  - used_skill 拓扑（v1 D5 漂移）：v2 引擎 used_skill 真实执行 `multica issue
 #    run-messages <uuid> --output json`。本套件注入 multica shim：无 MOCK_TRANSCRIPT
 #    时返回 `[]`（transcriptAvailable=true、无技能使用 → not(any used_skill)=true →
@@ -331,13 +331,14 @@ else
     fail "rules-v2.json is INVALID JSON"
 fi
 
-# Verify 16 rules（SEE-1388 SPEC-004：doc-reminder 死规则物理删除；SEE-1621 增补
-# atlas-postcompact-reminder + atlas-postcompact-arm/deliver → v2: 6 deny + 9 context + 2 pending）
+# Verify 15 rules（SEE-1388 SPEC-004：doc-reminder 死规则物理删除；SEE-1621 R2 增补
+# atlas-postcompact-arm/deliver（R2c 移除不可达 atlas-postcompact-reminder）
+# → v2: 6 deny + 7 context + 2 pending）
 RULE_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')).rules.length)")
-if [ "$RULE_COUNT" -eq 16 ]; then
-    pass "Rule count: $RULE_COUNT (expected 16)"
+if [ "$RULE_COUNT" -eq 15 ]; then
+    pass "Rule count: $RULE_COUNT (expected 15)"
 else
-    fail "Rule count: $RULE_COUNT (expected 16)"
+    fail "Rule count: $RULE_COUNT (expected 15)"
 fi
 
 # Verify 6 deny rules (4 agent skill-check + mention-confirm-check + child-issue-guard)
@@ -348,12 +349,12 @@ else
     fail "Deny rules: $BLOCK_COUNT (expected 6)"
 fi
 
-# Verify 8 context rules (4 agent reminders + recall-reminder + grepai + tscn-tres-guard + atlas-postcompact-reminder)
+# Verify 7 context rules (4 agent reminders + recall-reminder + grepai + tscn-tres-guard)
 REMIND_COUNT=$(node -e "const r=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')).rules; console.log(r.filter(x=>x.enabled!==false&&Array.isArray(x.action)&&x.action.some(a=>a&&a.op==='context')).length)")
-if [ "$REMIND_COUNT" -eq 8 ]; then
-    pass "Context rules: $REMIND_COUNT (expected 8)"
+if [ "$REMIND_COUNT" -eq 7 ]; then
+    pass "Context rules: $REMIND_COUNT (expected 7)"
 else
-    fail "Context rules: $REMIND_COUNT (expected 8)"
+    fail "Context rules: $REMIND_COUNT (expected 7)"
 fi
 
 # SEE-1388 SPEC-004（fingerprint b9361f0c8695）：doc-reminder 死规则已物理删除，
