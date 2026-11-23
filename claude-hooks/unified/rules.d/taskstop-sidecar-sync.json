@@ -5,7 +5,7 @@
       "name": "taskstop-sidecar-finished-sync",
       "owner": "Bachi",
       "blocking": false,
-      "version_note": "SEE-1624 §SPEC-018 根修（dev-forge）。PostToolUse + tool=TaskStop 命中后运行同步脚本：仅在明确成功停止且 task id 形态合法时，把 <session>/subagents/<id>.meta.json 的 finished 置 true（原子写、保留其余字段）。失败语义与路径约束全部内置于脚本（fail-open：不阻断工具调用、任何异常 exit 0）。stop-guard-subagents.sh 本身语义不变——它仍只看 meta 文件，本规则负责让 meta 与停止事件一致。",
+      "version_note": "SEE-1624 §SPEC-018 根修（dev-forge）。PostToolUse + tool=TaskStop 命中后运行同步脚本：仅在明确成功停止且 task id 形态合法时，把 <session>/subagents/agent-<key>.meta.json 的 finished 置 true（原子写、保留其余字段；sidecar 真实命名恒为 agent-<hex>.meta.json，CC 的 task id 带/不带 agent- 前缀两种写法统一归一后解析）。失败语义与路径约束全部内置于脚本（fail-open：不阻断工具调用、任何异常 exit 0）。stop-guard-subagents.sh 本身语义不变——它仍只看 meta 文件，本规则负责让 meta 与停止事件一致。",
       "on": {
         "in": [
           "PostToolUse"

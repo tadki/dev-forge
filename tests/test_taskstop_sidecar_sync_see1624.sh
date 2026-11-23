@@ -209,6 +209,61 @@ else
     fail "J3: 引擎 E2E 失败停止语义破坏 rc=$KRC finished=$(finished_of "$FIXTURE/sidK/subagents/agent-k.meta.json")"
 fi
 
+separator "K. 真实 sidecar 命名反例（agent-<task_id>.meta.json，裸 hex id）"
+# 真实 CC 形态：TaskStop 的 task_id 可能是不带前缀的裸 hex，而 sidecar
+# 文件名恒为 agent-<hex>.meta.json（411/411 实测形态）。初版脚本拼
+# "$TASK_ID.meta.json" → 真实事件下找不到目标文件、静默 exit 0，
+# finished:true 从未写入。
+make_tree_real() {  # make_tree_real <sid> <agent-hex>
+    mkdir -p "$FIXTURE/$1/subagents"
+    printf '{}' > "$FIXTURE/$1.jsonl"
+    printf '{"agentType":"general-purpose","description":"real-shape"}' \
+        > "$FIXTURE/$1/subagents/agent-$2.meta.json"
+}
+
+make_tree_real sidL ac08001741afe9ea3
+RC="$(run_sync "$(payload sidL ac08001741afe9ea3 'Successfully stopped task: ac08001741afe9ea3')")"
+if [ "$RC" = "0" ] && [ "$(finished_of "$FIXTURE/sidL/subagents/agent-ac08001741afe9ea3.meta.json")" = "true" ]; then
+    pass "K1: 裸 hex id → 真实命名 agent-<id>.meta.json 被同步"
+else
+    fail "K1: 真实命名未同步 rc=$RC finished=$(finished_of "$FIXTURE/sidL/subagents/agent-ac08001741afe9ea3.meta.json")"
+fi
+if [ -e "$FIXTURE/sidL/subagents/ac08001741afe9ea3.meta.json" ]; then
+    fail "K2: 拼出了非真实命名的 meta 文件"
+else
+    pass "K2: 未创建 <id>.meta.json（只认真实命名）"
+fi
+OTHER="$(ls "$FIXTURE/sidL/subagents/" | grep -v '^agent-ac08001741afe9ea3.meta.json$' || true)"
+[ -z "$OTHER" ] && pass "K3: 其他文件零改动" || fail "K3: 其他文件被改动: $OTHER"
+
+# 带前缀 id → 不得双前缀（agent-agent-<hex>）
+make_tree_real sidM a1098fce0dd6a5a75
+RC="$(run_sync "$(payload sidM agent-a1098fce0dd6a5a75 'Successfully stopped task: agent-a1098fce0dd6a5a75')")"
+if [ "$RC" = "0" ] && [ "$(finished_of "$FIXTURE/sidM/subagents/agent-a1098fce0dd6a5a75.meta.json")" = "true" ]; then
+    pass "K4: 带 agent- 前缀 id → 命中同一真实命名（无双前缀）"
+else
+    fail "K4: 前缀 id 未命中 rc=$RC finished=$(finished_of "$FIXTURE/sidM/subagents/agent-a1098fce0dd6a5a75.meta.json")"
+fi
+[ -e "$FIXTURE/sidM/subagents/agent-agent-a1098fce0dd6a5a75.meta.json" ] \
+    && fail "K5: 产生双前缀文件" || pass "K5: 无双前缀文件"
+
+separator "L. 真实 tool_use_error 字符串形态（实机 not found 载荷）"
+# 实机观测：TaskStop 对已消失任务的 tool_response 是字符串
+# "<tool_use_error>No task found with ID: agent-xxx</tool_use_error>"
+# —— 该形态必须不写任何文件（不是成功停止）。
+make_tree_real sidN a1098fce0dd6a5a75
+ERR_PAYLOAD="$FIXTURE/n-in.json"
+printf '{"hook_event_name":"PostToolUse","tool_name":"TaskStop","session_id":"sidN",' > "$ERR_PAYLOAD"
+printf '"transcript_path":"%s/sidN.jsonl","tool_input":{"task_id":"agent-a1098fce0dd6a5a75"},' "$FIXTURE" >> "$ERR_PAYLOAD"
+printf '"tool_response":"<tool_use_error>No task found with ID: agent-a1098fce0dd6a5a75</tool_use_error>"}}' >> "$ERR_PAYLOAD"
+timeout 10 bash "$SYNC" < "$ERR_PAYLOAD" > "$FIXTURE/n-out.txt" 2> "$FIXTURE/n-err.txt"
+NRC=$?
+if [ "$NRC" = "0" ] && [ "$(finished_of "$FIXTURE/sidN/subagents/agent-a1098fce0dd6a5a75.meta.json")" = "absent" ]; then
+    pass "L1: 真实 not-found 字符串载荷 → 不写 meta 且不阻断"
+else
+    fail "L1: not-found 载荷语义破坏 rc=$NRC finished=$(finished_of "$FIXTURE/sidN/subagents/agent-a1098fce0dd6a5a75.meta.json")"
+fi
+
 echo ""
 echo -e "=== 结果：PASS=$PASS FAIL=$FAIL ==="
 if [ "$FAIL" -ne 0 ]; then
