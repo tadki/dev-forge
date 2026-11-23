@@ -59,7 +59,9 @@ Hooks 在特定的生命周期节点执行。官方事件按触发周期划分�
 
 > `PostCompact`（SEE-1621 起由团队钩子引擎正式承载）在上下文压缩完成后触发；matcher 为 `manual` / `auto`（手动 `/compact` 或自动压缩），载荷额外包含 `trigger`（压缩触发方式）与 `compact_summary`（压缩摘要），**不支持决策控制**（无 deny/allow 语义，仅可做日志等副作用）；官方 additionalContext 可到达事件清单**不包含** `PostCompact`（CC 2.1.329 实测 6/6 触发、0/6 到达）。
 >
-> `PreCompact` 在压缩之前触发，matcher 同为 `manual` / `auto`，载荷含 `trigger` 与 `custom_instructions`。它与 `PostCompact` 的通道差异是压缩恢复提醒的关键：**退出 0 且不阻断时，PreCompact 的纯 stdout 会作为压缩摘要指令**（单 hook 上限 10,000 字符，超限截断并附标记）；可用 exit 2 / `decision:"block"` 阻断压缩，团队链不阻断。团队注册链经 `atlas-precompact-summary`（仅 Atlas 生效）把任务状态恢复提醒写入摘要指令；非 Atlas/无命中时该时点 stdout 必须为空，不得回显 payload（回显的 JSON 会被当作摘要指令污染摘要）。
+> `PreCompact` 在压缩之前触发，matcher 同为 `manual` / `auto`，载荷含 `trigger` 与 `custom_instructions`。**退出 0 且不阻断时，PreCompact 的纯 stdout 会作为压缩摘要指令**（单 hook 上限 10,000 字符，超限截断并附标记）；可用 exit 2 / `decision:"block"` 阻断压缩。**团队链不阻断、也不再用 PreCompact 承载压缩恢复提醒**（Owner 判定“指导摘要生成”不等于压缩后强制提醒）；非 Atlas/无命中时该时点 stdout 必须保持为空，不得回显 payload（回显的 JSON 会被当作摘要指令污染摘要）。
+>
+> 团队压缩恢复提醒走**补投通道**（SEE-1621 R2）：`PostCompact`（仅 Atlas）只记录 session 级待提醒状态（`atlas-postcompact-arm`，动作 `pending_set`）；压缩后的下一次任意 `PreToolUse` 由 `atlas-postcompact-deliver`（动作 `pending_context`）消费该状态，以 `additionalContext` 注入完整提醒并立即清除——同一 compact 只补投一次，连续 compact 各可重臂，session 隔离。`PreToolUse` 的 `additionalContext` 是 CC 已实机证实可到达模型的事件通道。
 
 ### 1.5 不支持 Matcher 的事件
 
