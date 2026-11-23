@@ -28,6 +28,13 @@ overrode the paused-file contract on the wrapper entry point (Revy F-1).
 `--workspace-root <v>` and `--current-hash <v>` capture their values exactly
 like the equals forms — the autopilot command line uses the space form.
 
+SEE-1625: the L1 self-junit path auto-activates every UTC Monday
+(`date -u +%u` = 1) even without `--l1`; on that path a patrol repo without
+`.gutconfig.json` must degrade to the documented best-effort GUT skip, never
+abort the wrapper (sed exit-2 under set -e/pipefail killed every Monday run
+whose repo lacked the file). The regression test forces the L1 path with
+`--l1` so it is day-independent.
+
 The real wrapper is copied into a scratch script_dir (with a scratch
 configs/kol.json) so tests control `repo_name` without touching the repo's
 own config. `python3` on PATH is a stub that only logs its invocation, so no
@@ -336,6 +343,32 @@ def test_python_layer_has_no_materialization_code():
 
 def _stub_args(run_env):
     return _read(run_env["stub"]["log"])
+
+
+def test_l1_self_junit_path_tolerates_missing_gutconfig(run_env, tmp_path):
+    """SEE-1625: with the L1 path forced (--l1, day-independent), a patrol
+    repo without .gutconfig.json must take the documented best-effort GUT
+    skip (explicit stderr note) and still reach the Python sweep — not exit
+    2 from sed failing on the missing file."""
+    ws = tmp_path / "ws"
+    _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        ws,
+        run_env["stub"],
+        run_env["cwd"],
+        env_extra={
+            "DEV_FORGE_PAUSED_FILE": str(tmp_path / "no-such-paused-file"),
+            "GODOT": str(tmp_path / "no-such-godot"),
+        },
+        extra_args=["--l1"],
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "godot binary not found" in proc.stderr
+    stub_calls = run_env["stub"]["log"]
+    assert stub_calls.is_file() and "architecture_sweep.py" in _read(stub_calls)
 
 
 def test_kill_switch_flag_omitted_when_env_unset(run_env, tmp_path):
