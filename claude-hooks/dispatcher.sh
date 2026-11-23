@@ -103,13 +103,6 @@ if [ "$EXIT_CODE" -ne 0 ]; then
   printf '%s' "$INPUT"
   exit "$EXIT_CODE"
 fi
-# SEE-1621 R1：PreCompact 的 stdout 是 CC 的压缩摘要指令通道（纯文本）。
-# 该时点原样直通引擎输出（可为空），绝不回退成 payload 回显——回显的 JSON
-# 会被 CC 当作摘要指令，污染每次压缩的摘要。
-if [ "${HOOK_EVENT_NAME:-}" = "PreCompact" ]; then
-  [ -n "$HOOK_OUTPUT" ] && printf '%s' "$HOOK_OUTPUT"
-  exit 0
-fi
 # On exit 0: if hook produced hookSpecificOutput JSON, pass it through;
 # otherwise pass the original stdin (passthrough)
 if echo "$HOOK_OUTPUT" | grep -q '"hookSpecificOutput"'; then

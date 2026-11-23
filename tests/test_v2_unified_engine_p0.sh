@@ -201,17 +201,7 @@ for ((i=0; i<${#POINTS[@]}; i++)); do
     OTHER="${POINTS[$(( (i+1) % ${#POINTS[@]} ))]}"
     write_rules "{\"version\":2,\"rules\":[{\"name\":\"route-$P\",\"on\":{\"in\":[\"$P\"]},\"when\":{\"op\":\"event\",\"in\":[\"$P\"]},\"action\":[{\"op\":\"context\",\"message\":\"[route-$P hit]\"}]}]}"
     run_entry "{\"hook_event_name\":\"$P\",\"session_id\":\"s\"}"
-    if [ "$P" = "PreCompact" ]; then
-        # SEE-1621 R1：PreCompact 的 context 走纯 stdout 摘要指令通道（CC 官方契约
-        # 只消费 PreCompact 纯 stdout；additionalContext JSON 不被消费）
-        if echo "$HOOK_STDOUT" | grep -q "route-$P hit" && ! echo "$HOOK_STDOUT" | grep -q '"hookSpecificOutput"'; then
-            pass "2a[$P]: fires as plain stdout summary instruction"
-        else
-            fail "2a[$P]: plain stdout missing. got: '${HOOK_STDOUT:0:160}'"
-        fi
-    else
-        assert_context "2a[$P]: fires on $P" "route-$P hit"
-    fi
+    assert_context "2a[$P]: fires on $P" "route-$P hit"
     assert_exit_0 "2a[$P]: exit 0"
     run_entry "{\"hook_event_name\":\"$OTHER\",\"session_id\":\"s\"}"
     if echo "$HOOK_STDOUT" | grep -q "route-$P hit"; then
@@ -228,14 +218,10 @@ assert_context "2c: on.except fires on UPS" "not-stop"
 run_entry '{"hook_event_name":"Stop"}'
 if echo "$HOOK_STDOUT" | grep -q "not-stop"; then fail "2d: on.except Stop leaked"; else pass "2d: on.except blocks Stop"; fi
 
-# on 缺省 = 全时点（PreCompact 的 context 以纯 stdout 摘要指令通道输出，见 SEE-1621 R1）
+# on 缺省 = 全时点
 write_rules '{"version":2,"rules":[{"name":"anywhere","action":[{"op":"context","message":"[anywhere]"}]}]}'
 run_entry '{"hook_event_name":"PreCompact"}'
-if echo "$HOOK_STDOUT" | grep -q "\[anywhere\]" && ! echo "$HOOK_STDOUT" | grep -q '"hookSpecificOutput"'; then
-    pass "2e: on absent = all points (PreCompact → plain stdout summary instruction)"
-else
-    fail "2e: PreCompact plain stdout missing. got: '${HOOK_STDOUT:0:160}'"
-fi
+assert_context "2e: on absent = all points (PreCompact)" "anywhere"
 
 #####################################################################
 # 3. when op 求值

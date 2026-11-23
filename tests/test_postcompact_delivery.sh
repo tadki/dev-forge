@@ -122,10 +122,6 @@ assert_firelog_has() {
     local label="$1" pattern="$2"
     if grep -q "$pattern" "$FIRELOG" 2>/dev/null; then pass "$label — firelog 命中"; else fail "$label — firelog 未命中 '$pattern'"; fi
 }
-assert_empty_stdout() {
-    local label="$1"
-    if [ -z "$HOOK_STDOUT" ]; then pass "$label — stdout 为空"; else fail "$label — stdout 非空. got: '${HOOK_STDOUT:0:160}'"; fi
-}
 
 BASH_TOOL='{"command":"ls -la"}'
 
@@ -229,13 +225,17 @@ assert_no_delivery "8c: no delivery without horizon window"
 #####################################################################
 separator "9. Existing contracts unchanged"
 run_chain "Atlas" "$(postcompact_payload sess-L1)" "$REPO_A" PostCompact "ISSUE-L"
-if echo "$HOOK_STDOUT" | grep -q '"additionalContext"'; then
-    pass "9a: PostCompact keeps JSON additionalContext contract (legacy rule, first fire of ISSUE-L)"
+if [ "$HOOK_STDOUT" = "$HOOK_STDIN" ]; then
+    pass "9a: PostCompact passthrough（不可达旧规则已按 §SPEC-014 移除；arm 记账无输出）"
 else
-    fail "9a: PostCompact JSON contract broken. got: '${HOOK_STDOUT:0:160}'"
+    fail "9a: PostCompact 输出异常. got: '${HOOK_STDOUT:0:160}'"
 fi
 run_chain "Atlas" '{"hook_event_name":"PreCompact","trigger":"auto","session_id":"sess-P1"}' "$REPO_A" PreCompact "ISSUE-L"
-assert_empty_stdout "9b: PreCompact stdout stays empty (no payload-as-summary pollution)"
+if [ "$HOOK_STDOUT" = "$HOOK_STDIN" ]; then
+    pass "9b: PreCompact passthrough（§SPEC-014 移除试验残留后恢复基线透传契约）"
+else
+    fail "9b: PreCompact 输出异常. got: '${HOOK_STDOUT:0:160}'"
+fi
 
 #####################################################################
 separator "Summary"

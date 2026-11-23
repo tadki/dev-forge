@@ -536,13 +536,6 @@ function main() {
     }));
     return;
   }
-  // SEE-1621 R1：CC 官方契约只把 PreCompact 的纯 stdout 作为压缩摘要指令
-  // （hookSpecificOutput.additionalContext 在该时点不被消费，QA 实测到达 0/6）。
-  // 无 context 时保持空 stdout —— 入口层据此不回显 payload，避免污染摘要。
-  if (hookEvent === 'PreCompact') {
-    if (contextMessages.length) process.stdout.write(contextMessages.join('\n'));
-    return;
-  }
   if (contextMessages.length) {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {

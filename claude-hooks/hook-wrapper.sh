@@ -21,8 +21,4 @@ maybe_rotate_hook_fire_log "$LOG_FILE" 2>/dev/null || true
 # firelog（payload 解析后）承载。
 echo "[$TIMESTAMP] [$HOOK_TYPE] alias=$ALIAS" >> "$LOG_FILE" 2>/dev/null || true
 
-# SEE-1621 R1：事件名透传 —— dispatcher 需要区分 PreCompact（stdout=压缩摘要指令
-# 通道，空输出也必须保持空）与常规事件（无命中时透传原 stdin）。
-export HOOK_EVENT_NAME="$HOOK_TYPE"
-
 exec "$(cd "$(dirname "$0")" && pwd)/dispatcher.sh" "$ALIAS"
