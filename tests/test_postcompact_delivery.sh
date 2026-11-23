@@ -1,20 +1,21 @@
 #!/bin/bash
-# SEE-1621 R2b: PostCompact→PreToolUse 补投路线行为测试（§SPEC-012 引擎行为面，
-# 一次性 agent+issue horizon，与 atlas-bash-skill-reminder 同型）。
+# SEE-1621 R3: PostCompact→PreToolUse 补投路线行为测试（§SPEC-012 引擎行为面，
+# 每次 compact 补投 horizon / 方案一，Owner 2026-11-23 终裁）。
 # 背景：CC 2.1.329 不消费 PostCompact 的 additionalContext（到达 0/6）、PreCompact
-# stdout 仅指导摘要生成。Owner 改定补投路线并明确 reminder 为一次性：
-# `one_shot.ids=[MULTICA_AGENT_NAME, HOOK_ISSUE_ID]`（同型 horizon）——
-# 同一 agent 在同一 issue 首次补投后不再提醒，后续 compact 不重复；不同 issue 独立；
-# 首次消费后无残留 pending 误触发；horizon 窗口 env 缺失时 fail-open 跳过（不提醒）。
+# stdout 仅指导摘要生成。Owner 改定补投路线并终裁多次 compact 语义：
+# arm 不配置 one_shot，每次 PostCompact 都以覆盖模式写同一 key+session pending；
+# deliver 保持无 one_shot、存在才消费、消费即删。窗口语义 =
+#   compact → 覆盖写 pending → 下一个 PreToolUse 消费并输出 1 次
+#   → 再下一个 PreToolUse 无 pending 不输出 → 下一次 compact 重新可提醒；
+# 两次 compact 间无任何工具调用时只保留一个标记，下一次工具调用提醒一次。
 # 本套件驱动**真实生产链**（hook-wrapper.sh → dispatcher.sh → unified-hook.sh →
-# engine.js + 真实生产规则，不注入 UNIFIED_RULES_FILE），按 issue 维度注入
-# HOOK_ISSUE_ID 驱动 horizon，证明：
+# engine.js + 真实生产规则，不注入 UNIFIED_RULES_FILE），证明：
 #   - 首次 compact 记账 → 下一次 PreToolUse 补投一次并消费；
-#   - 同 agent+issue 第二次 compact 不再重臂/不再提醒（arm 哨兵在位）；
-#   - 不同 issue 独立提醒；无 compact 不触发；非 Atlas 隔离；session 隔离；
-#   - 跨 repo 生效；任意工具触发；horizon env 缺失 fail-open；
+#   - 每次 compact 重臂：同 session 再次 compact 后下一次 PreToolUse 再次提醒；
+#   - 连续 compact 无工具调用只留单标记，下一次工具调用只提醒一次；
+#   - 无 compact 不触发；非 Atlas 隔离；session 隔离；跨 repo 生效；任意工具触发；
 #   - 无 session_id 拒写/拒消费（fail-open 拒绝 + 审计，§SPEC-013 补强）；
-#   - 全程非阻断/无 deny；PostCompact 既有 JSON 契约不回退；PreCompact 不回显 payload。
+#   - 全程非阻断/无 deny；PostCompact/PreCompact 基线透传契约不回退。
 # Run: bash tests/test_postcompact_delivery.sh
 set -uo pipefail
 
@@ -43,8 +44,8 @@ REPO_A="$FIXTURE/repo-alpha"; mkdir -p "$REPO_A/.claude"
 REPO_B="$FIXTURE/repo-beta"; mkdir -p "$REPO_B/.claude"
 
 # 真实生产链（wrapper → dispatcher → unified-hook → engine），真实生产规则。
-# 清空宿主 Multica/HOOK 身份变量防止外层 run 泄漏；按场景显式注入 HOOK_ISSUE_ID
-# 驱动一次性 horizon（入口层：显式 HOOK_ISSUE_ID 优先于 MULTICA_ISSUE_ID）。
+# 清空宿主 Multica/HOOK 身份变量防止外层 run 泄漏。pending 窗口 = key+session，
+# 与 issue 维度无关（R3 起 arm 无 one_shot）；HOOK_ISSUE_ID 参数仅为既有调用形态保留。
 run_chain() {
     local AGENT="$1" PAYLOAD="$2" REPO_DIR="$3" EVENT="$4" ISSUE="$5"
     printf '%s' "$PAYLOAD" > "$FIXTURE/stdin.json"
@@ -106,12 +107,11 @@ assert_marker() {
     elif [ "$expect" = "absent" ] && [ ! -f "$f" ]; then pass "$label — pending 标记不存在"
     else fail "$label — pending 标记状态不符（expect=$expect file=$f）"; fi
 }
-assert_arm_sentinel() {
-    local label="$1" issue="$2" expect="$3"
-    local f="$STATE/.hook-fired-atlas-postcompact-arm-Atlas-$issue"
-    if [ "$expect" = "present" ] && [ -f "$f" ]; then pass "$label — arm one_shot 哨兵在位"
-    elif [ "$expect" = "absent" ] && [ ! -f "$f" ]; then pass "$label — arm 哨兵不存在"
-    else fail "$label — arm 哨兵状态不符（expect=$expect file=$f）"; fi
+assert_marker_total() {
+    local label="$1" expect="$2"
+    local n
+    n=$(ls "$STATE"/pending-atlas-postcompact-reminder-* 2>/dev/null | wc -l)
+    if [ "$n" -eq "$expect" ]; then pass "$label — pending 标记总数=$n"; else fail "$label — pending 标记总数=$n 预期=$expect"; fi
 }
 assert_pendingset_count() {
     local label="$1" expect="$2"
@@ -127,20 +127,20 @@ assert_firelog_has() {
 BASH_TOOL='{"command":"ls -la"}'
 
 echo "============================================================"
-echo "  SEE-1621 R2b: PostCompact→PreToolUse delivery (one-shot horizon)"
+echo "  SEE-1621 R3: PostCompact→PreToolUse delivery (per-compact horizon)"
 echo "  Date: $(date -Iseconds)"
 echo "============================================================"
 
 separator "Prerequisites"
 [ -f "$WRAPPER" ] && pass "hook-wrapper.sh exists" || { fail "hook-wrapper.sh MISSING"; exit 1; }
-node -e "const c=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')); const a=c.rules.find(x=>x.name==='atlas-postcompact-arm'); const d=c.rules.find(x=>x.name==='atlas-postcompact-deliver'); const ok=a&&d&&JSON.stringify(a.one_shot)===JSON.stringify({ids:['MULTICA_AGENT_NAME','HOOK_ISSUE_ID']}); process.exit(ok?0:1)" 2>/dev/null \
-    && pass "arm carries one_shot.ids=[MULTICA_AGENT_NAME,HOOK_ISSUE_ID] (atlas-bash-skill-reminder 同型)" \
-    || fail "arm 缺少同型 one_shot horizon 配置"
+node -e "const c=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')); const a=c.rules.find(x=>x.name==='atlas-postcompact-arm'); const d=c.rules.find(x=>x.name==='atlas-postcompact-deliver'); const ok=a&&d&&!a.one_shot; process.exit(ok?0:1)" 2>/dev/null \
+    && pass "arm has NO one_shot（每次 compact 均重臂，方案一）" \
+    || fail "arm 不应配置 one_shot（Owner 已否定 agent+issue 全局一次性语义）"
 
 #####################################################################
-# 1. 核心：首次 compact → 补投一次并消费（同 agent+issue 唯一一次）
+# 1. 核心：首次 compact → 补投一次并消费
 #####################################################################
-separator "1. First compact arms → next PreToolUse delivers once (ISSUE-A)"
+separator "1. First compact arms → next PreToolUse delivers once (sess-A1)"
 run_chain "Atlas" "$(postcompact_payload sess-A1)" "$REPO_A" PostCompact "ISSUE-A"
 assert_exit_0 "1a: PostCompact exit 0"
 assert_marker "1b: arm writes session marker" "sess-A1" present
@@ -154,25 +154,31 @@ run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreTo
 assert_no_delivery "1h: second PreToolUse injects nothing"
 
 #####################################################################
-# 2. 同 agent+issue 第二次 compact 不再提醒（一次性 horizon）
+# 2. 每次 compact 重臂：同 session 再次 compact → 下一次 PreToolUse 再次提醒
 #####################################################################
-separator "2. Second compact in same agent+issue does NOT re-remind"
-run_chain "Atlas" "$(postcompact_payload sess-A2)" "$REPO_A" PostCompact "ISSUE-A"
+separator "2. Every compact re-arms (per-compact horizon)"
+run_chain "Atlas" "$(postcompact_payload sess-A1)" "$REPO_A" PostCompact "ISSUE-A"
 assert_exit_0 "2a: second PostCompact exit 0"
-assert_marker "2b: no new pending (arm horizon exhausted)" "sess-A2" absent
-assert_arm_sentinel "2c: arm one_shot sentinel in place" "ISSUE-A" present
-assert_pendingset_count "2d: still exactly one pending-set for ISSUE-A" 1
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A2)" "$REPO_A" PreToolUse "ISSUE-A"
-assert_no_delivery "2e: no reminder after horizon-exhausted compact"
+assert_marker "2b: re-armed after second compact (覆盖式写同 key+session 标记)" "sess-A1" present
+assert_pendingset_count "2c: pending-set fires again (count=2)" 2
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse "ISSUE-A"
+assert_reminder "2d: next PreToolUse delivers again (每次 compact 均提醒)"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse "ISSUE-A"
+assert_no_delivery "2e: same window second tool call does not repeat"
 
 #####################################################################
-# 3. 不同 issue 独立提醒
+# 3. 连续 compact 无工具调用 → 单标记，下一次工具只提醒一次
 #####################################################################
-separator "3. Different issue delivers independently"
-run_chain "Atlas" "$(postcompact_payload sess-B1)" "$REPO_A" PostCompact "ISSUE-B"
-assert_marker "3a: ISSUE-B arm writes its own marker" "sess-B1" present
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-B1)" "$REPO_A" PreToolUse "ISSUE-B"
-assert_reminder "3b: ISSUE-B delivers independently"
+separator "3. Two compacts with no tool call keep a single marker"
+run_chain "Atlas" "$(postcompact_payload sess-A1)" "$REPO_A" PostCompact "ISSUE-A"
+run_chain "Atlas" "$(postcompact_payload sess-A1)" "$REPO_A" PostCompact "ISSUE-A"
+assert_exit_0 "3a: consecutive PostCompacts exit 0"
+assert_marker_total "3b: overwrite keeps a single marker" 1
+assert_pendingset_count "3c: pending-set count=4 (每次 compact 均记账)" 4
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse "ISSUE-A"
+assert_reminder "3d: next tool call delivers exactly once"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse "ISSUE-A"
+assert_no_delivery "3e: no repeat after consumption"
 
 #####################################################################
 # 4. 未 compact 不触发
@@ -212,14 +218,17 @@ run_chain "Atlas" "$(pretool_payload Read '{"file_path":"/x/a.md"}' sess-F1)" "$
 assert_reminder "7a: delivery in another repo + Read tool"
 
 #####################################################################
-# 8. horizon 窗口 env 缺失 → fail-open 不提醒（与其他 reminder 同语义）
+# 8. 无 session_id 拒写/拒消费（fail-open 拒绝 + 审计；§SPEC-013 补强）
+# 植入无 session 标记作为陷阱：session 缺失的调用不得消费它（防跨会话串扰契约）。
 #####################################################################
-separator "8. Missing horizon env fails open (no reminder)"
-run_chain "Atlas" "$(postcompact_payload sess-N1)" "$REPO_A" PostCompact ""
-assert_marker "8a: no marker when HOOK_ISSUE_ID missing" "sess-N1" absent
-assert_firelog_has "8b: fail-open WARN audited" "one-shot window env missing"
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-N1)" "$REPO_A" PreToolUse ""
-assert_no_delivery "8c: no delivery without horizon window"
+separator "8. Missing session_id refuses pending write/consume"
+run_chain "Atlas" "$(postcompact_payload "")" "$REPO_A" PostCompact "ISSUE-G"
+assert_marker "8a: no marker without session_id" "" absent
+assert_firelog_has "8b: pending-set-skip WARN audited" "pending-set-skip rule=atlas-postcompact-arm reason=no-session-id"
+: > "$STATE/pending-atlas-postcompact-reminder-"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" "")" "$REPO_A" PreToolUse "ISSUE-G"
+assert_no_delivery "8c: no-session PreToolUse must not consume planted marker"
+assert_firelog_has "8d: pending-consume-skip WARN audited" "pending-consume-skip rule=atlas-postcompact-deliver reason=no-session-id"
 
 #####################################################################
 # 9. 既有契约不回退
@@ -237,19 +246,6 @@ if [ "$HOOK_STDOUT" = "$HOOK_STDIN" ]; then
 else
     fail "9b: PreCompact 输出异常. got: '${HOOK_STDOUT:0:160}'"
 fi
-
-#####################################################################
-# 10. 无 session_id 拒写/拒消费（fail-open 拒绝 + 审计；§SPEC-013 补强）
-# 植入无 session 标记作为陷阱：session 缺失的调用不得消费它（防跨会话串扰契约）。
-#####################################################################
-separator "10. Missing session_id refuses pending write/consume"
-run_chain "Atlas" "$(postcompact_payload "")" "$REPO_A" PostCompact "ISSUE-G"
-assert_marker "10a: no marker without session_id" "" absent
-assert_firelog_has "10b: pending-set-skip WARN audited" "pending-set-skip rule=atlas-postcompact-arm reason=no-session-id"
-: > "$STATE/pending-atlas-postcompact-reminder-"
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" "")" "$REPO_A" PreToolUse "ISSUE-G"
-assert_no_delivery "10c: no-session PreToolUse must not consume planted marker"
-assert_firelog_has "10d: pending-consume-skip WARN audited" "pending-consume-skip rule=atlas-postcompact-deliver reason=no-session-id"
 
 #####################################################################
 separator "Summary"

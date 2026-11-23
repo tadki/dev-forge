@@ -463,12 +463,6 @@
           "Atlas"
         ]
       },
-      "one_shot": {
-        "ids": [
-          "MULTICA_AGENT_NAME",
-          "HOOK_ISSUE_ID"
-        ]
-      },
       "enabled": true,
       "action": [
         {
