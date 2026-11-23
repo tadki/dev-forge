@@ -13,6 +13,7 @@
 #   - 同 agent+issue 第二次 compact 不再重臂/不再提醒（arm 哨兵在位）；
 #   - 不同 issue 独立提醒；无 compact 不触发；非 Atlas 隔离；session 隔离；
 #   - 跨 repo 生效；任意工具触发；horizon env 缺失 fail-open；
+#   - 无 session_id 拒写/拒消费（fail-open 拒绝 + 审计，§SPEC-013 补强）；
 #   - 全程非阻断/无 deny；PostCompact 既有 JSON 契约不回退；PreCompact 不回显 payload。
 # Run: bash tests/test_postcompact_delivery.sh
 set -uo pipefail
@@ -236,6 +237,19 @@ if [ "$HOOK_STDOUT" = "$HOOK_STDIN" ]; then
 else
     fail "9b: PreCompact 输出异常. got: '${HOOK_STDOUT:0:160}'"
 fi
+
+#####################################################################
+# 10. 无 session_id 拒写/拒消费（fail-open 拒绝 + 审计；§SPEC-013 补强）
+# 植入无 session 标记作为陷阱：session 缺失的调用不得消费它（防跨会话串扰契约）。
+#####################################################################
+separator "10. Missing session_id refuses pending write/consume"
+run_chain "Atlas" "$(postcompact_payload "")" "$REPO_A" PostCompact "ISSUE-G"
+assert_marker "10a: no marker without session_id" "" absent
+assert_firelog_has "10b: pending-set-skip WARN audited" "pending-set-skip rule=atlas-postcompact-arm reason=no-session-id"
+: > "$STATE/pending-atlas-postcompact-reminder-"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" "")" "$REPO_A" PreToolUse "ISSUE-G"
+assert_no_delivery "10c: no-session PreToolUse must not consume planted marker"
+assert_firelog_has "10d: pending-consume-skip WARN audited" "pending-consume-skip rule=atlas-postcompact-deliver reason=no-session-id"
 
 #####################################################################
 separator "Summary"
