@@ -95,6 +95,8 @@ fi
 
 if [ -n "$OUT" ]; then
   printf '%s' "$OUT"
+elif [ "${HOOK_EVENT_NAME:-}" = "PreCompact" ]; then
+  : # SEE-1621 R1：PreCompact stdout = 压缩摘要指令通道；无命中保持空，禁止回显 payload
 else
   printf '%s' "$INPUT"
 fi

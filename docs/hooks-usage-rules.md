@@ -57,7 +57,9 @@ Hooks 在特定的生命周期节点执行。官方事件按触发周期划分�
 | `Elicitation` | MCP 服务器请求用户输入时 | MCP 服务器名称 |
 | `ElicitationResult` | 用户响应 MCP elicitation 之后 | MCP 服务器名称 |
 
-> `PostCompact`（SEE-1621 起由团队钩子引擎正式承载）在上下文压缩完成后触发；matcher 为 `manual` / `auto`（手动 `/compact` 或自动压缩），载荷额外包含 `trigger`（压缩触发方式）与 `compact_summary`（压缩摘要），**不支持决策控制**（无 deny/allow 语义，仅可做 context 注入等非阻断动作）。团队注册链在压缩完成后注入任务状态恢复提醒（`atlas-postcompact-reminder`，仅 Atlas 生效）。
+> `PostCompact`（SEE-1621 起由团队钩子引擎正式承载）在上下文压缩完成后触发；matcher 为 `manual` / `auto`（手动 `/compact` 或自动压缩），载荷额外包含 `trigger`（压缩触发方式）与 `compact_summary`（压缩摘要），**不支持决策控制**（无 deny/allow 语义，仅可做日志等副作用）；官方 additionalContext 可到达事件清单**不包含** `PostCompact`（CC 2.1.329 实测 6/6 触发、0/6 到达）。
+>
+> `PreCompact` 在压缩之前触发，matcher 同为 `manual` / `auto`，载荷含 `trigger` 与 `custom_instructions`。它与 `PostCompact` 的通道差异是压缩恢复提醒的关键：**退出 0 且不阻断时，PreCompact 的纯 stdout 会作为压缩摘要指令**（单 hook 上限 10,000 字符，超限截断并附标记）；可用 exit 2 / `decision:"block"` 阻断压缩，团队链不阻断。团队注册链经 `atlas-precompact-summary`（仅 Atlas 生效）把任务状态恢复提醒写入摘要指令；非 Atlas/无命中时该时点 stdout 必须为空，不得回显 payload（回显的 JSON 会被当作摘要指令污染摘要）。
 
 ### 1.5 不支持 Matcher 的事件
 
