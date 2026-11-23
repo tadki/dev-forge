@@ -1,0 +1,30 @@
+{
+  "description": "SEE-1624 §SPEC-018：TaskStop 成功后同步 sub-agent sidecar meta（finished:true）。根因（Atlas 2026-11-23）：CC TaskStop 成功停止后任务注册表已无活动 agent，但 sidecar meta 未回写 finished —— stop-guard-subagents.sh 只看 meta 文件，缺字段按 false 计，于是每次 Stop 误报「仍有未结束 sub-agent」并 exit 2（假阳性；宿主随后关闭控制通道）。本规则在 PostToolUse:TaskStop 成功停止后，仅把被停止 agent 的 meta 标为 finished:true，使停止事件与 meta 生命周期一致。纪律：TaskStop 失败 / task not found / 非法或穿越 task id 一律不写任何文件（不扩大可写面）；无 sidecar 的后台任务不生成文件；已是 finished:true 幂等不重写；仍存活且缺 finished 的 agent 继续由 stop-guard 按原防线 exit 2（不把所有缺字段一律放行）。",
+  "rules": [
+    {
+      "name": "taskstop-sidecar-finished-sync",
+      "owner": "Bachi",
+      "blocking": false,
+      "version_note": "SEE-1624 §SPEC-018 根修（dev-forge）。PostToolUse + tool=TaskStop 命中后运行同步脚本：仅在明确成功停止且 task id 形态合法时，把 <session>/subagents/<id>.meta.json 的 finished 置 true（原子写、保留其余字段）。失败语义与路径约束全部内置于脚本（fail-open：不阻断工具调用、任何异常 exit 0）。stop-guard-subagents.sh 本身语义不变——它仍只看 meta 文件，本规则负责让 meta 与停止事件一致。",
+      "on": {
+        "in": [
+          "PostToolUse"
+        ]
+      },
+      "enabled": true,
+      "when": {
+        "op": "tool",
+        "in": [
+          "TaskStop"
+        ]
+      },
+      "action": [
+        {
+          "op": "run_script",
+          "path": "${HOOKS_DIR}/scripts/taskstop-sidecar-sync.sh",
+          "timeout_ms": 5000
+        }
+      ]
+    }
+  ]
+}

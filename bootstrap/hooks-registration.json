@@ -44,7 +44,9 @@
     "unified/rules.d/runscript-mounts.json",
     "unified/rules.d/stop-guard-subagents.json",
     "unified/unified-hook.sh",
-    "unified/when-ops.js"
+    "unified/when-ops.js",
+    "scripts/taskstop-sidecar-sync.sh",
+    "unified/rules.d/taskstop-sidecar-sync.json"
   ],
   "executable_artifacts": [
     "unified/unified-hook.sh"
