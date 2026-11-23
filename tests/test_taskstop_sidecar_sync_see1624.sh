@@ -35,6 +35,46 @@ FIXTURE="$(mktemp -d /tmp/taskstop-sync-see1624.XXXXXX)"
 
 trap 'rm -rf "$FIXTURE"' EXIT
 
+# 精确锁定同步脚本 PID 的运行器：wrapper 打印自身 $$ 后 exec 脚本（exec 保留
+# PID），测试据此预置同名临时路径 → 攻击确定性命中（不靠猜 PID 区间）。
+run_sync_pinned() {  # run_sync_pinned <payload> <tmpbase> <sentinel>
+    local pl="$1" tb="$2" sen="$3"
+    local pidfile="$FIXTURE/pinned.pid"
+    rm -f "$pidfile"
+    printf '%s' "$pl" > "$FIXTURE/pinned-in.json"
+    bash -c 'echo $$ > "$1"; sleep 0.3; exec bash "$2" < "$3" > /dev/null 2>&1' \
+        _ "$pidfile" "$SYNC" "$FIXTURE/pinned-in.json" &
+    local wrapper=$!
+    local i spid=""
+    for i in $(seq 1 40); do
+        [ -s "$pidfile" ] && { spid="$(cat "$pidfile")"; break; }
+        sleep 0.1
+    done
+    if [ -n "$spid" ]; then
+        ln -s "$sen" "$tb.$spid" 2>/dev/null || true
+    fi
+    wait $wrapper
+}
+
+run_sync_pinned_hardlink() {  # run_sync_pinned_hardlink <payload> <tmpbase> <sentinel>
+    local pl="$1" tb="$2" sen="$3"
+    local pidfile="$FIXTURE/pinned-hard.pid"
+    rm -f "$pidfile"
+    printf '%s' "$pl" > "$FIXTURE/pinned-hard-in.json"
+    bash -c 'echo $$ > "$1"; sleep 0.3; exec bash "$2" < "$3" > /dev/null 2>&1' \
+        _ "$pidfile" "$SYNC" "$FIXTURE/pinned-hard-in.json" &
+    local wrapper=$!
+    local i spid=""
+    for i in $(seq 1 40); do
+        [ -s "$pidfile" ] && { spid="$(cat "$pidfile")"; break; }
+        sleep 0.1
+    done
+    if [ -n "$spid" ]; then
+        ln "$sen" "$tb.$spid" 2>/dev/null || true
+    fi
+    wait $wrapper
+}
+
 # --- fixture：<sid>.jsonl 转录占位 + <sid>/subagents/<id>.meta.json ----------
 make_tree() {  # make_tree <sid> <agent-id> [finished]
     mkdir -p "$FIXTURE/$1/subagents"
@@ -144,16 +184,16 @@ timeout 10 bash "$GUARD" < "$GUARD_PAYLOAD" > "$FIXTURE/h.out" 2> "$FIXTURE/h.er
 HRC=$?
 [ "$HRC" = "0" ] && pass "H1: 已停止 agent 不再误报（exit 0）" || fail "H1: guard exit=$HRC"
 
-separator "I. 规则注册存在且被引擎校验接受"
-[ -f "$RULE" ] && pass "I1: rules.d 规则文件存在" || fail "I1: 缺 rules.d/taskstop-sidecar-sync.json"
-if [ -f "$RULE" ]; then
-    node "$REPO_ROOT/claude-hooks/validate-rules.js" "$RULE" > "$FIXTURE/v.out" 2>&1
-    VRC=$?
-    [ "$VRC" = "0" ] && pass "I2: 规则通过 validate-rules.js" \
-        || fail "I2: 规则校验失败 rc=$VRC: $(head -3 "$FIXTURE/v.out" | tr '\n' ' ')"
-fi
-grep -q "taskstop-sidecar-sync" "$REPO_ROOT/bootstrap/hooks-registration.json" \
-    && pass "I3: bootstrap 注册清单含新脚本/规则" || fail "I3: bootstrap 未登记"
+separator "I. 规则被引擎校验接受（注册/部署一致性由既有行为门覆盖）"
+# 注册与部署一致性属**结构面**，由既有行为门承担：
+#   tests/test_hooks_5_1_registration.sh（规则名 ⊆ §5.1 现役清单 + 治理校验）
+#   tests/test_hook_registration_see270.sh（部署清单完整性）
+#   两者均由 tests/run_all.sh 聚合执行；本套件另以 J 段引擎 E2E 证明规则
+#   **实际会触发**（行为面），不再重复断言产品文件存在/注册清单文本。
+node "$REPO_ROOT/claude-hooks/validate-rules.js" "$RULE" > "$FIXTURE/v.out" 2>&1
+VRC=$?
+[ "$VRC" = "0" ] && pass "I1: 规则通过 validate-rules.js（校验器判定）" \
+    || fail "I1: 规则校验失败 rc=$VRC: $(head -3 "$FIXTURE/v.out" | tr '\n' ' ')"
 
 
 separator "J. 引擎端到端（真实规则文件派生 overlay → unified-hook 触发同步）"
@@ -263,6 +303,82 @@ if [ "$NRC" = "0" ] && [ "$(finished_of "$FIXTURE/sidN/subagents/agent-a1098fce0
 else
     fail "L1: not-found 载荷语义破坏 rc=$NRC finished=$(finished_of "$FIXTURE/sidN/subagents/agent-a1098fce0dd6a5a75.meta.json")"
 fi
+
+separator "M. 文件系统边界反例（Final Review HIGH-1/HIGH-2）"
+# M1: subagents/ 目录自身是 symlink → 指向外部目录；成功停止不得写外部
+EXT="$FIXTURE/outside-subagents"; mkdir -p "$EXT"
+printf '{"agentType":"general-purpose","description":"outside"}' \
+    > "$EXT/agent-abc123.meta.json"
+printf 'DO-NOT-OVERWRITE' > "$FIXTURE/outside-sentinel.txt"
+mkdir -p "$FIXTURE/sidP"; printf '{}' > "$FIXTURE/sidP.jsonl"
+ln -s "$EXT" "$FIXTURE/sidP/subagents"
+run_sync "$(payload sidP abc123 'Successfully stopped task: abc123')" > /dev/null
+if [ "$(finished_of "$EXT/agent-abc123.meta.json")" = "absent" ] \
+   && [ "$(cat "$FIXTURE/outside-sentinel.txt")" = "DO-NOT-OVERWRITE" ]; then
+    pass "M1: subagents 目录 symlink 逃逸 → 外部零写入"
+else
+    fail "M1: 目录逃逸仍写入外部 finished=$(finished_of "$EXT/agent-abc123.meta.json") sentinel=$(cat "$FIXTURE/outside-sentinel.txt")"
+fi
+
+# M2: 预置可预测临时路径 symlink（同名族 PID 区间）→ 外部文件不得被覆盖
+make_tree sidQ agent-abc123
+SENTINEL="$FIXTURE/sentinel-q.txt"; printf 'DO-NOT-OVERWRITE' > "$SENTINEL"
+TMPLINK_BASE="$FIXTURE/sidQ/subagents/agent-abc123.meta.json.gqt-tmp"
+run_sync_pinned "$(payload sidQ agent-abc123 'Successfully stopped task: agent-abc123')" \
+    "$TMPLINK_BASE" "$SENTINEL"
+if [ "$(cat "$SENTINEL")" = "DO-NOT-OVERWRITE" ]; then
+    pass "M2: 预置临时 symlink → 外部文件零改动"
+else
+    fail "M2: 外部文件被覆盖: $(cat "$SENTINEL")"
+fi
+if [ -L "$FIXTURE/sidQ/subagents/agent-abc123.meta.json" ]; then
+    fail "M3: 目标 meta 变成 symlink（指向外部文件）"
+else
+    pass "M3: 目标 meta 仍为普通文件"
+fi
+if [ "$(finished_of "$FIXTURE/sidQ/subagents/agent-abc123.meta.json")" = "true" ]; then
+    pass "M4: 真实布局同步仍写入 finished=true"
+else
+    fail "M4: 同步未生效 finished=$(finished_of "$FIXTURE/sidQ/subagents/agent-abc123.meta.json")"
+fi
+
+# M5: 预置硬链接临时路径 → 外部文件内容不得被就地改写
+make_tree sidR agent-def456
+SENTINEL2="$FIXTURE/sentinel-r.txt"; printf 'DO-NOT-OVERWRITE' > "$SENTINEL2"
+TMPLINK_BASE2="$FIXTURE/sidR/subagents/agent-def456.meta.json.gqt-tmp"
+run_sync_pinned_hardlink "$(payload sidR agent-def456 'Successfully stopped task: agent-def456')" \
+    "$TMPLINK_BASE2" "$SENTINEL2"
+if [ "$(cat "$SENTINEL2")" = "DO-NOT-OVERWRITE" ]; then
+    pass "M5: 预置硬链接 → 外部文件零改动"
+else
+    fail "M5: 外部文件被就地改写: $(cat "$SENTINEL2")"
+fi
+
+separator "N. 成功判定反例（否定/含糊/is_error 字符串）"
+# 文案 id 与请求 id 一致（Leader 实测载荷），只靠否定语义拒绝
+make_tree sidS agent-ghi789
+run_sync "$(payload sidS ghi789 'Not successfully stopped task: ghi789')" > /dev/null
+[ "$(finished_of "$FIXTURE/sidS/subagents/agent-ghi789.meta.json")" = "absent" ] \
+    && pass "N1: 否定文案（id 一致）→ 不写" \
+    || fail "N1: 否定文案被当成成功 finished=$(finished_of "$FIXTURE/sidS/subagents/agent-ghi789.meta.json")"
+
+make_tree sidT agent-vague22
+run_sync "$(payload sidT agent-vague22 'stopped task agent-vague22')" > /dev/null
+[ "$(finished_of "$FIXTURE/sidT/subagents/agent-vague22.meta.json")" = "absent" ] \
+    && pass "N2: 含糊文案 → 不写" \
+    || fail "N2: 含糊文案被当成成功 finished=$(finished_of "$FIXTURE/sidT/subagents/agent-vague22.meta.json")"
+
+make_tree sidU agent-err333
+run_sync "$(payload sidU agent-err333 'Successfully stopped task: agent-err333' '"true"')" > /dev/null
+[ "$(finished_of "$FIXTURE/sidU/subagents/agent-err333.meta.json")" = "absent" ] \
+    && pass "N3: is_error 字符串 true → 不写" \
+    || fail "N3: is_error 字符串未拦截 finished=$(finished_of "$FIXTURE/sidU/subagents/agent-err333.meta.json")"
+
+make_tree sidV agent-ok444
+run_sync "$(payload sidV agent-ok444 'Successfully stopped task: agent-ok444 (python3 -c pass)')" > /dev/null
+[ "$(finished_of "$FIXTURE/sidV/subagents/agent-ok444.meta.json")" = "true" ] \
+    && pass "N4: 真实成功文案（含描述后缀）仍命中" \
+    || fail "N4: 真实成功文案未命中 finished=$(finished_of "$FIXTURE/sidV/subagents/agent-ok444.meta.json")"
 
 echo ""
 echo -e "=== 结果：PASS=$PASS FAIL=$FAIL ==="
