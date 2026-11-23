@@ -361,3 +361,91 @@ def test_redline_modified_dedup_distinguishes_content(patrol, materialized_repo)
     assert not _new_at(new3, PNG_REL, "REDLINE_MODIFIED"), (
         "an identical modification must dedup"
     )
+
+
+def test_redline_deleted_dedup_distinguishes_content(patrol, materialized_repo):
+    """A deletion whose *prior* content differed is a distinct signal from a
+    deletion at the same path of the same prior bytes; identical prior content
+    still dedups."""
+    parent, _s1 = materialized_repo
+    os.remove(str(parent / PNG_REL))
+    sha_a = hashlib.sha256(b"prior-content-A").hexdigest()
+    sha_b = hashlib.sha256(b"prior-content-B-different").hexdigest()
+
+    _store_manifest({PNG_REL: sha_a})
+    keys1, new1 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), set()
+    )
+    assert _new_at(new1, PNG_REL, "REDLINE_DELETED"), "deletion must be reported"
+
+    _store_manifest({PNG_REL: sha_b})
+    keys2, new2 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), keys1
+    )
+    assert _new_at(new2, PNG_REL, "REDLINE_DELETED"), (
+        "a deletion of different prior content must not be silenced by the old key"
+    )
+
+    _store_manifest({PNG_REL: sha_a})
+    keys3, new3 = sweep._dedup_findings(
+        sweep.check_redline(str(parent), dry_run=True), keys1
+    )
+    assert not _new_at(new3, PNG_REL, "REDLINE_DELETED"), (
+        "a deletion of byte-identical prior content must still dedup"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §SPEC-002/004 — fail-closed when the pinned tree is unresolvable; §SPEC-003 —
+# report projection keeps the public schema (no internal content_id leak)
+# ---------------------------------------------------------------------------
+
+
+def test_empty_blob_map_does_not_strip_byproduct_shaped_candidate(
+    patrol, materialized_repo, monkeypatch
+):
+    """Unresolvable pinned tree (empty blob_map) must not prove a
+    byproduct-shaped file untracked: the fail-closed path keeps it and a stored
+    `.import` entry whose file is gone is still a real REDLINE_DELETED."""
+    parent, _s1 = materialized_repo
+    monkeypatch.setattr(sweep, "_gitlink_blob_map", lambda repo_root, pointer: {})
+    _store_manifest({IMPORT_REL: hashlib.sha256(b"gone-import").hexdigest()})
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    deleted = [f["file"] for f in findings if f["rule_id"] == "REDLINE_DELETED"]
+    assert IMPORT_REL in deleted
+
+
+def test_legacy_blessed_byproduct_does_not_spuriously_reset(
+    patrol, materialized_repo
+):
+    """A legacy manifest that blessed an unversioned `.import` byproduct is
+    ignored on both sides: with the byproduct unchanged, no diff and thus no
+    spurious REDLINE_BASELINE_RESET."""
+    parent, _s1 = materialized_repo
+    _write(str(parent / IMPORT_REL), IMPORT_BODY)
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+
+    assert [f["rule_id"] for f in findings] == []
+
+
+def test_report_projection_drops_internal_content_id(patrol, materialized_repo):
+    """REDLINE criticals carry an internal content_id for dedup, but the report
+    JSON must not leak it and each serialized finding keeps its public keys."""
+    parent, _s1 = materialized_repo
+    _store_manifest(sweep.compute_redline_manifest(str(parent)))
+    _write_bytes(str(parent / PNG_REL), b"tamper-report-payload")
+
+    findings = sweep.check_redline(str(parent), dry_run=True)
+    mods = [f for f in findings if f["rule_id"] == "REDLINE_MODIFIED"]
+    assert mods and "content_id" in mods[0], (
+        "the internal finding must carry the dedup discriminator"
+    )
+
+    report = sweep.build_report(findings, {}, findings, set())
+    for f in report["findings"] + report["new_findings"]:
+        assert "content_id" not in f
+        assert set(f.keys()) == {"rule_id", "severity", "file", "line", "message"}
