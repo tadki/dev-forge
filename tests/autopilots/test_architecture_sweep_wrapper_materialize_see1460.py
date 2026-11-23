@@ -301,6 +301,11 @@ def test_missing_config_is_fatal(run_env, tmp_path):
 
     assert proc.returncode != 0
     assert "kol.json" in proc.stderr
+    # SEE-1625 §SPEC-005 hardening (mutation M04): the explicit fail-loud
+    # pre-check owns the missing-config contract — dropping it would fall
+    # through to the repo_name error and still exit non-zero, so the exact
+    # wording is the discriminator.
+    assert "patrol config not found" in proc.stderr
     assert not run_env["stub"]["log"].exists()
 
 
@@ -367,8 +372,49 @@ def test_l1_self_junit_path_tolerates_missing_gutconfig(run_env, tmp_path):
 
     assert proc.returncode == 0, proc.stderr
     assert "godot binary not found" in proc.stderr
+    # SEE-1625 §SPEC-005 hardening (mutation M02): the empty-value fallback is
+    # SILENT — without 2>/dev/null, sed's error for the missing file leaks
+    # onto stderr as observable noise on every Monday L1 round. The file name
+    # is locale-independent, so its absence pins the suppression contract.
+    assert ".gutconfig.json" not in proc.stderr
     stub_calls = run_env["stub"]["log"]
     assert stub_calls.is_file() and "architecture_sweep.py" in _read(stub_calls)
+
+
+def test_l1_self_junit_honors_custom_gutconfig_junit_path(run_env, tmp_path):
+    """SEE-1625 §SPEC-005 hardening (mutation M21): positive-config
+    counterpart of the missing-.gutconfig regression — when the patrol repo
+    DOES have a .gutconfig.json, the L1 stale-junit cleanup must target the
+    CONFIGURED junit_xml_file (res://-stripped), not the built-in default.
+    A wrong key read (or a broken value read) leaves the configured path's
+    stale report untouched, silently misdirecting the cleanup."""
+    ws = tmp_path / "ws"
+    parent = _seed_parent(ws, sub_url=f"file://{ws}/subrepo")
+    _write(
+        parent / ".gutconfig.json",
+        json.dumps({"junit_xml_file": "res://tests/reports/custom_l1_junit.xml"}),
+    )
+    stale = parent / "tests" / "reports" / "custom_l1_junit.xml"
+    _write(stale, "<testsuite></testsuite>")
+
+    proc = _run_wrapper(
+        run_env["script_dir"],
+        ws,
+        run_env["stub"],
+        run_env["cwd"],
+        env_extra={
+            "DEV_FORGE_PAUSED_FILE": str(tmp_path / "no-such-paused-file"),
+            "GODOT": str(tmp_path / "no-such-godot"),
+        },
+        extra_args=["--l1"],
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "godot binary not found" in proc.stderr
+    assert not stale.exists(), (
+        "L1 stale-junit cleanup must target the junit_xml_file configured "
+        "in .gutconfig.json, not the built-in default path"
+    )
 
 
 def test_kill_switch_flag_omitted_when_env_unset(run_env, tmp_path):
