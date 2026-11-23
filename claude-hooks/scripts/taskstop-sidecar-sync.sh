@@ -11,7 +11,10 @@
 #   - 只有**明确成功**的停止才写：tool_response 非错误 + "Successfully
 #     stopped task" 文案 + 文案中的 task id 与请求 id 一致；失败、not
 #     found、文案含糊一律不写（不可验证=不写，保守取向）。
-#   - task id 形态受限（无 "/"、".."、空）：防路径穿越写。
+#   - task id 形态受限（无 "/"、".."、空）：防路径穿越写；CC 对同一
+#     sub-agent 既接受 "agent-<hex>" 也接受裸 "<hex>"，统一归一后按真实
+#     sidecar 命名 agent-<key>.meta.json 解析（初版按 "$TASK_ID.meta.json"
+#     拼，裸 hex 事件下静默找不到目标文件 → finished 从未写入）。
 #   - 目标 meta 必须已存在（无 sidecar 的后台任务不生成文件），且解析后
 #     父目录必须仍是该会话的 subagents 目录（symlink 逃逸亦拒）。
 #   - 幂等：已是 finished:true 不重复写；写用临时文件 + 原子 mv。
@@ -43,6 +46,13 @@ esac
 if ! printf '%s' "$TASK_ID" | grep -qE '^[A-Za-z0-9][A-Za-z0-9_.-]*$'; then
   exit 0
 fi
+# 归一化：CC 对同一 sub-agent 既接受 "agent-<hex>" 也接受裸 "<hex>"，
+# 而 sidecar 文件名恒为 "agent-<hex>.meta.json" —— 统一取 key（去一个
+# "agent-" 前缀），目标文件按真实命名解析（不产生双前缀文件）。
+AGENT_KEY="${TASK_ID#agent-}"
+if ! printf '%s' "$AGENT_KEY" | grep -qE '^[A-Za-z0-9][A-Za-z0-9_.-]*$'; then
+  exit 0
+fi
 
 # --- 成功判定 ---------------------------------------------------------------
 IS_ERROR="$(printf '%s' "$PAYLOAD" | jq -r \
@@ -61,9 +71,10 @@ printf '%s' "$MESSAGE" | grep -qi "successfully stopped" || exit 0
 # 文案中的 task id 必须与请求一致（不一致=不可验证=不写）
 STOPPED_ID="$(printf '%s' "$MESSAGE" | sed -n 's/.*[Ss]uccessfully stopped task: *\([A-Za-z0-9_.-]*\).*/\1/p' | head -1)"
 if [ -n "$STOPPED_ID" ]; then
-  [ "$STOPPED_ID" = "$TASK_ID" ] || exit 0
+  [ "${STOPPED_ID#agent-}" = "$AGENT_KEY" ] || exit 0
 else
-  printf '%s' "$MESSAGE" | grep -qF "$TASK_ID" || exit 0
+  printf '%s' "$MESSAGE" | grep -qF "$TASK_ID" \
+    || printf '%s' "$MESSAGE" | grep -qF "$AGENT_KEY" || exit 0
 fi
 
 # --- 目标 meta 解析（会话 subagents 目录内） -------------------------------
@@ -78,7 +89,8 @@ esac
 META_DIR="$(dirname "$TRANSCRIPT_PATH")/$SESSION_ID/subagents"
 [ -d "$META_DIR" ] || exit 0
 
-META="$META_DIR/$TASK_ID.meta.json"
+# 真实 sidecar 命名恒为 agent-<key>.meta.json（实测 411/411）
+META="$META_DIR/agent-$AGENT_KEY.meta.json"
 [ -f "$META" ] || exit 0
 
 # containment 复核：解析后父目录必须仍是该 subagents 目录（symlink 逃逸拒）
