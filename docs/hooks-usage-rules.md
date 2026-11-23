@@ -61,7 +61,7 @@ Hooks 在特定的生命周期节点执行。官方事件按触发周期划分�
 >
 > `PreCompact` 在压缩之前触发，matcher 同为 `manual` / `auto`，载荷含 `trigger` 与 `custom_instructions`。**退出 0 且不阻断时，PreCompact 的纯 stdout 会作为压缩摘要指令**（单 hook 上限 10,000 字符，超限截断并附标记）；可用 exit 2 / `decision:"block"` 阻断压缩。**团队链不阻断、也不再用 PreCompact 承载压缩恢复提醒**（Owner 判定“指导摘要生成”不等于压缩后强制提醒）；非 Atlas/无命中时该时点 stdout 必须保持为空，不得回显 payload（回显的 JSON 会被当作摘要指令污染摘要）。
 >
-> 团队压缩恢复提醒走**补投通道**（SEE-1621 R2）：`PostCompact`（仅 Atlas）只记录 session 级待提醒状态（`atlas-postcompact-arm`，动作 `pending_set`）；压缩后的下一次任意 `PreToolUse` 由 `atlas-postcompact-deliver`（动作 `pending_context`）消费该状态，以 `additionalContext` 注入完整提醒并立即清除——同一 compact 只补投一次，连续 compact 各可重臂，session 隔离。`PreToolUse` 的 `additionalContext` 是 CC 已实机证实可到达模型的事件通道。
+> 团队压缩恢复提醒走**补投通道**（SEE-1621 R2/R2b）：`PostCompact`（仅 Atlas）只记录 session 级待提醒状态（`atlas-postcompact-arm`，动作 `pending_set`，`one_shot.ids=[MULTICA_AGENT_NAME,HOOK_ISSUE_ID]` 与 `atlas-bash-skill-reminder` 同型）；压缩后的下一次任意 `PreToolUse` 由 `atlas-postcompact-deliver`（动作 `pending_context`）消费该状态，以 `additionalContext` 注入完整提醒并立即清除。**一次性 horizon：同一 agent 在同一 issue 首次补投后不再提醒，后续 compact 不重复；不同 issue 独立；首次消费后无残留 pending**（`deliver` 不带 one_shot——引擎在命中时即写哨兵，携带会被压缩前 PreToolUse 永久禁用；一次性由 arm horizon 保证）。`PreToolUse` 的 `additionalContext` 是 CC 已实机证实可到达模型的事件通道。
 
 ### 1.5 不支持 Matcher 的事件
 

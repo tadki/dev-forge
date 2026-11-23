@@ -1,16 +1,19 @@
 #!/bin/bash
-# SEE-1621 R2: PostCompact→PreToolUse 补投路线行为测试（§SPEC-012 引擎行为面）
+# SEE-1621 R2b: PostCompact→PreToolUse 补投路线行为测试（§SPEC-012 引擎行为面，
+# 一次性 agent+issue horizon，与 atlas-bash-skill-reminder 同型）。
 # 背景：CC 2.1.329 不消费 PostCompact 的 additionalContext（到达 0/6）、PreCompact
-# stdout 仅指导摘要生成（Owner 判定不符合强制提醒目标）。Owner 改定补投路线：
-# Atlas 的 PostCompact 只记录 session 级待提醒状态；下一次 PreToolUse（任意工具）
-# 消费并注入完整提醒（PreToolUse additionalContext 已有实机到达证据）。
+# stdout 仅指导摘要生成。Owner 改定补投路线并明确 reminder 为一次性：
+# `one_shot.ids=[MULTICA_AGENT_NAME, HOOK_ISSUE_ID]`（同型 horizon）——
+# 同一 agent 在同一 issue 首次补投后不再提醒，后续 compact 不重复；不同 issue 独立；
+# 首次消费后无残留 pending 误触发；horizon 窗口 env 缺失时 fail-open 跳过（不提醒）。
 # 本套件驱动**真实生产链**（hook-wrapper.sh → dispatcher.sh → unified-hook.sh →
-# engine.js + 真实生产规则，不注入 UNIFIED_RULES_FILE），证明：
-#   - PostCompact 记账（session 级标记）且不重复消费：同一 compact 只补投一次；
-#   - 下一次 PreToolUse 注入完整提醒块并清除标记；无 compact 不触发；
-#   - 连续 compact 各可重臂；任意工具触发；跨 repo 生效；
-#   - 非 Atlas 不触发；session 隔离无串扰；全程非阻断/无 deny；
-#   - PostCompact 既有 JSON 契约不回退；PreCompact 不回显 payload（防摘要污染）。
+# engine.js + 真实生产规则，不注入 UNIFIED_RULES_FILE），按 issue 维度注入
+# HOOK_ISSUE_ID 驱动 horizon，证明：
+#   - 首次 compact 记账 → 下一次 PreToolUse 补投一次并消费；
+#   - 同 agent+issue 第二次 compact 不再重臂/不再提醒（arm 哨兵在位）；
+#   - 不同 issue 独立提醒；无 compact 不触发；非 Atlas 隔离；session 隔离；
+#   - 跨 repo 生效；任意工具触发；horizon env 缺失 fail-open；
+#   - 全程非阻断/无 deny；PostCompact 既有 JSON 契约不回退；PreCompact 不回显 payload。
 # Run: bash tests/test_postcompact_delivery.sh
 set -uo pipefail
 
@@ -39,18 +42,18 @@ REPO_A="$FIXTURE/repo-alpha"; mkdir -p "$REPO_A/.claude"
 REPO_B="$FIXTURE/repo-beta"; mkdir -p "$REPO_B/.claude"
 
 # 真实生产链（wrapper → dispatcher → unified-hook → engine），真实生产规则。
-# 清空宿主 Multica/HOOK 身份变量：否则 one_shot 规则（skill/recall 提醒）会被
-# 外层 agent 运行时的 issue/run id 激活，污染「无 context」类断言的确定性。
+# 清空宿主 Multica/HOOK 身份变量防止外层 run 泄漏；按场景显式注入 HOOK_ISSUE_ID
+# 驱动一次性 horizon（入口层：显式 HOOK_ISSUE_ID 优先于 MULTICA_ISSUE_ID）。
 run_chain() {
-    local AGENT="$1" PAYLOAD="$2" REPO_DIR="$3" EVENT="$4"
-    : > "$FIRELOG"
+    local AGENT="$1" PAYLOAD="$2" REPO_DIR="$3" EVENT="$4" ISSUE="$5"
     printf '%s' "$PAYLOAD" > "$FIXTURE/stdin.json"
     HOOK_STDOUT=$(cd "$REPO_DIR" && \
         env -u MULTICA_ISSUE_ID -u MULTICA_TASK_ID -u MULTICA_AGENT_ID \
-            -u HOOK_ISSUE_ID -u HOOK_SCOPE_ID -u HOOK_RUN_SCOPE_ID \
+            -u HOOK_SCOPE_ID -u HOOK_RUN_SCOPE_ID \
             -u CLAUDE_CODE_SESSION_ID \
         HOOK_FIRE_LOG="$FIRELOG" \
         HOOK_STATE_DIR="$STATE" \
+        HOOK_ISSUE_ID="$ISSUE" \
         MULTICA_AGENT_NAME="$AGENT" \
         HOME="$FAKE_HOME" \
         bash "$WRAPPER" "$EVENT" unified-hook < "$FIXTURE/stdin.json" 2>/dev/null)
@@ -85,20 +88,35 @@ assert_reminder() {
         fail "$label — 提醒缺片段或非 additionalContext. got: '${HOOK_STDOUT:0:200}'"
     fi
 }
-assert_no_context() {
+# 精确针对本路线：其他 reminder 规则（atlas-bash-skill-reminder 等同型一次性）
+# 在各自 issue 首次工具调用时注入属合法既有行为，不算补投送达。
+assert_no_delivery() {
     local label="$1"
-    if echo "$HOOK_STDOUT" | grep -q '"additionalContext"'; then
-        fail "$label — 误注入 context. got: '${HOOK_STDOUT:0:200}'"
+    if echo "$HOOK_STDOUT" | grep -q '"additionalContext"' && echo "$HOOK_STDOUT" | grep -q "post-compact-reminder"; then
+        fail "$label — 补投提醒误送达. got: '${HOOK_STDOUT:0:200}'"
     else
-        pass "$label — 无 context 注入"
+        pass "$label — 补投提醒未注入"
     fi
 }
 assert_marker() {
     local label="$1" session="$2" expect="$3"
     local f="$STATE/pending-atlas-postcompact-reminder-$session"
     if [ "$expect" = "present" ] && [ -f "$f" ]; then pass "$label — pending 标记在位"
-    elif [ "$expect" = "absent" ] && [ ! -f "$f" ]; then pass "$label — pending 标记已消费"
+    elif [ "$expect" = "absent" ] && [ ! -f "$f" ]; then pass "$label — pending 标记不存在"
     else fail "$label — pending 标记状态不符（expect=$expect file=$f）"; fi
+}
+assert_arm_sentinel() {
+    local label="$1" issue="$2" expect="$3"
+    local f="$STATE/.hook-fired-atlas-postcompact-arm-Atlas-$issue"
+    if [ "$expect" = "present" ] && [ -f "$f" ]; then pass "$label — arm one_shot 哨兵在位"
+    elif [ "$expect" = "absent" ] && [ ! -f "$f" ]; then pass "$label — arm 哨兵不存在"
+    else fail "$label — arm 哨兵状态不符（expect=$expect file=$f）"; fi
+}
+assert_pendingset_count() {
+    local label="$1" expect="$2"
+    local n
+    n=$(grep -c "pending-set rule=atlas-postcompact-arm" "$FIRELOG" 2>/dev/null || true)
+    if [ "$n" -eq "$expect" ]; then pass "$label — pending-set 次数=$n"; else fail "$label — pending-set 次数=$n 预期=$expect"; fi
 }
 assert_firelog_has() {
     local label="$1" pattern="$2"
@@ -112,91 +130,112 @@ assert_empty_stdout() {
 BASH_TOOL='{"command":"ls -la"}'
 
 echo "============================================================"
-echo "  SEE-1621 R2: PostCompact→PreToolUse delivery engine behavior"
+echo "  SEE-1621 R2b: PostCompact→PreToolUse delivery (one-shot horizon)"
 echo "  Date: $(date -Iseconds)"
 echo "============================================================"
 
 separator "Prerequisites"
 [ -f "$WRAPPER" ] && pass "hook-wrapper.sh exists" || { fail "hook-wrapper.sh MISSING"; exit 1; }
-node -e "const c=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')); const n=new Set(c.rules.map(x=>x.name)); process.exit(n.has('atlas-postcompact-arm')&&n.has('atlas-postcompact-deliver')?0:1)" 2>/dev/null \
-    && pass "rules-v2.json declares arm + deliver rules" \
-    || fail "atlas-postcompact-arm/deliver missing from rules-v2.json"
+node -e "const c=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')); const a=c.rules.find(x=>x.name==='atlas-postcompact-arm'); const d=c.rules.find(x=>x.name==='atlas-postcompact-deliver'); const ok=a&&d&&JSON.stringify(a.one_shot)===JSON.stringify({ids:['MULTICA_AGENT_NAME','HOOK_ISSUE_ID']}); process.exit(ok?0:1)" 2>/dev/null \
+    && pass "arm carries one_shot.ids=[MULTICA_AGENT_NAME,HOOK_ISSUE_ID] (atlas-bash-skill-reminder 同型)" \
+    || fail "arm 缺少同型 one_shot horizon 配置"
 
 #####################################################################
-# 1. 核心：PostCompact 记账 → 下一次 PreToolUse 补投一次并消费
+# 1. 核心：首次 compact → 补投一次并消费（同 agent+issue 唯一一次）
 #####################################################################
-separator "1. Arm on PostCompact → deliver once on next PreToolUse"
-run_chain "Atlas" "$(postcompact_payload sess-A1)" "$REPO_A" PostCompact
+separator "1. First compact arms → next PreToolUse delivers once (ISSUE-A)"
+run_chain "Atlas" "$(postcompact_payload sess-A1)" "$REPO_A" PostCompact "ISSUE-A"
 assert_exit_0 "1a: PostCompact exit 0"
 assert_marker "1b: arm writes session marker" "sess-A1" present
-assert_firelog_has "1c: firelog pending-set" "pending-set"
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse
+assert_pendingset_count "1c: exactly one pending-set" 1
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse "ISSUE-A"
 assert_exit_0 "1d: PreToolUse exit 0"
 assert_no_deny "1e: no deny on delivery"
 assert_reminder "1f: next PreToolUse delivers full reminder"
-assert_marker "1g: marker consumed after delivery" "sess-A1" absent
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse
-assert_no_context "1h: same compact delivered only once"
+assert_marker "1g: marker consumed after delivery (无残留 pending)" "sess-A1" absent
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A1)" "$REPO_A" PreToolUse "ISSUE-A"
+assert_no_delivery "1h: second PreToolUse injects nothing"
 
 #####################################################################
-# 2. 未 compact 不触发
+# 2. 同 agent+issue 第二次 compact 不再提醒（一次性 horizon）
 #####################################################################
-separator "2. No compact → no reminder"
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-NONE)" "$REPO_A" PreToolUse
-assert_no_context "2a: PreToolUse without compact injects nothing"
+separator "2. Second compact in same agent+issue does NOT re-remind"
+run_chain "Atlas" "$(postcompact_payload sess-A2)" "$REPO_A" PostCompact "ISSUE-A"
+assert_exit_0 "2a: second PostCompact exit 0"
+assert_marker "2b: no new pending (arm horizon exhausted)" "sess-A2" absent
+assert_arm_sentinel "2c: arm one_shot sentinel in place" "ISSUE-A" present
+assert_pendingset_count "2d: still exactly one pending-set for ISSUE-A" 1
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A2)" "$REPO_A" PreToolUse "ISSUE-A"
+assert_no_delivery "2e: no reminder after horizon-exhausted compact"
 
 #####################################################################
-# 3. 连续 compact 各可重臂
+# 3. 不同 issue 独立提醒
 #####################################################################
-separator "3. Consecutive compacts re-arm"
-run_chain "Atlas" "$(postcompact_payload sess-A3)" "$REPO_A" PostCompact
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A3)" "$REPO_A" PreToolUse
-assert_reminder "3a: first compact delivers"
-run_chain "Atlas" "$(postcompact_payload sess-A3)" "$REPO_A" PostCompact
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-A3)" "$REPO_A" PreToolUse
-assert_reminder "3b: second compact arms and delivers again"
+separator "3. Different issue delivers independently"
+run_chain "Atlas" "$(postcompact_payload sess-B1)" "$REPO_A" PostCompact "ISSUE-B"
+assert_marker "3a: ISSUE-B arm writes its own marker" "sess-B1" present
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-B1)" "$REPO_A" PreToolUse "ISSUE-B"
+assert_reminder "3b: ISSUE-B delivers independently"
 
 #####################################################################
-# 4. 非 Atlas 隔离
+# 4. 未 compact 不触发
 #####################################################################
-separator "4. Non-Atlas isolation"
-run_chain "Bachi" "$(postcompact_payload sess-B4)" "$REPO_A" PostCompact
-assert_marker "4a: non-Atlas arm writes no marker" "sess-B4" absent
-run_chain "Bachi" "$(pretool_payload Bash "$BASH_TOOL" sess-B4)" "$REPO_A" PreToolUse
-assert_no_context "4b: non-Atlas PreToolUse injects nothing"
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-B4)" "$REPO_A" PreToolUse
-assert_no_context "4c: no cross-agent delivery in Bachi session"
+separator "4. No compact → no reminder (ISSUE-C)"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-C1)" "$REPO_A" PreToolUse "ISSUE-C"
+assert_no_delivery "4a: PreToolUse without compact injects nothing"
+assert_marker "4b: no marker without compact" "sess-C1" absent
 
 #####################################################################
-# 5. session 隔离（无跨 session 串扰）
+# 5. 非 Atlas 隔离（ISSUE-D）
 #####################################################################
-separator "5. Session isolation"
-run_chain "Atlas" "$(postcompact_payload sess-S5)" "$REPO_A" PostCompact
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-S6)" "$REPO_A" PreToolUse
-assert_no_context "5a: other session does not consume"
-run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-S5)" "$REPO_A" PreToolUse
-assert_reminder "5b: original session still delivers"
+separator "5. Non-Atlas isolation"
+run_chain "Bachi" "$(postcompact_payload sess-D1)" "$REPO_A" PostCompact "ISSUE-D"
+assert_marker "5a: non-Atlas arm writes no marker" "sess-D1" absent
+run_chain "Bachi" "$(pretool_payload Bash "$BASH_TOOL" sess-D1)" "$REPO_A" PreToolUse "ISSUE-D"
+assert_no_delivery "5b: non-Atlas PreToolUse injects nothing"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-D1)" "$REPO_A" PreToolUse "ISSUE-D"
+assert_no_delivery "5c: no cross-agent delivery in Bachi session"
 
 #####################################################################
-# 6. 跨 repo 生效 + 任意工具
+# 6. session 隔离（ISSUE-E）
 #####################################################################
-separator "6. Cross-repo + any tool"
-run_chain "Atlas" "$(postcompact_payload sess-C7)" "$REPO_A" PostCompact
-run_chain "Atlas" "$(pretool_payload Read '{"file_path":"/x/a.md"}' sess-C7)" "$REPO_B" PreToolUse
-assert_reminder "6a: delivery in another repo + Read tool"
+separator "6. Session isolation (ISSUE-E)"
+run_chain "Atlas" "$(postcompact_payload sess-E1)" "$REPO_A" PostCompact "ISSUE-E"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-E2)" "$REPO_A" PreToolUse "ISSUE-E"
+assert_no_delivery "6a: other session does not consume"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-E1)" "$REPO_A" PreToolUse "ISSUE-E"
+assert_reminder "6b: original session still delivers"
 
 #####################################################################
-# 7. 既有契约不回退
+# 7. 跨 repo 生效 + 任意工具（ISSUE-F）
 #####################################################################
-separator "7. Existing contracts unchanged"
-run_chain "Atlas" "$(postcompact_payload sess-L8)" "$REPO_A" PostCompact
+separator "7. Cross-repo + any tool (ISSUE-F)"
+run_chain "Atlas" "$(postcompact_payload sess-F1)" "$REPO_A" PostCompact "ISSUE-F"
+run_chain "Atlas" "$(pretool_payload Read '{"file_path":"/x/a.md"}' sess-F1)" "$REPO_B" PreToolUse "ISSUE-F"
+assert_reminder "7a: delivery in another repo + Read tool"
+
+#####################################################################
+# 8. horizon 窗口 env 缺失 → fail-open 不提醒（与其他 reminder 同语义）
+#####################################################################
+separator "8. Missing horizon env fails open (no reminder)"
+run_chain "Atlas" "$(postcompact_payload sess-N1)" "$REPO_A" PostCompact ""
+assert_marker "8a: no marker when HOOK_ISSUE_ID missing" "sess-N1" absent
+assert_firelog_has "8b: fail-open WARN audited" "one-shot window env missing"
+run_chain "Atlas" "$(pretool_payload Bash "$BASH_TOOL" sess-N1)" "$REPO_A" PreToolUse ""
+assert_no_delivery "8c: no delivery without horizon window"
+
+#####################################################################
+# 9. 既有契约不回退
+#####################################################################
+separator "9. Existing contracts unchanged"
+run_chain "Atlas" "$(postcompact_payload sess-L1)" "$REPO_A" PostCompact "ISSUE-L"
 if echo "$HOOK_STDOUT" | grep -q '"additionalContext"'; then
-    pass "7a: PostCompact keeps JSON additionalContext contract (legacy rule)"
+    pass "9a: PostCompact keeps JSON additionalContext contract (legacy rule, first fire of ISSUE-L)"
 else
-    fail "7a: PostCompact JSON contract broken. got: '${HOOK_STDOUT:0:160}'"
+    fail "9a: PostCompact JSON contract broken. got: '${HOOK_STDOUT:0:160}'"
 fi
-run_chain "Atlas" '{"hook_event_name":"PreCompact","trigger":"auto","session_id":"sess-P9"}' "$REPO_A" PreCompact
-assert_empty_stdout "7b: PreCompact stdout stays empty (no payload-as-summary pollution)"
+run_chain "Atlas" '{"hook_event_name":"PreCompact","trigger":"auto","session_id":"sess-P1"}' "$REPO_A" PreCompact "ISSUE-L"
+assert_empty_stdout "9b: PreCompact stdout stays empty (no payload-as-summary pollution)"
 
 #####################################################################
 separator "Summary"
