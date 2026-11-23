@@ -10,7 +10,7 @@
 #   - 非 Atlas（Bachi/Revy/未设）不触发该规则（透传原 stdin）。
 #   - 无 repo 过滤：两个不同 repo/cwd 上下文均命中。
 #   - 未配置 one_shot：同一 session 连续两次 PostCompact 均重新注入，且零 sentinel 写入。
-#   - 其他事件（PreCompact/PostToolUse）不误触发。
+#   - 其他事件（SessionEnd/PostToolUse）不误触发。
 # Run: bash tests/test_postcompact_atlas_reminder.sh
 set -uo pipefail
 
@@ -199,9 +199,9 @@ fi
 # 5. 其他事件不误触发
 #####################################################################
 separator "5. Other events do not mis-fire"
-run_entry "Atlas" '{"hook_event_name":"PreCompact","trigger":"auto","session_id":"sess-postcompact-1"}' "$REPO_A"
-assert_no_context "5a: PreCompact does not mis-fire"
-assert_passthrough "5a: PreCompact passthrough"
+run_entry "Atlas" '{"hook_event_name":"SessionEnd","session_id":"sess-postcompact-1"}' "$REPO_A"
+assert_no_context "5a: SessionEnd does not mis-fire"
+assert_passthrough "5a: SessionEnd passthrough"
 run_entry "Atlas" '{"hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"/x/a.md"},"session_id":"sess-postcompact-1"}' "$REPO_A"
 assert_no_context "5b: PostToolUse does not mis-fire (plain payload)"
 
