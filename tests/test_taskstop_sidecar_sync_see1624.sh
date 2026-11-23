@@ -35,44 +35,48 @@ FIXTURE="$(mktemp -d /tmp/taskstop-sync-see1624.XXXXXX)"
 
 trap 'rm -rf "$FIXTURE"' EXIT
 
-# 精确锁定同步脚本 PID 的运行器：wrapper 打印自身 $$ 后 exec 脚本（exec 保留
-# PID），测试据此预置同名临时路径 → 攻击确定性命中（不靠猜 PID 区间）。
-run_sync_pinned() {  # run_sync_pinned <payload> <tmpbase> <sentinel>
-    local pl="$1" tb="$2" sen="$3"
-    local pidfile="$FIXTURE/pinned.pid"
-    rm -f "$pidfile"
-    printf '%s' "$pl" > "$FIXTURE/pinned-in.json"
-    bash -c 'echo $$ > "$1"; sleep 0.3; exec bash "$2" < "$3" > /dev/null 2>&1' \
-        _ "$pidfile" "$SYNC" "$FIXTURE/pinned-in.json" &
+# 攻击运行器（确定性）：wrapper 打印自身 $$ 后**等待 go 文件**再 exec 同步
+# 脚本（exec 保留 PID）——测试据 pidfile 预置同名临时路径并确认就位后才放行
+# 脚本执行：无固定 sleep、无 PID 猜测；任一 setup 失败即显式失败（返回非 0），
+# 杜绝"攻击未发生却判绿"。
+run_sync_attacked() {  # run_sync_attacked <payload> <tmpbase> <sentinel> <symlink|hardlink>
+    local pl="$1" tb="$2" sen="$3" mode="$4"
+    local pidfile="$FIXTURE/attack.pid" gofile="$FIXTURE/attack.go"
+    rm -f "$pidfile" "$gofile"
+    printf '%s' "$pl" > "$FIXTURE/attack-in.json"
+    bash -c 'echo $$ > "$1"; while [ ! -e "$2" ]; do sleep 0.05; done; exec bash "$3" < "$4" > /dev/null 2>&1' \
+        _ "$pidfile" "$gofile" "$SYNC" "$FIXTURE/attack-in.json" &
     local wrapper=$!
     local i spid=""
-    for i in $(seq 1 40); do
+    for i in $(seq 1 100); do
         [ -s "$pidfile" ] && { spid="$(cat "$pidfile")"; break; }
-        sleep 0.1
+        sleep 0.05
     done
-    if [ -n "$spid" ]; then
-        ln -s "$sen" "$tb.$spid" 2>/dev/null || true
+    if [ -z "$spid" ]; then
+        kill "$wrapper" 2>/dev/null || true
+        wait "$wrapper" 2>/dev/null || true
+        echo "attack setup failed: no script pid" >&2
+        return 1
     fi
-    wait $wrapper
-}
-
-run_sync_pinned_hardlink() {  # run_sync_pinned_hardlink <payload> <tmpbase> <sentinel>
-    local pl="$1" tb="$2" sen="$3"
-    local pidfile="$FIXTURE/pinned-hard.pid"
-    rm -f "$pidfile"
-    printf '%s' "$pl" > "$FIXTURE/pinned-hard-in.json"
-    bash -c 'echo $$ > "$1"; sleep 0.3; exec bash "$2" < "$3" > /dev/null 2>&1' \
-        _ "$pidfile" "$SYNC" "$FIXTURE/pinned-hard-in.json" &
-    local wrapper=$!
-    local i spid=""
-    for i in $(seq 1 40); do
-        [ -s "$pidfile" ] && { spid="$(cat "$pidfile")"; break; }
-        sleep 0.1
-    done
-    if [ -n "$spid" ]; then
-        ln "$sen" "$tb.$spid" 2>/dev/null || true
+    if [ "$mode" = "hardlink" ]; then
+        ln "$sen" "$tb.$spid" 2>/dev/null || {
+            kill "$wrapper" 2>/dev/null || true; wait "$wrapper" 2>/dev/null || true
+            echo "attack setup failed: hardlink not created" >&2; return 1; }
+    else
+        ln -s "$sen" "$tb.$spid" 2>/dev/null || {
+            kill "$wrapper" 2>/dev/null || true; wait "$wrapper" 2>/dev/null || true
+            echo "attack setup failed: symlink not created" >&2; return 1; }
     fi
-    wait $wrapper
+    # 确认攻击确实就位（链接存在），否则不得放行脚本
+    if [ ! -e "$tb.$spid" ] && [ ! -L "$tb.$spid" ]; then
+        kill "$wrapper" 2>/dev/null || true
+        wait "$wrapper" 2>/dev/null || true
+        echo "attack setup failed: planted path not in place" >&2
+        return 1
+    fi
+    : > "$gofile"          # 放行同步脚本（攻击已就位）
+    wait "$wrapper"
+    return 0
 }
 
 # --- fixture：<sid>.jsonl 转录占位 + <sid>/subagents/<id>.meta.json ----------
@@ -324,8 +328,10 @@ fi
 make_tree sidQ agent-abc123
 SENTINEL="$FIXTURE/sentinel-q.txt"; printf 'DO-NOT-OVERWRITE' > "$SENTINEL"
 TMPLINK_BASE="$FIXTURE/sidQ/subagents/agent-abc123.meta.json.gqt-tmp"
-run_sync_pinned "$(payload sidQ agent-abc123 'Successfully stopped task: agent-abc123')" \
-    "$TMPLINK_BASE" "$SENTINEL"
+if ! run_sync_attacked "$(payload sidQ agent-abc123 'Successfully stopped task: agent-abc123')" \
+        "$TMPLINK_BASE" "$SENTINEL" symlink; then
+    fail "M2: 攻击 setup 失败（未预置临时路径）→ 判定不成立"
+fi
 if [ "$(cat "$SENTINEL")" = "DO-NOT-OVERWRITE" ]; then
     pass "M2: 预置临时 symlink → 外部文件零改动"
 else
@@ -346,12 +352,28 @@ fi
 make_tree sidR agent-def456
 SENTINEL2="$FIXTURE/sentinel-r.txt"; printf 'DO-NOT-OVERWRITE' > "$SENTINEL2"
 TMPLINK_BASE2="$FIXTURE/sidR/subagents/agent-def456.meta.json.gqt-tmp"
-run_sync_pinned_hardlink "$(payload sidR agent-def456 'Successfully stopped task: agent-def456')" \
-    "$TMPLINK_BASE2" "$SENTINEL2"
+if ! run_sync_attacked "$(payload sidR agent-def456 'Successfully stopped task: agent-def456')" \
+        "$TMPLINK_BASE2" "$SENTINEL2" hardlink; then
+    fail "M5: 攻击 setup 失败（未预置硬链接）→ 判定不成立"
+fi
 if [ "$(cat "$SENTINEL2")" = "DO-NOT-OVERWRITE" ]; then
     pass "M5: 预置硬链接 → 外部文件零改动"
 else
     fail "M5: 外部文件被就地改写: $(cat "$SENTINEL2")"
+fi
+
+# M7: 攻击 setup 失败必须显式失败（不得静默继续判绿）
+SENT3="$FIXTURE/sentinel-x.txt"; printf 'DO-NOT-OVERWRITE' > "$SENT3"
+if run_sync_attacked "$(payload sidX agent-x 'Successfully stopped task: agent-x')" \
+        "/proc/1/nonexistent-dir/x" "$SENT3" symlink >/dev/null 2>&1; then
+    fail "M7: 攻击 setup 失败却误报成功（应显式失败）"
+else
+    pass "M7: setup 失败 → 显式失败（不静默继续）"
+fi
+if [ "$(cat "$SENT3")" = "DO-NOT-OVERWRITE" ]; then
+    pass "M8: setup 失败时外部文件零改动"
+else
+    fail "M8: setup 失败仍改动外部文件"
 fi
 
 separator "N. 成功判定反例（否定/含糊/is_error 字符串）"
@@ -373,6 +395,20 @@ run_sync "$(payload sidU agent-err333 'Successfully stopped task: agent-err333' 
 [ "$(finished_of "$FIXTURE/sidU/subagents/agent-err333.meta.json")" = "absent" ] \
     && pass "N3: is_error 字符串 true → 不写" \
     || fail "N3: is_error 字符串未拦截 finished=$(finished_of "$FIXTURE/sidU/subagents/agent-err333.meta.json")"
+
+# 合法成功事件：任务描述后缀里出现 "not successfully stopped" 字样
+make_tree sidW agent-desc55
+run_sync "$(payload sidW agent-desc55 'Successfully stopped task: agent-desc55 (review not successfully stopped wording)')" > /dev/null
+if [ "$(finished_of "$FIXTURE/sidW/subagents/agent-desc55.meta.json")" = "true" ]; then
+    pass "N5: 合法成功描述（含否定短语后缀）仍写入 finished=true"
+else
+    fail "N5: 合法成功描述被误拒 finished=$(finished_of "$FIXTURE/sidW/subagents/agent-desc55.meta.json")"
+fi
+if jq -e '.description == "probe"' "$FIXTURE/sidW/subagents/agent-desc55.meta.json" >/dev/null 2>&1; then
+    pass "N6: 合法成功描述写入后其余字段保留"
+else
+    fail "N6: 其余字段丢失"
+fi
 
 make_tree sidV agent-ok444
 run_sync "$(payload sidV agent-ok444 'Successfully stopped task: agent-ok444 (python3 -c pass)')" > /dev/null

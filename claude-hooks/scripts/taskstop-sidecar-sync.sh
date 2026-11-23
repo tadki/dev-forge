@@ -10,8 +10,10 @@
 # 纪律（不放宽可写面；Final Review HIGH-1/HIGH-2/MEDIUM-3/LOW-5 后收紧）：
 #   - 只有**明确成功**的停止才写：tool_response 非错误（布尔 true 或字符串
 #     "true"）+ **行首锚定**的 "Successfully stopped task: <id>" 文案 +
-#     文案中的 id 与请求 id 一致；否定句（"Not successfully stopped task:…"）、
-#     失败、not found、含糊或无 id 文案一律不写（不可验证=不写）。
+#     文案中的 id 与请求 id 一致；**句首**否定（"Not successfully stopped
+#     task:…"）、失败、not found、含糊或无 id 文案一律不写（不可验证=不写）；
+#     否定守卫只看行首——任务描述后缀里出现同名字样（"…(review not
+#     successfully stopped wording)"）不得否决明确的成功事件。
 #   - task id 形态受限（无 "/"、".."、空）：防路径穿越写；CC 对同一
 #     sub-agent 既接受 "agent-<hex>" 也接受裸 "<hex>"，统一归一后按真实
 #     sidecar 命名 agent-<key>.meta.json 解析（初版按 "$TASK_ID.meta.json"
@@ -75,9 +77,12 @@ MESSAGE="$(printf '%s' "$PAYLOAD" | jq -r '
     else "" end;
   (.tool_response // {}) | text_of' 2>/dev/null || true)"
 [ -n "$MESSAGE" ] || exit 0
-# 否定文案显式拒绝（"Not successfully stopped task: <id>" 之类——此前
-# 非锚定子串匹配会把否定句当成成功，可能把仍存活的 agent 标成结束）。
-if printf '%s' "$MESSAGE" | grep -qi "not successfully stopped"; then
+# 否定句守卫只作用于**行首**（"Not successfully stopped task: <id>" 之类）——
+# 任务描述后缀里出现同名字样（"…(review not successfully stopped wording)"）
+# 不得否决明确的成功事件（Final Review R2 MEDIUM-1：全局扫描会误伤合法
+# 成功描述，导致已停止 agent 再次触发 stop-guard 假阳性）。
+if printf '%s' "$MESSAGE" \
+     | grep -qiE '^[[:space:]]*not[[:space:]]+successfully[[:space:]]+stopped'; then
   exit 0
 fi
 # 明确成功语义：**行首**锚定的 "Successfully stopped task: <id>"（CC 真实
