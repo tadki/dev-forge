@@ -164,8 +164,17 @@ def max_pending_nth(repo_root: Path, counter_rel: str) -> int | None:
         if not any((f or {}).get("path") == counter_rel for f in pr.get("files") or []):
             continue
         payload = _gh_json(["api", f"repos/{slug}/contents/{counter_rel}?ref={pr['headRefOid']}"])
-        nth = json.loads(base64.b64decode(payload["content"]).decode("utf-8")).get("nth")
-        if isinstance(nth, int) and (best is None or nth > best):
+        # 读不出（接口无 content）或读不懂（非法 base64/JSON、nth 非整数）都算
+        # 「无法确认未合入期次」，fail-closed：exit 4，绝不静默跳过再撞重号。
+        try:
+            nth = json.loads(base64.b64decode(payload["content"]).decode("utf-8")).get("nth")
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise PendingProbeError(
+                f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 读不出或读不懂：{exc}") from exc
+        if not isinstance(nth, int) or isinstance(nth, bool):
+            raise PendingProbeError(
+                f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 的 nth 不是整数：{nth!r}")
+        if best is None or nth > best:
             best = nth
     return best
 
