@@ -386,3 +386,77 @@ class TestProbeMalformedShapes:
         assert "fake-secret" not in msg
         assert "git.example.com" not in msg
         assert "foo/bar" not in msg
+
+
+class TestFilesShape:
+    """PR 条目的 files 形状校验：缺失/非数组/条目非对象即 fail-closed
+    （读不出来 = 无法确认它改没改计数器，不能当「没改」放行）；
+    null 条目安全忽略、files 为空的正例语义保持不变。"""
+
+    SEED = json.dumps({"nth": 25})
+
+    def _run_pr(self, tmp_path, pr):
+        gh = _make_gh_stub(tmp_path)
+        state = tmp_path / "state.json"
+        state.write_text(self.SEED, encoding="utf-8")
+        out = tmp_path / "out.md"
+        r = _run_builder(
+            "--repo-root", str(REPO_ROOT), "--date", "2026-11-25",
+            "--state-file", str(state), "--output", str(out),
+            gh_dir=gh, env_extra={"GH_PR_LIST": json.dumps([pr])},
+        )
+        return r, state, out
+
+    def _assert_fail_closed(self, r, state, out):
+        assert r.returncode == 4, r.stderr
+        assert "Traceback" not in r.stderr
+        assert state.read_text(encoding="utf-8") == self.SEED
+        assert not out.exists()
+
+    def test_files_null_fails_closed(self, tmp_path):
+        r, state, out = self._run_pr(tmp_path, {"number": 7, "headRefOid": "sha7", "files": None})
+        self._assert_fail_closed(r, state, out)
+
+    def test_files_key_missing_fails_closed(self, tmp_path):
+        r, state, out = self._run_pr(tmp_path, {"number": 7, "headRefOid": "sha7"})
+        self._assert_fail_closed(r, state, out)
+
+    def test_files_object_fails_closed(self, tmp_path):
+        r, state, out = self._run_pr(tmp_path, {"number": 7, "headRefOid": "sha7", "files": {}})
+        self._assert_fail_closed(r, state, out)
+
+    def test_files_string_fails_closed(self, tmp_path):
+        r, state, out = self._run_pr(tmp_path, {"number": 7, "headRefOid": "sha7", "files": "README.md"})
+        self._assert_fail_closed(r, state, out)
+
+    def test_files_string_entry_fails_closed(self, tmp_path):
+        r, state, out = self._run_pr(tmp_path, {"number": 7, "headRefOid": "sha7", "files": ["README.md"]})
+        self._assert_fail_closed(r, state, out)
+
+    def test_files_number_entry_fails_closed(self, tmp_path):
+        r, state, out = self._run_pr(tmp_path, {"number": 7, "headRefOid": "sha7", "files": [123]})
+        self._assert_fail_closed(r, state, out)
+
+    def test_files_empty_array_still_works(self, tmp_path):
+        r, state, out = self._run_pr(tmp_path, {"number": 7, "headRefOid": "sha7", "files": []})
+        assert r.returncode == 0, r.stderr
+        assert json.loads(state.read_text(encoding="utf-8"))["nth"] == 26
+        assert "第 26 期" in out.read_text(encoding="utf-8")
+
+    def test_files_null_entry_with_counter_path_still_works(self, tmp_path):
+        """files 里的 null 被安全忽略，真实改动条目照常计数（正反同列）。"""
+        gh = _make_gh_stub(tmp_path)
+        state = tmp_path / "state.json"
+        state.write_text(self.SEED, encoding="utf-8")
+        out = tmp_path / "out.md"
+        pr = {"number": 7, "headRefOid": "deadbeef", "files": [None, {"path": COUNTER_REL}]}
+        r = _run_builder(
+            "--repo-root", str(REPO_ROOT), "--date", "2026-11-25",
+            "--state-file", str(state), "--output", str(out),
+            gh_dir=gh,
+            env_extra={"GH_PR_LIST": json.dumps([pr]),
+                       "GH_CONTENTS": json.dumps({"deadbeef": 30})},
+        )
+        assert r.returncode == 0, r.stderr
+        assert json.loads(state.read_text(encoding="utf-8"))["nth"] == 31
+        assert "第 31 期" in out.read_text(encoding="utf-8")

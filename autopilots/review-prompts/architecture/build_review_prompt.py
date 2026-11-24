@@ -187,6 +187,26 @@ def _pending_counter_nth(slug: str, pr: dict, counter_rel: str) -> int:
     return nth
 
 
+def _pr_touches_counter(pr: dict, counter_rel: str) -> bool:
+    """PR 是否改了该计数器；files 形状读不出来就 fail-closed——读不出来等于
+    无法确认它改没改计数器，不能当「没改」放行。files 里的 null 条目安全忽略。"""
+    files = pr.get("files")
+    if not isinstance(files, list):
+        what = "缺失" if "files" not in pr else f"不是 JSON 数组（{type(files).__name__}）"
+        raise PendingProbeError(f"PR #{pr.get('number')} 的 files {what}，无法确认它是否改了 {counter_rel}")
+    touched = False
+    for f in files:
+        if f is None:
+            continue
+        if not isinstance(f, dict):
+            raise PendingProbeError(
+                f"PR #{pr.get('number')} 的 files 条目不是 JSON 对象（{type(f).__name__}），"
+                f"无法确认它是否改了 {counter_rel}")
+        if f.get("path") == counter_rel:
+            touched = True
+    return touched
+
+
 def max_pending_nth(repo_root: Path, counter_rel: str) -> int | None:
     """open PR 中改过该系列计数器的，取它们头上的 nth 最大值；没有则 None。
 
@@ -198,7 +218,7 @@ def max_pending_nth(repo_root: Path, counter_rel: str) -> int | None:
                                        "--limit", str(PENDING_SCAN_LIMIT), "--json", "number,headRefOid,files"]))
     best: int | None = None
     for pr in prs:
-        if not any((f or {}).get("path") == counter_rel for f in pr.get("files") or []):
+        if not _pr_touches_counter(pr, counter_rel):
             continue
         nth = _pending_counter_nth(slug, pr, counter_rel)
         if best is None or nth > best:
