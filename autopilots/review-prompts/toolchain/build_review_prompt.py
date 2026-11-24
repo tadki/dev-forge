@@ -31,6 +31,7 @@ import argparse
 import base64
 import datetime as dt
 import json
+import os
 import re
 import subprocess
 import sys
@@ -114,10 +115,19 @@ def check_kill_switch(daily_report_dir: Path, ledger_path: Path) -> str | None:
     return None
 
 
+def _gh_env() -> dict[str, str]:
+    """gh 只认 GH_TOKEN/GITHUB_TOKEN；多代理运行时的 PAT 暴露为 GITHUB_PERSONAL_ACCESS_TOKEN，桥接过去。"""
+    env = dict(os.environ)
+    pat = env.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if pat and not env.get("GH_TOKEN") and not env.get("GITHUB_TOKEN"):
+        env["GH_TOKEN"] = pat
+    return env
+
+
 def _gh_json(args: list[str]):
     """运行 gh 并解析 stdout；缺 gh / 未认证 / 非零退出 / 非法 JSON 一律抛 PendingProbeError。"""
     try:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60, env=_gh_env())
     except (OSError, subprocess.SubprocessError) as exc:
         raise PendingProbeError(f"gh 不可用：{exc}") from exc
     if r.returncode != 0:
