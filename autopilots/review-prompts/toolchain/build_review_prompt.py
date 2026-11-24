@@ -152,44 +152,54 @@ def repo_slug(repo_root: Path) -> str:
     return m.group(1)
 
 
-def max_pending_nth(repo_root: Path, counter_rel: str) -> int | None:
-    """open PR 中改过该系列计数器的，取它们头上的 nth 最大值；没有则 None。
-
-    「未合入」只按改动文件判定，不看 PR 标题。返回形状不对、条目不完整、
-    计数器读不出/读不懂、条目数达到扫描上限——任何一种都无法确认「没有
-    未合入期次」，一律抛 PendingProbeError（fail-closed），绝不静默降级。
-    """
-    slug = repo_slug(repo_root)
-    prs = _gh_json(["pr", "list", "--repo", slug, "--state", "open",
-                    "--limit", str(PENDING_SCAN_LIMIT), "--json", "number,headRefOid,files"])
+def _validated_pr_list(prs) -> list:
+    """pr list 返回必须是 JSON 数组、条目全是对象、且未触及扫描上限；否则 fail-closed。"""
     if not isinstance(prs, list):
         raise PendingProbeError(f"gh pr list 返回的不是 JSON 数组（{type(prs).__name__}），无法确认未合入期次")
     if len(prs) >= PENDING_SCAN_LIMIT:
         # --limit 处可能还有更多 open PR 被截断：漏探 = 可能重号，按失败处理。
         raise PendingProbeError(f"open PR 数达到扫描上限 {PENDING_SCAN_LIMIT}，无法确认未合入期次")
-    best: int | None = None
     for pr in prs:
         if not isinstance(pr, dict):
             raise PendingProbeError("gh pr list 的条目不是 JSON 对象，无法确认未合入期次")
+    return prs
+
+
+def _pending_counter_nth(slug: str, pr: dict, counter_rel: str) -> int:
+    """改了计数器的 PR 头上的 nth；读不出（缺 sha/content）或读不懂都 fail-closed。"""
+    sha = pr.get("headRefOid")
+    if not isinstance(sha, str) or not sha:
+        raise PendingProbeError(
+            f"改动 {counter_rel} 的 PR #{pr.get('number')} 缺 headRefOid，无法读取其计数器")
+    payload = _gh_json(["api", f"repos/{slug}/contents/{counter_rel}?ref={sha}"])
+    # GitHub 的 content 按 60 字符折行带换行，先去空白再严格解码；
+    # validate=True 保证尾巴混入非字母表字符（截断/污染）时直接报错。
+    try:
+        content = "".join(payload["content"].split())
+        nth = json.loads(base64.b64decode(content, validate=True).decode("utf-8")).get("nth")
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise PendingProbeError(
+            f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 读不出或读不懂：{exc}") from exc
+    if not isinstance(nth, int) or isinstance(nth, bool):
+        raise PendingProbeError(
+            f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 的 nth 不是整数：{nth!r}")
+    return nth
+
+
+def max_pending_nth(repo_root: Path, counter_rel: str) -> int | None:
+    """open PR 中改过该系列计数器的，取它们头上的 nth 最大值；没有则 None。
+
+    「未合入」只按改动文件判定，不看 PR 标题；任何无法确认「没有未合入
+    期次」的形态都抛 PendingProbeError（fail-closed），绝不静默降级。
+    """
+    slug = repo_slug(repo_root)
+    prs = _validated_pr_list(_gh_json(["pr", "list", "--repo", slug, "--state", "open",
+                                       "--limit", str(PENDING_SCAN_LIMIT), "--json", "number,headRefOid,files"]))
+    best: int | None = None
+    for pr in prs:
         if not any((f or {}).get("path") == counter_rel for f in pr.get("files") or []):
             continue
-        sha = pr.get("headRefOid")
-        if not isinstance(sha, str) or not sha:
-            raise PendingProbeError(
-                f"改动 {counter_rel} 的 PR #{pr.get('number')} 缺 headRefOid，无法读取其计数器")
-        payload = _gh_json(["api", f"repos/{slug}/contents/{counter_rel}?ref={sha}"])
-        # 读不出（接口无 content）或读不懂都算「无法确认未合入期次」，fail-closed：
-        # exit 4，绝不静默跳过再撞重号。GitHub 的 content 按 60 字符折行带换行，
-        # 先去空白再严格解码（validate=True 拒绝混入的非法字符）。
-        try:
-            content = "".join(payload["content"].split())
-            nth = json.loads(base64.b64decode(content, validate=True).decode("utf-8")).get("nth")
-        except (AttributeError, KeyError, TypeError, ValueError) as exc:
-            raise PendingProbeError(
-                f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 读不出或读不懂：{exc}") from exc
-        if not isinstance(nth, int) or isinstance(nth, bool):
-            raise PendingProbeError(
-                f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 的 nth 不是整数：{nth!r}")
+        nth = _pending_counter_nth(slug, pr, counter_rel)
         if best is None or nth > best:
             best = nth
     return best
