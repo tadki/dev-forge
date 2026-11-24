@@ -285,7 +285,7 @@ export const DEFAULT_PLATFORMS: PlatformDef[] = [
           note: '清单 autopilot list，平台清单即平台域，命中即归属',
         },
         read: { how: 'api', cmd: ['multica', 'autopilot', 'trigger-list', '{id}'], note: '触发器逐条 trigger-list（取前 20 个）' },
-        write: { type: 'none', advice: 'multica autopilot 暂无通用更新命令：请在平台侧修改后重采，或改为「以生产为准」采纳进库' },
+        write: { type: 'none', advice: 'multica autopilot 可用 `multica autopilot update` 更新 description 等字段；其余字段请在平台侧修改后重采，或改为「以生产为准」采纳进库' },
       },
       'autopilot-script': {
         discovery: {

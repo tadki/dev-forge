@@ -1,17 +1,18 @@
 """§SPEC-008 (SEE-1516 substep C1, fingerprint d441deebc01d): 日检 E2 锁残留 flock 口径。
 
-原 E2 以锁文件存在判「PID 锁残留」: watchdog_state.json.lock 创建后永不删
-(flock 一直持有→恒真), watchdog.lock/agent_watchdog.lock 全仓无创建者
-(恒假)。修法: 复用 _lock_holder flock 口径 + 候选指向真实 /tmp pid 文件,
-三态判定— flock 被占=存活并存, flock 空闲且持有者已死=残留(warn),
-文件不存在/无 PID 文本=无锁或已释放态(ok)。
+原 E2 以锁文件存在判「PID 锁残留」: 常驻 sidecar 创建后永不删(flock 一直持有
+→恒真), 旧锁名全仓无创建者(恒假)。修法: 复用 _lock_holder flock 口径 + 候选
+指向真实 /tmp pid 文件, 三态判定— flock 被占=存活并存, flock 空闲且持有者已
+死=残留(warn), 文件不存在/无 PID 文本=无锁或已释放态(ok)。
+
+SEE-1634: 两个已退役巡检的 E1 与 sidecar/pid 候选随之移除；本套件保留现存
+候选 version_check.pid 的同一组三态断言。
 """
 
 import os
 import argparse
 import sys
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -45,8 +46,6 @@ def _force_fcntl(monkeypatch, holder_alive):
 
 def test_e2_ok_no_candidate(tmp_path, checker, monkeypatch):
     """无任何候选锁文件 → ok 不告警。"""
-    monkeypatch.setattr(tdc, "WATCHDOG_STATE",
-                        str(tmp_path / "nowhere" / "watchdog_state.json"))
     monkeypatch.setattr(tdc.tempfile, "gettempdir", lambda: str(tmp_path / "notmp"))
     (tmp_path / "notmp").mkdir(parents=True)
     c, _ = checker
@@ -57,10 +56,9 @@ def test_e2_ok_no_candidate(tmp_path, checker, monkeypatch):
 
 def test_e2_live_holder_not_residue(tmp_path, checker, monkeypatch):
     """候选存在但 flock 被存活进程持有 → 非残留 (调度并存)。"""
-    lock = tmp_path / "agent_watchdog.pid"
+    lock = tmp_path / "version_check.pid"
     lock.write_text("42", encoding="utf-8")
     monkeypatch.setattr(tdc.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(tdc, "WATCHDOG_STATE", str(tmp_path / "wd.json"))
     _force_fcntl(monkeypatch, holder_alive=True)
     c, _ = checker
     issues, codes = _run_e2(c, tmp_path)
@@ -73,7 +71,6 @@ def test_e2_dead_holder_is_residue(tmp_path, checker, monkeypatch):
     lock = tmp_path / "version_check.pid"
     lock.write_text("42", encoding="utf-8")
     monkeypatch.setattr(tdc.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(tdc, "WATCHDOG_STATE", str(tmp_path / "wd.json"))
     _force_fcntl(monkeypatch, holder_alive=False)
     c, _ = checker
     issues, codes = _run_e2(c, tmp_path)
@@ -83,10 +80,9 @@ def test_e2_dead_holder_is_residue(tmp_path, checker, monkeypatch):
 
 def test_e2_ok_empty_file_no_pid_text(tmp_path, checker, monkeypatch):
     """候选存在但无 PID 文本 (已释放态, PidFileLock release 后空文件) → ok。"""
-    lock = tmp_path / "issue_status_check.pid"
+    lock = tmp_path / "version_check.pid"
     lock.write_text("", encoding="utf-8")
     monkeypatch.setattr(tdc.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(tdc, "WATCHDOG_STATE", str(tmp_path / "wd.json"))
 
     def _fake(path):
         return None, False  # holder_pid None (无文本)
@@ -95,40 +91,3 @@ def test_e2_ok_empty_file_no_pid_text(tmp_path, checker, monkeypatch):
     issues, codes = _run_e2(c, tmp_path)
     assert codes == [], codes
     assert issues == [], issues
-
-
-# --- watchdog_state.json.lock sidecar: 常驻但 flock 空闲 → 非残留 -------------
-
-def test_e2_wd_sidecar_empty_flock_ok(tmp_path, checker, monkeypatch):
-    """wd_state.lock 常驻(创建后不删) 但 flock 空闲且无死PID → ok, 不恒真告警。"""
-    s = tmp_path / "wd.json"
-    s.parent.mkdir(parents=True, exist_ok=True)
-    Path(str(s) + ".lock").write_text("", encoding="utf-8")
-    monkeypatch.setattr(tdc, "WATCHDOG_STATE", str(s))
-    monkeypatch.setattr(tdc.tempfile, "gettempdir", lambda: str(tmp_path / "notmp"))
-    (tmp_path / "notmp").mkdir(parents=True)
-
-    def _fake(path):
-        return None, False
-    monkeypatch.setattr(tdc, "_lock_holder", _fake)
-    c, _ = checker
-    issues, codes = _run_e2(c, tmp_path)
-    assert codes == [], codes
-    assert issues == [], issues
-
-
-def test_e2_wd_sidecar_dead_holder_warns(tmp_path, checker, monkeypatch):
-    """sidecar flock 空闲且文件含死 PID → warn 残留。
-
-    hardener 补测：候选集删 sidecar (watchdog_state.json.lock) 的变异只在
-    「sidecar 死残留」形态下可检——空 flock sidecar 两种实现都判 ok。
-    """
-    s = tmp_path / "wd.json"
-    Path(str(s) + ".lock").write_text("424242", encoding="utf-8")
-    monkeypatch.setattr(tdc, "WATCHDOG_STATE", str(s))
-    monkeypatch.setattr(tdc.tempfile, "gettempdir", lambda: str(tmp_path / "notmp"))
-    (tmp_path / "notmp").mkdir(parents=True)
-    _force_fcntl(monkeypatch, holder_alive=False)
-    c, _ = checker
-    issues, codes = _run_e2(c, tmp_path)
-    assert "pid_lock_residue" in codes, codes

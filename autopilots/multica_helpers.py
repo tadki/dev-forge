@@ -1,7 +1,6 @@
 """Shared constants and helpers for Multica workspace scripts.
 
-Used by the autopilot scripts (agent_watchdog, architecture_sweep,
-issue_status_check, push_comment_sender, version_check, watchdog_report).
+Used by the autopilot scripts (architecture_sweep, version_check).
 """
 
 import json
@@ -75,7 +74,6 @@ def utc_now_iso() -> str:
 # Autopilot state must survive reboots, so it lives under ~/.multica rather
 # than /tmp (which is wiped on restart). Overridable via MULTICA_HOME for tests.
 MULTICA_HOME = os.path.expanduser(os.environ.get("MULTICA_HOME", "~/.multica"))
-WATCHDOG_STATE_FILE = os.path.join(MULTICA_HOME, "watchdog_state.json")
 WORKSPACE_MUTEX_FILE = os.path.join(MULTICA_HOME, "autopilot_workspace.lock")
 
 

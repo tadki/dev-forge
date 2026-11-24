@@ -22,18 +22,29 @@
     0  拼装成功，prompt 已输出
     2  参数错误 / 模板缺失
     3  Kill Switch 命中（~/.multica/toolchain-reports/DISABLED 或台账目录 DISABLED 存在）——本期跳过
+    4  无法确认未合入台账 PR 的期号（gh 缺失 / 未认证 / 查询出错）——本期不派生期号
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 TEMPLATE_PATH_REL = Path("autopilots/review-prompts/toolchain/prompts/toolchain_review_prompt.md")
+
+# 期号计数器随台账 PR 落 main；未合入 PR 头上的计数器也参与取 max（RCA-M02）。
+COUNTER_REL = "autopilots/review-prompts/toolchain/ledger/review-state.json"
+PENDING_SCAN_LIMIT = 200
+
+
+class PendingProbeError(RuntimeError):
+    """无法确认未合入期次。按 Leader 裁定 fail-closed：不派生期号、不动计数器。"""
 
 # 期次 -> (主题素材节号, 主题中文名, 主题英文 key)；素材节正文经 theme_body 注入 §1.1
 THEMES = [
@@ -103,8 +114,54 @@ def check_kill_switch(daily_report_dir: Path, ledger_path: Path) -> str | None:
     return None
 
 
-def next_nth(state_file: Path, forced: int | None) -> int:
-    """期次管理：forced 非 None 则用之；否则读 state_file 自增并写回。"""
+def _gh_json(args: list[str]):
+    """运行 gh 并解析 stdout；缺 gh / 未认证 / 非零退出 / 非法 JSON 一律抛 PendingProbeError。"""
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PendingProbeError(f"gh 不可用：{exc}") from exc
+    if r.returncode != 0:
+        raise PendingProbeError(f"gh {' '.join(args)} exit {r.returncode}: {r.stderr.strip()[:200]}")
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError as exc:
+        raise PendingProbeError(f"gh 输出不是合法 JSON：{r.stdout[:120]!r}") from exc
+
+
+def repo_slug(repo_root: Path) -> str:
+    """从 origin remote 解析 owner/repo；读不到也按探测失败处理。"""
+    try:
+        r = subprocess.run(["git", "-C", str(repo_root), "remote", "get-url", "origin"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PendingProbeError(f"无法读取 git remote：{exc}") from exc
+    m = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?/?$", r.stdout.strip())
+    if r.returncode != 0 or not m:
+        raise PendingProbeError(f"无法从 origin 解析 repo：{r.stdout.strip() or r.stderr.strip()}")
+    return m.group(1)
+
+
+def max_pending_nth(repo_root: Path, counter_rel: str) -> int | None:
+    """open PR 中改过该系列计数器的，取它们头上的 nth 最大值；没有则 None。
+
+    「未合入」只按改动文件判定，不看 PR 标题。
+    """
+    slug = repo_slug(repo_root)
+    prs = _gh_json(["pr", "list", "--repo", slug, "--state", "open",
+                    "--limit", str(PENDING_SCAN_LIMIT), "--json", "number,headRefOid,files"])
+    best: int | None = None
+    for pr in prs:
+        if not any((f or {}).get("path") == counter_rel for f in pr.get("files") or []):
+            continue
+        payload = _gh_json(["api", f"repos/{slug}/contents/{counter_rel}?ref={pr['headRefOid']}"])
+        nth = json.loads(base64.b64decode(payload["content"]).decode("utf-8")).get("nth")
+        if isinstance(nth, int) and (best is None or nth > best):
+            best = nth
+    return best
+
+
+def next_nth(state_file: Path, forced: int | None, repo_root: Path, counter_rel: str) -> int:
+    """期次管理：forced 非 None 则用之；否则取 max(仓内计数器, 未合入 PR 期号) + 1 并写回。"""
     if forced is not None:
         return forced
     state = {"nth": 0}
@@ -113,7 +170,9 @@ def next_nth(state_file: Path, forced: int | None) -> int:
             state.update(json.loads(state_file.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             pass
-    state["nth"] = int(state.get("nth", 0)) + 1
+    # 先探测再写回：探测失败时必须保持计数器原样（fail-closed）。
+    pending = max_pending_nth(repo_root, counter_rel)
+    state["nth"] = max(int(state.get("nth", 0)), pending or 0) + 1
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(state), encoding="utf-8")
     return state["nth"]
@@ -144,10 +203,13 @@ def resolve_date(args: argparse.Namespace) -> tuple[str | None, int]:
         return None, 2
 
 
+def resolve_repo_root(args: argparse.Namespace) -> Path:
+    return Path(args.repo_root).resolve() if args.repo_root else find_repo_root(Path(__file__).resolve())
+
+
 def resolve_paths(args: argparse.Namespace, date_str: str) -> tuple[Path, Path, Path, Path]:
     """解析 template_path / daily_report_dir / ledger_path / state_file。"""
-    script_path = Path(__file__).resolve()
-    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(script_path)
+    repo_root = resolve_repo_root(args)
     template_path = repo_root / TEMPLATE_PATH_REL
     daily_report_dir = Path(args.daily_report_dir or "~/.multica/toolchain-reports/").expanduser()
     ledger_path = Path(args.ledger_path) if args.ledger_path else Path(f"autopilots/review-prompts/toolchain/ledger/{date_str[:7]}.md")
@@ -233,7 +295,12 @@ def main() -> int:
         print(f"KILL-SWITCH: {kill} 存在，本期跳过（空输出）", file=sys.stderr)
         return 3
 
-    nth = next_nth(state_file, args.nth)
+    try:
+        nth = next_nth(state_file, args.nth, resolve_repo_root(args), COUNTER_REL)
+    except PendingProbeError as exc:
+        print(f"ERROR: 无法确认未合入台账 PR 的期号，本期不派生期号（exit 4）：{exc}",
+              file=sys.stderr)
+        return 4
 
     theme_section_num, theme_zh, theme_key = THEMES[(nth - 1) % 4]
 
