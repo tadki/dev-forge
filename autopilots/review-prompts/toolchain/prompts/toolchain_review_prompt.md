@@ -1,6 +1,6 @@
 # 工具链半周检 Agent 评审 Prompt 模板
 
-> 版本：v2.6（2026-11-25，SEE-1634 台账落 main 改为「推本执行 issue 共享分支 → 开台账 PR → 报告末尾 @Atlas 请合账」，删去「滞留时不 @ 任何人」那一分支并订正过期路径；v2.3 起结构与粒度约定不变）
+> 版本：v2.7（2026-11-25，SEE-1634 续轮：写明拼装器以退出码 4 结束时的处置，两仓默认分支写清；v2.6 台账落 main 改为「推本执行 issue 共享分支 → 开台账 PR → 报告末尾 @Atlas 请合账」，删去「滞留时不 @ 任何人」那一分支并订正过期路径；v2.3 起结构与粒度约定不变）
 > 调度方：Multica autopilot（由 SEE-1183 任务 2b 配置，每周两次）
 > 执行方：具备仓库只读访问权限的评审 agent（默认 Archi；可按主题轮换或固定）
 > 性质：模板（prompt 文本），非可执行脚本。**拼装已脚本化**：执行 agent 每期运行 `dev-forge/autopilots/review-prompts/toolchain/build_review_prompt.py`，脚本输出即当期完整评审 prompt（期号派生、四主题轮换、当期对标参考随主题注入、占位符替换、Kill Switch 检查均已内置）。本文件是脚本的拼装素材与设计规格。
@@ -18,7 +18,7 @@
 | 主题注入 | §4-§7 主题素材按 `(nth-1) % 4` 轮换，正文注入 §1.1，对标参考随主题注入（非本期参考不进 prompt） | 由脚本完成 |
 | 输出回写 | 见 §3 产出 | 检查汇报以评论形式发到本次 autopilot 创建的执行 issue 下（不新开 issue），评论末尾带一句「请合账」；台账与期号计数器推到本执行 issue 的共享分支并开台账 PR，由 Atlas 合入 main（见 §2.1） |
 | Kill Switch | 在台账目录放置 `DISABLED` 文件，或在 `~/.multica/toolchain-reports/` 放置 `DISABLED` 文件即跳过本次 | 由 Owner / Atlas 手动放置（两处任一存在即生效，与日检报告目录共用位置） |
-| 失败处理 | 单次执行失败只记录到台账 `errors:` 字段，**不重试** | 连续 2 次失败由日检红色阈值捕获 |
+| 失败处理 | 单次执行失败只记录到台账 `errors:` 字段，**不重试**；例外：拼装器以退出码 4 结束时不写台账，改为在执行 issue 发评论请 Atlas 排查（见 §2.1） | 连续 2 次失败由日检红色阈值捕获 |
 
 **拼装规则（已脚本化）**：执行 agent 每期只需一条命令——
 
@@ -26,13 +26,13 @@
 python3 dev-forge/autopilots/review-prompts/toolchain/build_review_prompt.py --output ./review_prompt.md
 ```
 
-脚本自动完成：① 派生本期期号（期号与合并解耦，规则以拼装脚本为准；探测不到有没有未合入期次时不派生，以 exit=4 结束）并按 `(nth-1) % 4` 从 §4-§7 取当期主题素材（含该主题对标参考）注入 §1.1；② 按 §1 → §2 → §3 顺序拼接（连续编号，无跳号）；③ 替换全部 `{{var}}` 占位符（date/nth/theme_zh/theme_body/executor_agent/daily_report_dir/ledger_path）；④ Kill Switch 预检（exit=3 表示本期跳过）。**脚本输出即当期完整评审 prompt，直接执行其中要求即可**。本节仅供脚本维护者参考（脚本源码 `dev-forge/autopilots/review-prompts/toolchain/build_review_prompt.py` 内 `ASSEMBLE_SECTIONS_ORDER` 为拼装顺序的单一事实源）。
+脚本自动完成：① 派生本期期号（期号与合并解耦，规则以拼装脚本为准；探测不到有没有未合入期次时不派生，以 exit=4 结束——那一期没有拼装产物，执行者不写台账，把拼装器输出的那行错误原样发到本执行 issue 并 @Atlas 请求排查，见 §2.1）并按 `(nth-1) % 4` 从 §4-§7 取当期主题素材（含该主题对标参考）注入 §1.1；② 按 §1 → §2 → §3 顺序拼接（连续编号，无跳号）；③ 替换全部 `{{var}}` 占位符（date/nth/theme_zh/theme_body/executor_agent/daily_report_dir/ledger_path）；④ Kill Switch 预检（exit=3 表示本期跳过）。**脚本输出即当期完整评审 prompt，直接执行其中要求即可**。本节仅供脚本维护者参考（脚本源码 `dev-forge/autopilots/review-prompts/toolchain/build_review_prompt.py` 内 `ASSEMBLE_SECTIONS_ORDER` 为拼装顺序的单一事实源）。
 
 ---
 
 ## 1. 评审任务
 
-你是本期工具链评审 agent，对 dev-forge 仓库与 `KingOfLikes-Godot` 仓库 master 分支做**只读**架构评审（工具链域以 dev-forge 为主域）：对标业界工具链最佳实践做评估，不是罗列现状。每条结论必须能回答两个问题：
+你是本期工具链评审 agent，对 dev-forge 仓库（`main`）与 `KingOfLikes-Godot` 仓库（`master`）做**只读**架构评审（工具链域以 dev-forge 为主域）：对标业界工具链最佳实践做评估，不是罗列现状。每条结论必须能回答两个问题：
 
 - **判据**：这条判断对应业界哪个被验证过的范式？（本期参考见 §1.1）
 - **路径**：从当前形态演化到对标形态，最小一步是什么？
@@ -54,22 +54,23 @@ python3 dev-forge/autopilots/review-prompts/toolchain/build_review_prompt.py --o
 ### 2.1 要做的事
 
 - 评审前先了解以下背景，不要凭空假设：
-  - 仓库 master 分支（只读）。工具链域：dev-forge 仓库（`claude-hooks/`、`autopilots/`、`toolchain/`、`adapters/`、`launch/`、`bootstrap/`、`tests/` 等为主域；`addons/godot_mcp/`（KOL submodule，只读）与 `.github/workflows/` 为 KOL 侧残留检查点）、`~/.claude/settings.json` 注册链，以及两库独立仓 `tadki/godot-mcp`、`tadki/godot-qa-toolkit`，按主题自行决定探索范围；
+  - 两仓默认分支（只读）：`KingOfLikes-Godot` 的 `master`、dev-forge 的 `main`。工具链域：dev-forge 仓库（`claude-hooks/`、`autopilots/`、`toolchain/`、`adapters/`、`launch/`、`bootstrap/`、`tests/` 等为主域；`addons/godot_mcp/`（KOL submodule，只读）与 `.github/workflows/` 为 KOL 侧残留检查点）、`~/.claude/settings.json` 注册链，以及两库独立仓 `tadki/godot-mcp`、`tadki/godot-qa-toolkit`，按主题自行决定探索范围；
   - 最近 7 天日检产物：`{{daily_report_dir}}`（`latest.json` 当日全量 + `history.json` 30 天窗口）；
   - 上一期半周检台账：`{{ledger_path}}`（用于趋势线比对与条目去重）；
   - 按主题用 hindsight recall 检索过往工具链决策与教训。
 - 评审完成后把本期条目追加到台账 `{{ledger_path}}`，供下期去重与趋势比对。
-- 台账落 main（Owner 2026-11-25 定案，SEE-1634）：本期台账连同期号计数器（与台账同目录的 `review-state.json`）推到**本执行 issue 的共享分支**（`shared/<本期 issue 标识号>`，即 issue 元数据的 `working_branch`），并以它开一个台账 PR（目标 `main`，标题含「台账」二字，日检 F7 据此识别）。**不自行合并**、不直推 `main`，合入由 Atlas 负责：汇报评论的最末一段用正文写一句 `[@Atlas](mention://agent/fac3e3a1-dcda-498d-8613-e8c2811f3ef5) 请合账`（不要放进代码块或反引号，否则不触发）。这一句是本流程**唯一允许的 @**，其余场合仍适用 §2.2。同一系列更早一期的台账 PR 若还没合入，先把它的台账内容原样承接进来（不改其行）再追加本期条目——本期 PR 取代旧 PR，旧 PR 由 Atlas 合账时关闭。Atlas 合账的固定步骤见 `docs/autopilots.md` 的「台账合账」一节。
+- 台账落 main（Owner 2026-11-25 定案，SEE-1634）：本期台账连同期号计数器（与台账同目录的 `review-state.json`）推到**本执行 issue 的共享分支**（`shared/<本期 issue 标识号>`，即 issue 元数据的 `working_branch`），并以它开一个台账 PR（目标 `main`，标题含「台账」二字，日检 F7 据此识别）。**不自行合并**、不直推 `main`，合入由 Atlas 负责：汇报评论的最末一段用正文写一句 `[@Atlas](mention://agent/fac3e3a1-dcda-498d-8613-e8c2811f3ef5) 请合账`（不要放进代码块或反引号，否则不触发）。「请合账」与下面退出码 4 时的「请求排查」是本流程仅有的两处 @，其余场合仍适用 §2.2。同一系列更早一期的台账 PR 若还没合入，先把它的台账内容原样承接进来（不改其行）再追加本期条目——本期 PR 取代旧 PR，旧 PR 由 Atlas 合账时关闭。Atlas 合账的固定步骤见 `docs/autopilots.md` 的「台账合账」一节。
 - 评审过程中遇到结构看不懂、上下文不足以支撑判断的情况时，先用 `/recall` 召回相关记忆（历史决策、既有教训）再下结论，不要靠猜。
 - 遇到已拍板裁决的违反项直接提报，不需重新论证：单 WS slot 独占（SEE-1148）；registry 只是加速层、lease sidecar 是真相源；remote branch 巡检停用 / deleteBranchOnMerge（SEE-1179）。
 - 遇到 CRITICAL 级问题按红线升级通道处理（见 §3.4）。
 - 评审自身运行失败时：只在台账 `errors:` 字段记一行，不发汇报评论、不重试（连续 2 次失败由日检阈值捕获）。
+- 拼装器以退出码 4 结束（无法确认有没有未合入的期次）的那一期不走上一条：本期不派生期号、不写台账、不重试，也不用 `--nth` 强行补跑，改为把拼装器输出的那行错误原样作为一条简短评论发到本执行 issue，并在评论里按「台账落 main」那一句的写法 @Atlas 请求排查。那种情形下没有本 prompt，执行者读到的是平台 description 里的同一句处置。
 
 ### 2.2 禁止做的事
 
 - 不修复、不重构、不写代码（只评审）；
 - 不新开任何 issue / discussion——检查汇报只发一条评论到本次执行 issue（见 §3）；
-- 除 §2.1「台账落 main」里的那一句「请合账」外，不 @ 任何人；不设 assignee、不催办；
+- 除 §2.1 的「请合账」与退出码 4 时的「请求排查」这两处外，不 @ 任何人；不设 assignee、不催办；
 - 不重复提报台账中已存在且状态未变化的条目（去重规则见 §3.3）；
 - 不评审游戏业务代码（属架构半周检范围）；
 - 不评审 skills 版本健康（Owner 明确从巡检范围中移除）；
@@ -184,6 +185,7 @@ multica issue comment add <本执行IssueID> \
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v2.7 | 2026-11-25 | Leader 裁定第 12 条（SEE-1634）：写明拼装器以退出码 4 结束时的处置——不派生期号、不写台账、不重试、不用 `--nth` 强行补跑，把拼装器输出的那行错误原样发到本执行 issue 并 @Atlas 请求排查，这是除「请合账」外唯一允许的 @（§0 失败处理与拼装说明、§2.1 新增一条、§2.2 放行这一处）；§1 与 §2.1 把 dev-forge 的分支由 `master` 改为两仓默认分支（KOL `master`、dev-forge `main`） |
 | v2.6 | 2026-11-25 | Owner 定案（SEE-1634，合账触发方式 A）：§2.1「台账落 main」改为可执行形态——台账与期号计数器推到本执行 issue 的共享分支、开台账 PR、不自行合并，汇报评论末尾 @Atlas 说「请合账」且这是唯一允许的 @；更早一期台账 PR 未合入时先原样承接再追加；删除 v2.5「PR 滞留时不 @ 任何人」那一分支；§2.2 与 §3 同步（产出改为四步、骨架加「台账 PR」一节、台账只追加、红线通道注明「请合账」照常）；订正过期路径（拼装脚本路径补 `autopilots/`，工具链域清单去掉已迁走的 `review-prompts/`）；§0 拼装说明改为期号派生（与合并解耦，探测不到不派生） |
 | v2.5 | 2026-11-04 | Owner 指令（SEE-1516 §SPEC-004，fingerprint 8e0c896702d2）：§2.1 新增台账落 main 可执行条款——平台 description「须立即升级 @Atlas」与「不 @ 任何人」自相矛盾不可执行，改三分支形态：正常期开 PR 落 main；滞留期不 @ 只如实标注（日检 F6/F7 warn 机器承接）；裁决走「滚动台账 → Atlas 周会裁决」单链 |
 | v2.4 | 2026-10-14 | Owner 指令（SEE-1408）：主题重组——原 A hooks 与 B autopilots 合并为「hooks 与 autopilots 编排」；godot-mcp 链路表述随 SEE-1273 重构布局更新（控制面迁 fork + `addons/godot_mcp/` submodule）；原 D 工具链测试有效性前移为 C，并增补「重复代码清理/合并」核心方向；新增 D「GQT 库架构」主题；§2.1 工具链域清单去旧挂载退役路径、反映 submodule 与两库独立仓现状 |

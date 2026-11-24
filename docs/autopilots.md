@@ -143,14 +143,15 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 ### 执行步骤
 
 1. 检出被检仓库 `master`（只读）：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`；拼装脚本与台账所在的 dev-forge 用本执行 issue 的共享分支检出：`multica repo checkout https://github.com/tadki/dev-forge.git`
-2. 运行拼装脚本生成当期评审任务：`python3 dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md`（退出码 `0` 正常 / `3` 本期跳过 / `2` 参数或模板错误，记台账 / `4` 无法确认有没有未合入期次，本期不派生，记台账后不重试）
-3. 照 `./review_prompt.md` 执行**只读**巡检（当次主题/指引是焦点而非边界——指引框架外、但只要落在本次巡检关注范围内的架构建议同样欢迎且鼓励），按其 §3「产出」把本期条目追加到台账，再把检查汇报（完整报告）作为评论发到本执行 issue 下
-4. 台账落 main（Owner 2026-11-25 定案）：台账与期号计数器推到本执行 issue 的共享分支（`shared/<本期 issue 标识号>`），开台账 PR（目标 `main`），不自行合并、不直推 `main`；汇报评论的最末一段用正文写一句 `[@Atlas](mention://agent/fac3e3a1-dcda-498d-8613-e8c2811f3ef5) 请合账`，这是本流程唯一允许的 @。合入由 Atlas 按「台账合账」一节的固定步骤执行
-5. 本执行 issue 置 backlog
+2. 运行拼装脚本生成当期评审任务：`python3 dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md`（退出码 `0` 正常 / `3` 本期跳过 / `2` 参数或模板错误，记台账后不重试 / `4` 见下一步）
+3. 退出码为 4 时（拼装器无法确认有没有未合入的期次）：本期不派生期号、不写台账、不重试，也不用 `--nth` 强行补跑；把拼装器输出的那行错误原样作为一条简短评论发到本执行 issue，并在评论里按下一步的写法 @Atlas 请求排查。这是除「请合账」外唯一允许的 @
+4. 照 `./review_prompt.md` 执行**只读**巡检（当次主题/指引是焦点而非边界——指引框架外、但只要落在本次巡检关注范围内的架构建议同样欢迎且鼓励），按其 §3「产出」把本期条目追加到台账，再把检查汇报（完整报告）作为评论发到本执行 issue 下
+5. 台账落 main（Owner 2026-11-25 定案）：台账与期号计数器推到本执行 issue 的共享分支（`shared/<本期 issue 标识号>`），开台账 PR（目标 `main`），不自行合并、不直推 `main`；汇报评论的最末一段用正文写一句 `[@Atlas](mention://agent/fac3e3a1-dcda-498d-8613-e8c2811f3ef5) 请合账`，这是除「请求排查」外唯一允许的 @。合入由 Atlas 按「台账合账」一节的固定步骤执行
+6. 本执行 issue 置 backlog
 
 ### 严禁行为
 
-- 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程；除台账 PR 外不开其他 PR，除报告末尾那一句「请合账」外不 @ 任何成员
+- 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程；除台账 PR 外不开其他 PR；除「请合账」与退出码 4 时的「请求排查」两句外不 @ 任何成员
 - 不 spawn 子代理、不持有 godot-mcp bridge
 - 评审对象全程只读：KOL 仓库零写入、零推送；dev-forge 侧只写台账与期号计数器两个文件，且只推到本执行 issue 的共享分支
 - 不自行合并台账 PR
@@ -205,7 +206,9 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 
 ### 触发
 
-执行者把台账（工具链、架构连同期号计数器）推到**本执行 issue 的共享分支**（`shared/<本期 issue 标识号>`），开一个台账 PR（目标 `main`），然后在报告评论的最末一段用正文写一句「请合账」并 @Atlas——这是周检流程里唯一允许的 @。Atlas 收到后随到随合。
+执行者把台账（工具链、架构连同期号计数器）推到**本执行 issue 的共享分支**（`shared/<本期 issue 标识号>`），开一个台账 PR（目标 `main`），然后在报告评论的最末一段用正文写一句「请合账」并 @Atlas。Atlas 收到后随到随合。
+
+周检流程里只允许两处 @Atlas：一处是上面的「请合账」；另一处是拼装器以退出码 4 结束时的「请求排查」——那一期没有派生期号，执行者不写台账、不重试，把拼装器输出的那行错误原样作为一条简短评论发到本执行 issue 并 @Atlas 请求排查（工具链、架构两个系列适用；仓库结构周检没有拼装脚本）。探测失败就宁可不跑一期，前提是失败要有人看见。其余场合一律不 @。
 
 ### Atlas 合账的固定步骤
 
@@ -243,5 +246,5 @@ autopilot 共用，见 `autopilots/kill_switch.py`）：
 ## 通用原则
 
 - 脚本型 autopilot 的 description 只保留"检出仓库 → 执行脚本 → 静默结束"，不重复脚本细节。
-- Agent 评审型 autopilot（工具链半周检、架构半周检、仓库结构周检）的 description 同样只做薄壳：检出、运行拼装脚本（仓库结构周检是读仓内模板）、收尾三步。评审规则与报告骨架只在仓内模板里，description 不复述；收尾一步只留「台账推共享分支、开台账 PR、报告末尾请合账」这一句约定。
+- Agent 评审型 autopilot（工具链半周检、架构半周检、仓库结构周检）的 description 同样只做薄壳：检出、运行拼装脚本（仓库结构周检是读仓内模板）、收尾三步。评审规则与报告骨架只在仓内模板里，description 不复述；收尾一步只留「台账推共享分支、开台账 PR、报告末尾请合账」这一句约定，另带退出码说明——拼装器以退出码 4 结束时没有拼装产物，执行者只能从 description 读到处置。
 - 所有脚本相关说明以本文档为准。
