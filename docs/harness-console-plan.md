@@ -67,7 +67,7 @@ multica 平台（server @ Mac mini 192.168.1.210:9278）
 | **Hooks 脚本** | scripts/ 11 个业务脚本 + lib/ 4 个；state/ 2743 个 one-shot 哨兵；firelog（repo 级优先，全局兜底，10MiB 轮转） | 文件系统 + 运行态 |
 | **Skills** | 全局 6（hindsight-coding-agent/recall/review-md/revy-testing/taskassign/learned）+ ECC `.agents/skills/` 34 + grepai 项目 2 + multica 平台 skills（code-review/recall/multica-cli/multica-platform…，运行时物化进 workdir） | 目录扫描 + multica API |
 | **服务** | systemd system 1 + user 2、Windows 桥 2、常驻树（multica daemon + repo-sync ×3）、每会话 MCP 子进程 | `systemctl`/`ps`/unit 文件/`/mnt/c` 脚本 |
-| **Autopilots** | 脚本型 5（当日实况；其中 2 个巡检已于 SEE-1634 退役，现存 architecture_sweep 5a40f7e4 / version_check / guard_pending）+ agent 评审型 2（Refacty 半周检 / Archi 周检）；**调度全在 multica 平台 cron trigger** | 脚本 + `docs/autopilots.md` + multica API |
+| **Autopilots** | 2026-11-25 现状（按平台 autopilot 记录核对）：脚本型在跑 3 个（architecture_sweep 5a40f7e4 / version_check 7f54ea39 / toolchain_daily_check 02ecd802），agent 评审型 3 个系列（工具链半周检 cc0e3567 Archi / 架构半周检 a08b4ae1 Refacty / 仓库结构周检 4669e3e9 Refacty）；2 个巡检（Agent Watchdog、Issue 状态检查）随 SEE-1634 退役；**调度全在 multica 平台 cron trigger** | 脚本 + `docs/autopilots.md` + multica API |
 | **Adapters** | hindsight-mcp.sh / hindsight-mcp-remote.py / upgrade-multica-selfhost.sh / workspace-env-check.sh（env 契约式配置） | 文件系统（需静态解析 env） |
 | **repo-sync** | repos.d 3 仓注册（name/repo_path/remote/branch/lock_file…） | `repo-sync/repos.d/*.json` ✅ |
 | **健康报告** | `toolchain_daily_check.py` 6 维度日检 → `~/.multica/toolchain-reports/{latest,history}.json`（GREEN/REDLINE）；`~/.multica/arch-patrol/last_report.json` | **现成 JSON，直接消费** |
