@@ -278,3 +278,111 @@ class TestPendingNthProbe:
         assert "Traceback" not in r.stderr
         assert state.read_text(encoding="utf-8") == seed
         assert not out.exists()
+
+
+class TestProbeMalformedShapes:
+    """Final Review 派单的异常输入族：返回形状不对/条目不完整/计数器读不懂
+    一律 fail-closed（exit 4、计数器不变、无产物、无栈），以及 base64 折行
+    与扫描上限边界的正反两向。"""
+
+    SEED = json.dumps({"nth": 25})
+
+    def _fail_closed(self, tmp_path, env_extra):
+        gh = _make_gh_stub(tmp_path)
+        state = tmp_path / "state.json"
+        state.write_text(self.SEED, encoding="utf-8")
+        out = tmp_path / "out.md"
+        r = _run_builder(
+            "--repo-root", str(REPO_ROOT), "--date", "2026-11-25",
+            "--state-file", str(state), "--output", str(out),
+            gh_dir=gh, env_extra=env_extra,
+        )
+        assert r.returncode == 4, r.stderr
+        assert "Traceback" not in r.stderr
+        assert state.read_text(encoding="utf-8") == self.SEED
+        assert not out.exists()
+
+    def test_pr_list_object_fails_closed(self, tmp_path):
+        self._fail_closed(tmp_path, {"GH_PR_LIST": "{}",
+                                     "GH_API_RAW": json.dumps({"content": base64.b64encode(b'{"nth": 30}').decode()})})
+
+    def test_pr_list_null_fails_closed(self, tmp_path):
+        self._fail_closed(tmp_path, {"GH_PR_LIST": "null",
+                                     "GH_API_RAW": json.dumps({"content": base64.b64encode(b'{"nth": 30}').decode()})})
+
+    def test_pr_list_null_entry_fails_closed(self, tmp_path):
+        self._fail_closed(tmp_path, {"GH_PR_LIST": "[null]",
+                                     "GH_API_RAW": json.dumps({"content": base64.b64encode(b'{"nth": 30}').decode()})})
+
+    def test_pr_without_head_sha_fails_closed(self, tmp_path):
+        self._fail_closed(tmp_path, {
+            "GH_PR_LIST": json.dumps([{"number": 7, "files": [{"path": COUNTER_REL}]}]),
+            "GH_API_RAW": json.dumps({"content": base64.b64encode(b'{"nth": 30}').decode()}),
+        })
+
+    def test_base64_garbage_suffix_fails_closed(self, tmp_path):
+        good = base64.b64encode(b'{"nth": 30}').decode()
+        self._fail_closed(tmp_path, {
+            "GH_PR_LIST": _pr_payload(),
+            "GH_API_RAW": json.dumps({"content": good + "!!!not-base64"}),
+        })
+
+    def test_base64_wrapped_newlines_still_works(self, tmp_path):
+        """GitHub 真实形态：content 按 60 字符折行带换行，必须照常派生。"""
+        gh = _make_gh_stub(tmp_path)
+        state = tmp_path / "state.json"
+        state.write_text(self.SEED, encoding="utf-8")
+        out = tmp_path / "out.md"
+        raw = base64.b64encode(b'{"nth": 30}').decode()
+        wrapped = "\n".join(raw[i:i + 60] for i in range(0, len(raw), 60))
+        r = _run_builder(
+            "--repo-root", str(REPO_ROOT), "--date", "2026-11-25",
+            "--state-file", str(state), "--output", str(out),
+            gh_dir=gh,
+            env_extra={"GH_PR_LIST": _pr_payload(), "GH_API_RAW": json.dumps({"content": wrapped})},
+        )
+        assert r.returncode == 0, r.stderr
+        assert "第 31 期" in out.read_text(encoding="utf-8")
+        assert json.loads(state.read_text(encoding="utf-8"))["nth"] == 31
+
+    def _pr_list(self, n):
+        prs = [{"number": i, "headRefOid": f"sha{i}", "files": [{"path": "README.md"}]}
+               for i in range(n)]
+        prs[0] = {"number": 1, "headRefOid": "deadbeef", "files": [{"path": COUNTER_REL}]}
+        return json.dumps(prs)
+
+    def test_pr_list_at_scan_limit_fails_closed(self, tmp_path):
+        # 达到扫描上限即无法确认「没有漏探」，静默截断正是重号来源。
+        self._fail_closed(tmp_path, {"GH_PR_LIST": self._pr_list(200),
+                                     "GH_CONTENTS": json.dumps({"deadbeef": 30})})
+
+    def test_pr_list_below_scan_limit_still_works(self, tmp_path):
+        gh = _make_gh_stub(tmp_path)
+        state = tmp_path / "state.json"
+        state.write_text(self.SEED, encoding="utf-8")
+        out = tmp_path / "out.md"
+        r = _run_builder(
+            "--repo-root", str(REPO_ROOT), "--date", "2026-11-25",
+            "--state-file", str(state), "--output", str(out),
+            gh_dir=gh,
+            env_extra={"GH_PR_LIST": self._pr_list(199),
+                       "GH_CONTENTS": json.dumps({"deadbeef": 30})},
+        )
+        assert r.returncode == 0, r.stderr
+        assert "第 31 期" in out.read_text(encoding="utf-8")
+
+    def test_repo_slug_error_hides_origin_url(self, tmp_path, monkeypatch):
+        """origin 解析失败时错误信息不得回吐原始 URL（可能带 userinfo）。"""
+        d = tmp_path / "gitbin"
+        d.mkdir()
+        (d / "git").write_text(
+            '#!/usr/bin/env bash\necho "https://user:fake-secret@git.example.com/foo/bar.git"\n',
+            encoding="utf-8")
+        (d / "git").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{d}:{os.environ['PATH']}")
+        with pytest.raises(builder.PendingProbeError) as ei:
+            builder.repo_slug(REPO_ROOT)
+        msg = str(ei.value)
+        assert "fake-secret" not in msg
+        assert "git.example.com" not in msg
+        assert "foo/bar" not in msg
