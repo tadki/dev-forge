@@ -14,11 +14,14 @@
 #  - mem-search-context 规则已从规则集退役（SEE-1330 S4 漂移）：原 mem-search-context
 #    "无 agents 限定 remind 规则对所有 agent per-run 一次触发"的用例语义迁移到
 #    recall-reminder（无 agents 限定、无 when、one_shot run、PreToolUse）等价钉住。
-#  - doc-reminder 迁移后 enabled=false → disabled 规则永不触发（引擎在 when 求值前即
-#    continue）；v1 的 PostToolUse-only remind 断言按 "不触发" 语义收紧。
-#  - 规则集 14 条 = 6 deny（4 agent skill-check + mention-confirm-check +
-#    child-issue-guard）+ 7 context（4 agent reminder + recall-reminder +
-#    grepai-search-reminder + tscn-tres-guard）+ 1 disabled（doc-reminder），enabled=13。
+#  - SEE-1388 SPEC-004 物理删除 doc-reminder 死规则（v1 PostToolUse-only 断言已按
+#    "不触发" 语义收紧）；9753dc0 起 atlas-workflow-skill-check 为唯一有意停用规则
+#   （enabled=false → 引擎在 when 求值前 continue，永不触发）。
+#  - 规则集 15 条 = 6 deny（4 agent skill-check + mention-confirm-check +
+#    child-issue-guard；其中 atlas-workflow-skill-check 停用）+ 7 context（4 agent
+#    reminder + recall-reminder + grepai-search-reminder + tscn-tres-guard）
+#    + 2 pending 补投（atlas-postcompact-arm / atlas-postcompact-deliver，
+#    op=pending_set/pending_context，SEE-1621 R2），enabled=14。
 #  - used_skill 拓扑（v1 D5 漂移）：v2 引擎 used_skill 真实执行 `multica issue
 #    run-messages <uuid> --output json`。本套件注入 multica shim：无 MOCK_TRANSCRIPT
 #    时返回 `[]`（transcriptAvailable=true、无技能使用 → not(any used_skill)=true →
@@ -328,12 +331,14 @@ else
     fail "rules-v2.json is INVALID JSON"
 fi
 
-# Verify 13 rules（SEE-1388 SPEC-004：doc-reminder 死规则物理删除 → v2: 6 deny + 7 context + 0 disabled）
+# Verify 15 rules（SEE-1388 SPEC-004：doc-reminder 死规则物理删除；SEE-1621 R2 增补
+# atlas-postcompact-arm/deliver（R2c 移除不可达 atlas-postcompact-reminder）
+# → v2: 6 deny + 7 context + 2 pending）
 RULE_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')).rules.length)")
-if [ "$RULE_COUNT" -eq 13 ]; then
-    pass "Rule count: $RULE_COUNT (expected 13)"
+if [ "$RULE_COUNT" -eq 15 ]; then
+    pass "Rule count: $RULE_COUNT (expected 15)"
 else
-    fail "Rule count: $RULE_COUNT (expected 13)"
+    fail "Rule count: $RULE_COUNT (expected 15)"
 fi
 
 # Verify 6 deny rules (4 agent skill-check + mention-confirm-check + child-issue-guard)
@@ -353,10 +358,11 @@ else
 fi
 
 # SEE-1388 SPEC-004（fingerprint b9361f0c8695）：doc-reminder 死规则已物理删除，
-# disabled 规则归零；且 rules-v2.json 不得再含 doc-reminder。
-DISABLED=$(node -e "const r=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')).rules; const d=r.filter(x=>x.enabled===false).map(x=>x.name); console.log(d.length===0?'ok':'bad:'+d.join(','))" 2>/dev/null)
+# 不得再现；9753dc0 起 atlas-workflow-skill-check 为唯一有意停用规则——disabled
+# 集合必须恰为该一条，出现任何其他 enabled=false 死规则即 FAIL。
+DISABLED=$(node -e "const r=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')).rules; const d=r.filter(x=>x.enabled===false).map(x=>x.name); console.log(d.length===1&&d[0]==='atlas-workflow-skill-check'?'ok':'bad:'+d.join(','))" 2>/dev/null)
 if [ "$DISABLED" = "ok" ]; then
-    pass "Disabled rules: 0（doc-reminder 已删除，无 enabled=false 死规则）"
+    pass "Disabled rules: 恰为 atlas-workflow-skill-check（9753dc0 有意停用）"
 else
     fail "Disabled rules unexpected: $DISABLED"
 fi
@@ -386,17 +392,20 @@ fi
 # transcript 可用且无技能使用 → not(any used_skill)=true → comment_add 正确 deny
 #（v1 语义为 "transcript 不可用则 skip"，S5 漂移说明见文件头）。
 # MOCK_TRANSCRIPT（含 Skill 使用记录）→ not(any)=false → 放行分支。
+# 9753dc0 起 atlas-workflow-skill-check 停用：P0-1a 断言放行，deny 路径由
+# P0-1b/c/d（enabled 规则）继续钉住。
 #####################################################################
 separator "P0-1: agent skill-check — used_skill topology (v2)"
 
-# atlas-workflow-skill-check: Atlas + comment_add + not(used taskflow/task-assign/code-review)
+# atlas-workflow-skill-check 已停用（9753dc0 现行语义）：Atlas + comment_add +
+# transcript 无技能使用 → 不再 deny；atlas-bash-skill-reminder context 照常注入。
+# deny reason '[unified-hook] ' 前缀协议由 P0-2a/P0-6a（child-issue-guard）继续钉住。
 run_hook '{"tool_input":{"command":"multica issue comment add test-id --content-stdin"}}' "Atlas"
-assert_blocks "P0-1a: Atlas comment_add, transcript 无技能使用 → BLOCKED"
-assert_block_prefix "P0-1a: deny reason '[unified-hook] ' prefix"
-assert_block_message "P0-1a: deny message mentions taskflow" "taskflow"
+assert_allows "P0-1a: Atlas comment_add（atlas-workflow-skill-check 停用）→ ALLOWED"
+assert_remind "P0-1a: atlas-bash-skill-reminder 照常注入" "atlas-bash-skill-reminder"
 assert_exit_0 "P0-1a: exit 0"
 
-# pass branch: transcript 含 Skill(taskflow) 使用记录 → 不拦截
+# pass branch: transcript 含 Skill(taskflow) 使用记录 → 同样放行
 run_hook '{"tool_input":{"command":"multica issue comment add test-id --content-stdin"}}' "Atlas" "shim"
 assert_allows "P0-1a-pass: Atlas comment_add with Skill(taskflow) used → ALLOWED"
 assert_exit_0 "P0-1a-pass: exit 0"
@@ -790,9 +799,12 @@ assert_remind "P2-1a: recall-reminder reassigned firing without transcript depen
 assert_remind_not_deny "P2-1a: remind does not deny"
 assert_exit_0 "P2-1a: exit 0"
 
-# v2 used_skill 拓扑：comment_add + 无技能使用 transcript（shim 返回 []）→ deny（v1: skip）
+# v2 used_skill 拓扑（9753dc0 后现行语义）：atlas-workflow-skill-check 停用 →
+# Atlas comment_add + 无技能使用 transcript 不再 deny；deny 语义由 P0-1b
+#（Revy enabled）继续钉住，此处断言放行 + reminder 注入。
 run_hook '{"tool_input":{"command":"multica issue comment add test --content-stdin"}}' "Atlas"
-assert_blocks "P2-1b: atlas-workflow-skill-check — transcript with no skill use → denies (v2 semantics)"
+assert_remind_not_deny "P2-1b: atlas-workflow-skill-check 停用 — Atlas comment_add 不 deny"
+assert_remind "P2-1b: atlas-bash-skill-reminder 照常注入" "atlas-bash-skill-reminder"
 assert_exit_0 "P2-1b: exit 0"
 
 # 即使 block 场景中 deny 是终态，agent remind 规则依旧在同一 run 内先于 deny 命中并叠加进 reason

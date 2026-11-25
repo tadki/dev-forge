@@ -10,13 +10,15 @@
 const HOOK_POINTS = [
   'PreToolUse', 'PostToolUse', 'SessionStart', 'SessionEnd',
   'Stop', 'SubagentStop', 'UserPromptSubmit', 'Notification', 'PreCompact',
-  'PermissionRequest',
+  // SEE-1621：CC 压缩完成后触发（matcher manual/auto，载荷含 trigger/compact_summary，
+  // 无决策控制位），context 注入语义与 PreCompact 同型
+  'PostCompact', 'PermissionRequest',
 ];
 const ALL_POINTS = new Set(HOOK_POINTS);
 // Points whose payload carries no tool_name / tool_input.command / file_path
 const NO_TOOL_PAYLOAD = new Set([
   'Stop', 'SubagentStop', 'SessionStart', 'SessionEnd',
-  'UserPromptSubmit', 'Notification', 'PreCompact',
+  'UserPromptSubmit', 'Notification', 'PreCompact', 'PostCompact',
 ]);
 
 // M1 lookup: op variant -> set of hook points where the op is evaluable.
@@ -48,9 +50,13 @@ const M2_ACTION_POINTS = {
   context: new Set(HOOK_POINTS),
   modify: new Set(['PreToolUse']),
   run_script: new Set(HOOK_POINTS),
+  // SEE-1621 R2：压缩后补投 —— PostCompact 只记账（session 级待提醒标记），
+  // 下一次 PreToolUse（任意工具）消费并注入 additionalContext。
+  pending_set: new Set(['PostCompact']),
+  pending_context: new Set(['PreToolUse']),
 };
 
-const ACTION_OPS = ['deny', 'context', 'modify', 'run_script'];
+const ACTION_OPS = ['deny', 'context', 'modify', 'run_script', 'pending_set', 'pending_context'];
 const ATOMIC_OPS = ['event', 'tool', 'command', 'file', 'content', 'used_skill', 'branch', 'payload', 'cwd', 'repo'];
 const ONE_SHOT_SCOPES = ['run', 'issue', 'session', 'never'];
 // SEE-1333 D4：{id} 直读形态的窗口 id 来源白名单（run/session 合一后仅两源）
@@ -572,6 +578,12 @@ function transAction(state, action, ctx) {
     // 参数 schema
     if ((a.op === 'deny' || a.op === 'context') && typeof a.message !== 'string') {
       return invalid(`action[${i}].message`, `${a.op} 需要字符串 message`);
+    }
+    if ((a.op === 'pending_set' || a.op === 'pending_context') && (typeof a.key !== 'string' || a.key === '')) {
+      return invalid(`action[${i}].key`, `${a.op} 需要非空字符串 key（pending 状态键）`);
+    }
+    if (a.op === 'pending_context' && typeof a.message !== 'string') {
+      return invalid(`action[${i}].message`, 'pending_context 需要字符串 message');
     }
     if (a.op === 'run_script') {
       if (typeof a.path !== 'string' || a.path === '') {

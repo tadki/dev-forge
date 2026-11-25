@@ -1,6 +1,6 @@
 """§SPEC-006 (SEE-1516 substep B1, fingerprint 1df221b87557): wrapper 条件透传。
 
-version_check.sh / issue_status_check.sh 曾无条件透传
+version_check.sh 曾无条件透传
 `--kill-switch "$KILL_SWITCH"`，而 common_env 的 `autopilots_kill_switch`
 把未设 env 默认成 "false" —— 显式 false 覆盖 Python 侧 kill_switch_default()
 （paused 文件 OR env 单源），经 wrapper（autopilot 实际触发路径）DISABLED
@@ -18,7 +18,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMMON_ENV_SRC = REPO_ROOT / "autopilots" / "lib" / "common_env.sh"
 
-WRAPPERS = ["version_check.sh", "issue_status_check.sh"]
+# SEE-1634: 同组的另一巡检已退役；version_check 继续守同一 wrapper 契约。
+WRAPPERS = ["version_check.sh"]
 
 
 @pytest.fixture()

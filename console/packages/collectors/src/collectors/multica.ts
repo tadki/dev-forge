@@ -253,7 +253,7 @@ export const multicaCollector: Collector = {
         })
       );
       // 与 dev-forge 脚本巡逻关联（标题含脚本名 → derived-from）
-      for (const stem of ['agent_watchdog', 'issue_status_check', 'architecture_sweep', 'version_check', 'guard_pending']) {
+      for (const stem of ['architecture_sweep', 'version_check', 'guard_pending']) {
         if (ap.title.toLowerCase().includes(stem.replace(/_/g, ' ')) || ap.title.toLowerCase().includes(stem) || (ap.description ?? '').includes(stem)) {
           relations.push({ from: `autopilot-script:${stem}`, to: `autopilot-registration:${ap.id.slice(0, 8)}`, type: 'derived-from' });
           break;

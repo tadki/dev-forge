@@ -40,6 +40,85 @@ function commandOf(entry) {
   return hooks.map(h => h.command || '').join('|');
 }
 
+// SEE-1636 §SPEC-013/014：unified-hook 注册漂移判定。命令形如
+//   [env 前缀… ]<path>/hook-wrapper.sh <HookPoint> unified-hook
+// unifiedHookPath 返回其中的 <path>（非 unified-hook 形态返回 null）。
+function unifiedHookPath(command) {
+  const m = /(?:^|[ \t])(\S+)\/hook-wrapper\.sh \S+ unified-hook$/.exec(String(command || ''));
+  return m ? m[1] : null;
+}
+
+// 非 unified-hook 形态或指向本检出（globalHooks）→ null，其余返回其检出路径。
+function staleUnifiedHookPath(command, globalHooks) {
+  const p = unifiedHookPath(command);
+  return p !== null && p !== globalHooks ? p : null;
+}
+
+// SEE-1636 §SPEC-016：检出存活判定——注册指向的 wrapper 工件仍在本机存在即视为
+// 活检出（路径已不存在 = 悬空，照常清除）。
+function checkoutAlive(p) {
+  return fs.existsSync(path.join(String(p), 'hook-wrapper.sh'));
+}
+
+function collectUnifiedHookPaths(settings) {
+  const paths = new Set();
+  for (const point of Object.keys(settings.hooks || {})) {
+    const groups = settings.hooks[point];
+    if (!Array.isArray(groups)) continue;
+    for (const g of groups) {
+      if (!Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) {
+        if (!h || typeof h.command !== 'string') continue;
+        const p = unifiedHookPath(h.command);
+        if (p !== null) paths.add(p);
+      }
+    }
+  }
+  return paths;
+}
+
+// §SPEC-016 改指闸：settings 已被另一个仍然存在的检出占位而本检出尚无任何注册
+// 时拒绝整体改指（SEE-1621 事故形态：从临时检出跑 bootstrap 把现役检出的注册
+// 清成指向临时检出，临时检出删除后零可用注册）。REGISTRY_PATCH_REPOINT=1 =
+// 显式改指放行；本检出已是现役检出（settings 已含其注册）或首次安装不触发。
+// §SPEC-018：拒绝使用专用错误类型——MERGE REFUSED 出口只为改指闸保留，merge
+// 的其他异常（如未知 phase）保持原有抛出行为，不借用该出口。
+class RepointRefusedError extends Error {}
+
+function assertRepointAllowed(settings, globalHooks) {
+  if (process.env.REGISTRY_PATCH_REPOINT === '1') return;
+  const paths = collectUnifiedHookPaths(settings);
+  if (paths.has(globalHooks)) return;
+  const livingOther = Array.from(paths).filter(p => p !== globalHooks && checkoutAlive(p));
+  if (livingOther.length > 0) {
+    throw new RepointRefusedError(`settings 的 unified-hook 注册仍指向存活的检出 ${livingOther.join(', ')}，而本检出尚无注册；拒绝整体改指。如确需改指，设 REGISTRY_PATCH_REPOINT=1 重跑`);
+  }
+}
+
+// §SPEC-013：收敛悬空注册——清除指向其他检出路径的 unified-hook 条目
+//（一组被清空则整组移除；组内其他命令如 hindsight 挂载原样保留）。
+function pruneStaleRegistrations(settings, globalHooks) {
+  let changed = false;
+  for (const point of Object.keys(settings.hooks)) {
+    const groups = settings.hooks[point];
+    if (!Array.isArray(groups)) continue;
+    const filtered = [];
+    for (const g of groups) {
+      if (!Array.isArray(g.hooks)) { filtered.push(g); continue; }
+      const hooks = g.hooks.filter(h => !(h && typeof h.command === 'string'
+        && staleUnifiedHookPath(h.command, globalHooks) !== null));
+      if (hooks.length === 0) { changed = true; continue; } // 整组移除
+      if (hooks.length !== g.hooks.length) {
+        g.hooks = hooks;
+        changed = true;
+      }
+      filtered.push(g);
+    }
+    settings.hooks[point] = filtered;
+  }
+  return changed;
+}
+
 function merge(settings, manifest, globalHooks, phaseName) {
   const wrapper = manifest.wrapper;
   const alias = manifest.alias;
@@ -49,6 +128,14 @@ function merge(settings, manifest, globalHooks, phaseName) {
 
   settings.hooks = settings.hooks && typeof settings.hooks === 'object' ? settings.hooks : {};
   let changed = false;
+
+  // SEE-1636 §SPEC-016（QA 复核收窄）：只删除「本收敛清空」的事件键——
+  // merge 前已存在的空事件键与本收敛无关，原样保留。
+  const preExistingEmptyKeys = new Set(Object.keys(settings.hooks)
+    .filter(k => Array.isArray(settings.hooks[k]) && settings.hooks[k].length === 0));
+
+  // SEE-1636 §SPEC-016：改指闸先于任何渲染/清理执行——拒绝时零写盘。
+  assertRepointAllowed(settings, globalHooks);
 
   for (const point of manifest.hook_points) {
     const want = v2Command(globalHooks, wrapper, point, alias);
@@ -90,10 +177,43 @@ function merge(settings, manifest, globalHooks, phaseName) {
       settings.hooks[point] = filtered;
     }
   }
+
+  // SEE-1636 §SPEC-013：渲染本检出注册后收敛——settings 里指向其他检出路径的
+  // unified-hook 注册一律清除（成因事故：从临时检出跑过 bootstrap.sh 的会话
+  // 在全局 settings 留下悬空条目，每次 hook 触发报错；merge 只按命令全等判幂等，
+  // 从不清理他检出注册）。
+  if (pruneStaleRegistrations(settings, globalHooks)) changed = true;
+
+  // SEE-1636 §SPEC-016：收敛把某事件的组全部清掉时删除该事件键，不留空数组；
+  // 与本收敛无关的既有空事件键（preExistingEmptyKeys）原样保留。
+  for (const key of Object.keys(settings.hooks)) {
+    if (Array.isArray(settings.hooks[key]) && settings.hooks[key].length === 0
+        && !preExistingEmptyKeys.has(key)) {
+      delete settings.hooks[key];
+      changed = true;
+    }
+  }
   return changed;
 }
 
 function verify(settings, manifest, globalHooks) {
+  // SEE-1636 §SPEC-014：漂移可检出——settings 仍有指向其他路径的 unified-hook
+  // 注册时判失败并列出条目（此前只查期望条目存在，检不出这种漂移）。
+  const stale = [];
+  for (const point of Object.keys(settings.hooks || {})) {
+    const groups = settings.hooks[point];
+    if (!Array.isArray(groups)) continue;
+    for (const g of groups) {
+      if (!Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) {
+        if (!h || typeof h.command !== 'string') continue;
+        if (staleUnifiedHookPath(h.command, globalHooks) !== null) {
+          stale.push(`${point}: ${h.command}`);
+        }
+      }
+    }
+  }
+  if (stale.length > 0) return { ok: false, stale };
   for (const point of manifest.hook_points) {
     const want = v2Command(globalHooks, manifest.wrapper, point, manifest.alias);
     const groups = Array.isArray(settings.hooks && settings.hooks[point]) ? settings.hooks[point] : [];
@@ -115,14 +235,29 @@ function main() {
     if (action === 'verify') {
       const r = verify(settings, manifest, globalHooks);
       if (!r.ok) {
-        process.stderr.write(`[registry-patch] VERIFY FAIL: missing ${r.missing}\n`);
+        if (r.stale && r.stale.length > 0) {
+          process.stderr.write('[registry-patch] VERIFY FAIL: stale unified-hook registrations pointing to other checkouts:\n');
+          for (const s of r.stale) process.stderr.write(`  ${s}\n`);
+        }
+        if (r.missing) {
+          process.stderr.write(`[registry-patch] VERIFY FAIL: missing ${r.missing}\n`);
+        }
         process.exit(1);
       }
       process.stdout.write('verified\n');
       return;
     }
 
-    const changed = merge(settings, manifest, globalHooks, args.phase);
+    let changed;
+    try {
+      changed = merge(settings, manifest, globalHooks, args.phase);
+    } catch (e) {
+      // SEE-1636 §SPEC-016 改指闸拒绝：exit 非零、零写盘、stderr 说明原因与补救。
+      // §SPEC-018：仅改指闸拒绝走此出口；其余 merge 异常原样抛出（保持既有行为）。
+      if (!(e instanceof RepointRefusedError)) throw e;
+      process.stderr.write(`[registry-patch] MERGE REFUSED: ${e.message}\n`);
+      process.exit(3);
+    }
     if (!changed) {
       process.stdout.write('unchanged\n');
       return; // 幂等：内容无变化不写盘、不产生新备份

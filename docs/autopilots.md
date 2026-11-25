@@ -1,112 +1,18 @@
 # Autopilot 脚本说明
 
-> 本文档归集所有脚本型 autopilot 的脚本路径、参数、行为与输出说明，替代各 autopilot description 中的详细内容，使其保持"检出仓库 + 执行脚本 + 静默结束"的简洁形式。
+> 本文档归集所有脚本型 autopilot 的脚本路径、参数、行为与输出说明，替代各 autopilot description 中的详细内容，使其保持"检出仓库 + 执行脚本 + 静默结束"的简洁形式。Agent 评审型 autopilot（三个周检）的实质条款在仓内 prompt 模板，本文档只记其调度信息与「台账合账」流程。
 
 ---
 
-## 1. Agent Watchdog 卡死检测
+## 1. Agent Watchdog 卡死检测（已退役，SEE-1634）
 
-- **Autopilot ID**: `25ba8a6f-aec5-4cfa-8fd7-c9eb6c54316b`
-- **执行入口**: `autopilots/agent_watchdog.sh`（平台 autopilot 实际触发的 wrapper，内部委托 `agent_watchdog.py`）
-- **执行方式**:
-
-```bash
-DRY_RUN=false \
-VERBOSE=true \
-EXECUTION_ISSUE_ID=<本执行IssueID> \
-bash autopilots/agent_watchdog.sh
-```
-
-wrapper 负责共享环境变量转换、PID/state 文件约定与 Kill Switch 透传；不要绕过 wrapper 直接执行 Python。限流使用 Python 默认值（每个 issue 每小时最多 3 次）。
-
-### 参数说明（wrapper 环境变量）
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `DRY_RUN` | `true` | 设为 `false` 后实际执行 |
-| `VERBOSE` | `false` | 设为 `true` 输出详细日志 |
-| `EXECUTION_ISSUE_ID` | 空 | 本执行 Issue ID，脚本会把报告发布到该 issue |
-| `KILL_SWITCH` | 未设置时读取 paused 文件 | 显式设置后透传纯输出模式开关 |
-
-### 行为说明
-
-1. 获取所有 workspace agent 列表（排除 Atlas 和自身）。
-2. 对每个 agent 获取 `failed/cancelled` tasks。
-3. 检测被 `idle_watchdog` 自动杀死的任务（status=failed，error 包含 `"idle watchdog"`）。
-4. 验证被 kill 的任务是 issue 的最新 run，且 issue 状态不在 `done/cancelled/blocked/wont_fix`。
-5. 应用每小时重启次数限流。
-6. 对通过限流检查的任务执行 `multica issue rerun`。
-7. 生成 JSON 报告并发布评论到 `--execution-issue-id`。
-
-### 输出 JSON 字段速查
-
-- `summary`: 扫描 agent 数、scanned tasks 数、idle_watchdog kills 数、reruns 数、Kill Switch 状态。
-- `agents_scanned`: 被扫描的 agent 列表。
-- `scanned_tasks`: 扫描到的 failed/cancelled tasks 列表。
-- `idle_watchdog_kills`: 检测到的被 idle_watchdog 杀死的任务列表。
-- `rerun_results`: 重启执行结果。
-- `skipped_tasks`: 因限流跳过的任务列表。
-- `kill_switch`: Kill Switch 是否触发。
-
-### 故障排查
-
-- **报告未发布到执行 Issue**: 检查 `--execution-issue-id` 是否正确。
-- **rerun 未执行**: 确认 issue 状态不在 `NO_RERUN_ISSUE_STATUSES`（`done/cancelled/blocked/wont_fix`）。
-- **Kill Switch 触发**: 错误率超过阈值时进入纯输出模式，需人工检查 workspace 健康状态。
+> 本链已随 SEE-1634 整链退役（2026-11-25 Owner 裁决）：`autopilots/agent_watchdog.sh`、`autopilots/agent_watchdog.py` 与其专用模块 `autopilots/watchdog_report.py`、`autopilots/watchdog_state.py` 连同测试一并删除；平台 autopilot `25ba8a6f-aec5-4cfa-8fd7-c9eb6c54316b` 随本批收尾删除，删除前先备份 description 与触发器，备份附于 SEE-1634。退役理由：该巡检自 2026-06-19 之后没有再运行过。本节仅留退役说明，历史行为文档见 git 历史。
 
 ---
 
-## 2. Issue 状态检查与催促
+## 2. Issue 状态检查与催促（已退役，SEE-1634）
 
-- **Autopilot ID**: `2dd8fa65-514d-498b-8675-63bf8f188b96`
-- **执行入口**: `autopilots/issue_status_check.sh`（平台 autopilot 实际触发的 wrapper，内部委托 `issue_status_check.py`）
-- **执行方式**:
-
-```bash
-DRY_RUN=false \
-VERBOSE=true \
-bash autopilots/issue_status_check.sh
-```
-
-wrapper 负责共享环境变量转换、PID/lock 约定与 Kill Switch 透传；不要绕过 wrapper 直接执行 Python。
-
-### 参数说明（wrapper 环境变量）
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `DRY_RUN` | `true` | 设为 `false` 后实际执行（发送催促评论、@mention） |
-| `VERBOSE` | `false` | 设为 `true` 输出详细日志 |
-| `KILL_SWITCH` | 未设置时读取 paused 文件 | 显式设置后透传纯输出模式开关 |
-
-### 行为说明
-
-1. 扫描所有 issue 的状态与元数据。
-2. 按规则分类：
-   - `need_push`: 可以催促推进的 issue。
-   - `need_push_decision`: 需要决策后才能推进的 issue。
-   - `running`: 正在执行中的 issue（任何尚未到达终态的 run：queued / dispatched / running 都会归入本类，不会发送催促）。
-   - `no_assignee`: 无负责人的 issue。
-3. `running` 类别的 issue 不会发送催促；其余类别仅在非 dry-run 且 Kill Switch 未触发时，发送催促评论或 @mention。
-4. 输出 JSON 汇总。
-
-> cancelled 状态 issue 不会被扫描；done 状态 issue 已过滤。
-
-### 输出 JSON 字段速查
-
-- `summary`: 总 issue 数、状态统计、分类统计。
-- `need_push`: 可以催促的 issue 列表。
-- `need_push_decision`: 需要决策的 issue 列表。
-- `running`: 执行中的 issue 列表。
-- `no_assignee`: 无负责人的 issue 列表。
-- `push_actions`: 催促发送结果列表。
-- `push_actions_summary`: 催促发送结果汇总。
-- `kill_switch`: Kill Switch 状态。
-- `kill_switch_alert`: Kill Switch 告警信息（若触发）。
-
-### 故障排查
-
-- **未发送催促**: 检查是否在 `--no-dry-run` 模式下；Kill Switch 触发时会降级为纯输出。
-- **Kill Switch 触发**: 错误率或 issue 数量超过阈值，需人工检查。
+> 本链已随 SEE-1634 整链退役（2026-11-25 Owner 裁决）：`autopilots/issue_status_check.sh`、`autopilots/issue_status_check.py`、`autopilots/issue_status_analysis.py` 连同测试一并删除；平台 autopilot `2dd8fa65-514d-498b-8675-63bf8f188b96`（2026-11-16 起暂停）随本批收尾删除，删除前先备份 description 与触发器，备份附于 SEE-1634。退役理由：它的催促作用已被平台按 issue 设置的条件唤醒（issue wakeup）取代。本节仅留退役说明，历史行为文档见 git 历史。
 
 ---
 
@@ -174,7 +80,7 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 ### 检查维度
 
 **L0 每日**（每次执行都跑）：
-- `REDLINE_INIT/DELETED/MODIFIED/NEW` — `addons/godot_mcp/` SHA256 manifest 校验
+- `REDLINE_INIT/DELETED/MODIFIED/NEW` — `addons/godot_mcp/` SHA256 manifest 校验；仅豁免 pinned gitlink 树中未版本化的 Godot `*.import` / `.godot/` 导入副产物，且这些副产物不写入或重祝福 manifest；已版本化的同形文件仍按新增/修改/删除检出，pinned tree 无法读取时不豁免（fail-closed）
 - `REDLINE_SKIPPED_UNINITIALIZED`（warn）— `addons/godot_mcp` gitlink 未物化时（`git submodule update --init` 未执行或失败）跳过整段红线比对，仅产出一条显式降级告警；此告警入 baseline，增量机制不会重复捕获，恢复覆盖需先物化 submodule（SEE-1460）
 - `DEPRECATED_BRIDGE` — `@deprecated` 兼容桥存量
 - `SEE_COMMENT` — `SEE-\d+` 注释存量
@@ -186,7 +92,7 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 - `GDLINT_NEW` — gdlint 警告增量（baseline diff；`--fast` 时跳过）
 
 **L1 每周一（或 `--l1`）追加**：
-- **自产 junit（SEE-1593）**：L1 轮次（非 `--dry-run`/`--fast`、kill switch 关闭）由 wrapper 先在本次被检检出内执行 `godot --headless --import` 与 `tests/run_tests.sh --all`，产出 `tests/reports/junit_report.xml` 供现有 local 取源分支消费；输入与巡逻同一 HEAD，不依赖会被平台回收的 sibling slot。跑批前先清除本地 junit 及其时间戳变体，Python 层 local 候选同样只接受 7 天内的报告——上一轮残留不得被当作本轮输入（§SPEC-010）。跑批带超时护栏（`ARCH_SWEEP_GUT_IMPORT_TIMEOUT_SECONDS` 默认 900s、`ARCH_SWEEP_GUT_TIMEOUT_SECONDS` 默认 3600s）；import/跑批失败、超时或未产出 junit 均显式记录到 stderr 且**不阻断**后续静态巡检（输入缺失由下方规则表达）
+- **自产 junit（SEE-1593）**：L1 轮次（非 `--dry-run`/`--fast`、kill switch 关闭）由 wrapper 先在本次被检检出内执行 `godot --headless --import` 与 `tests/run_tests.sh --all`，产出 junit 供现有 local 取源分支消费；junit 路径取自被检检出的 `.gutconfig.json` 的 `junit_xml_file`（去除 `res://` 前缀），该配置缺失、不可读或 `junit_xml_file` 为空时回退 `tests/reports/junit_report.xml`，不因缺失此配置中止 L1；输入与巡逻同一 HEAD，不依赖会被平台回收的 sibling slot。跑批前按解析后的路径清除本地 junit 及其时间戳变体，Python 层 local 候选同样只接受 7 天内的报告——上一轮残留不得被当作本轮输入（§SPEC-010）。跑批带超时护栏（`ARCH_SWEEP_GUT_IMPORT_TIMEOUT_SECONDS` 默认 900s、`ARCH_SWEEP_GUT_TIMEOUT_SECONDS` 默认 3600s）；import/跑批失败、超时或未产出 junit 均显式记录到 stderr 且**不阻断**后续静态巡检（输入缺失由下方规则表达）。此处对 `.gutconfig.json` 的空值回退仅决定 GUT junit 路径，不改变「执行步骤」中巡逻 config 缺失、`repo_name` 缺失及物化失败的显式非零退出契约
 - `GUT_UNVERIFIED`（warn；连续 ≥2 个 L1 轮次无有效输入时升级为 error）— 「无有效输入」= 未解析到 junit、junit 零执行（`actual_tests==0`）或 stable 源 miss/stale，三类都推进 `gut_unverified_streak`，本轮 `actual_tests>0` 则归零。规则本身只在完全没有 junit 输入且未配置 stable 源时产出，属「未验证」而非产品信号（`gut_verified=false`）；junit 存在但零执行仍为下方 `GUT_SILENT_SKIP:error`，stable miss/stale 亦维持 error。连续次数写 `gut_unverified_streak`；状态来源为上一 L1 轮（`last_report.json`；若被工作日 L0 覆盖则回退 `baseline.jsonl` 中最近含 `gut_verified` 的记录）
 - `GUT_SILENT_SKIP`（error）— 有 junit 但执行异常：全局实际执行数为 0、全局低于 95% 容差，或任一配置目录整体缺失/低于目录容差（D1 语义与 dedup 键不变）；已配置 stable 源却 miss/stale 仍为 error 并非零退出（SEE-1499 契约不放宽）
 - 度量：`junit_source` 在命中本地/槽位/稳定源时为 `local`/`slot:<slot>`/`stable:<path>`，未解析到任何 junit 时为 `none`；`gut_verified` 仅在 L1 轮次写入（有 junit 且 `actual_tests>0` 为 true）
@@ -203,14 +109,14 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 
 ### 防疲劳
 
-- dedup key = `file:line + rule_id + severity`，已在 baseline 中的 finding 不重复出现在 `new_findings`
+- dedup key 基础为 `file:line + rule_id + severity`；`REDLINE_NEW/MODIFIED/DELETED` 另追加 `content_id` 内容哈希，同路径但内容不同的信号仍进入 `new_findings`，内容相同的重复信号继续去重。已在 baseline 中的 finding 不重复出现在 `new_findings`；`content_id` 仅用于 baseline 去重，不写入对外 report 的 `findings` / `new_findings`，report schema 不变，其他 finding 沿用原 key
 - 心跳独立追加，无论是否有新告警
 - 异常升级为滚动台账 issue 草稿由 Chekky 上游层消费（本脚本不自动 @）
 
 ### 严禁行为（脚本内部保证）
 
 - 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程、不开 PR、不 @ 任何成员
-- 所有写操作仅落在 `~/.multica/arch-patrol/`（例外：① wrapper 层 `git submodule update --init --recursive` 物化——按 gitlink pinned commit 恢复 `addons/godot_mcp/` 内容，属覆盖性恢复而非改动；② L1 自产 junit——写入被检检出内 gitignored 的 `tests/reports/` 与 `.godot` 导入缓存，不触碰受版本控制文件、不写共享分支）
+- 所有写操作仅落在 `~/.multica/arch-patrol/`（例外：① wrapper 层 `git submodule update --init --recursive` 物化——按 gitlink pinned commit 恢复 `addons/godot_mcp/` 内容，属覆盖性恢复而非改动；② L1 自产 junit——写入被检检出内未版本化的 `tests/reports/`、`.godot/` 导入缓存及 `*.import` 副产物，不触碰受版本控制文件、不写共享分支）
 
 ### 退出码
 
@@ -222,52 +128,98 @@ agent shell 的直连 git-over-HTTPS 可能被 egress 层 TLS 中断拦截（TCP
 
 ## 5. 架构半周检 Agent 评审（Architecture Review Refacty）
 
-> 每周两次（周二 / 周五 03:00 Asia/Hong_Kong，= 工具链半周检 02:30 + 30 分钟）纯 agent 高维架构只读巡检。拼装已脚本化：执行 agent 每期运行 `autopilots/review-prompts/architecture/build_review_prompt.py`，脚本输出即当期完整评审 prompt。完整规格见 prompt 模板 `autopilots/review-prompts/architecture/prompts/architecture_review_prompt.md`。
+> 每周两次（周二 / 周五 03:00 Asia/Hong_Kong，= 工具链半周检 02:30 + 30 分钟）纯 agent 高维架构只读巡检。拼装已脚本化：执行 agent 每期运行 `autopilots/review-prompts/architecture/build_review_prompt.py`，脚本输出即当期完整评审 prompt。完整规格见 prompt 模板 `autopilots/review-prompts/architecture/prompts/architecture_review_prompt.md`。平台 description 只做薄壳（检出 → 跑拼装脚本 → 收尾），不复述实质条款。
 
 - **Autopilot ID**: `a08b4ae1-737f-4c63-bc6f-fa0943b965f1`
 - **Assignee**: Refacty（agent `3c6b6d88-ce6c-4e02-a78e-24ee08e70c85`）
 - **执行模式**: `create_issue`（每次跑出一个执行 issue）
 - **执行 issue 标题模板**: `架构半周检报告 {{date}}`（UTC YYYY-MM-DD；检查汇报以评论形式发到该执行 issue 下，不新开 issue）
 - **调度**: cron `0 3 * * 2,5` Asia/Hong_Kong（trigger id `5d26c3bc-53b4-40dc-8be7-a436cd88a5bb`，与工具链半周检同为周二/周五）
-- **拼装脚本**: `autopilots/review-prompts/architecture/build_review_prompt.py`（期次自增、四主题轮换 `(nth-1) % 4`：数据流与耦合 / 状态机与生命周期 / 模块边界与扩展点 / 可测性与反模式、占位符替换、Kill Switch 预检内置）
+- **拼装脚本**: `autopilots/review-prompts/architecture/build_review_prompt.py`（期号派生、四主题轮换 `(nth-1) % 4`：数据流与耦合 / 状态机与生命周期 / 模块边界与扩展点 / 可测性与反模式、占位符替换、Kill Switch 预检内置）
 - **评审模板（脚本素材）**: `autopilots/review-prompts/architecture/prompts/architecture_review_prompt.md`
 - **滚动台账**: `autopilots/review-prompts/architecture/ledger/YYYY-MM.md`（按月滚动，fingerprint 去重与趋势比对的数据底座）
+- **期号计数器**: 与台账同目录的 `review-state.json`（随台账落仓，与工具链同构）
 
 ### 执行步骤
 
-1. 检出 `master`：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`
-2. 运行拼装脚本生成当期评审任务：`python3 dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md`（退出码 0 正常 / 3 本期跳过 / 2 错误记台账）
-3. 照 `./review_prompt.md` 执行**只读**巡检（当次主题/指引是焦点而非边界——指引框架外、但只要落在本次巡检关注范围内的架构建议同样欢迎且鼓励），按其末节「7. 产出」把检查汇报（完整报告）作为评论发到本执行 issue 下 + 台账追加
-4. 本执行 issue 标 done
+1. 检出被检仓库 `master`（只读）：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`；拼装脚本与台账所在的 dev-forge 用本执行 issue 的共享分支检出：`multica repo checkout https://github.com/tadki/dev-forge.git`
+2. 运行拼装脚本生成当期评审任务：`python3 dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md`（退出码 `0` 正常 / `3` 本期跳过 / `2` 参数或模板错误，记台账后不重试 / `4` 见下一步）
+3. 退出码为 4 时（拼装器无法确认有没有未合入的期次）：本期不派生期号、不写台账、不重试，也不用 `--nth` 强行补跑；把拼装器输出的那行错误原样作为一条简短评论发到本执行 issue，并在评论里按下一步的写法 @Atlas 请求排查。这是除「请合账」外唯一允许的 @
+4. 照 `./review_prompt.md` 执行**只读**巡检（当次主题/指引是焦点而非边界——指引框架外、但只要落在本次巡检关注范围内的架构建议同样欢迎且鼓励），按其 §3「产出」把本期条目追加到台账，再把检查汇报（完整报告）作为评论发到本执行 issue 下
+5. 台账落 main（Owner 2026-11-25 定案）：台账与期号计数器推到本执行 issue 的共享分支（`shared/<本期 issue 标识号>`），开台账 PR（目标 `main`），不自行合并、不直推 `main`；汇报评论的最末一段用正文写一句 `[@Atlas](mention://agent/fac3e3a1-dcda-498d-8613-e8c2811f3ef5) 请合账`，这是除「请求排查」外唯一允许的 @。合入由 Atlas 按「台账合账」一节的固定步骤执行
+6. 本执行 issue 置 backlog
 
 ### 严禁行为
 
-- 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程、不开 PR、不 @ 任何成员
+- 不修改 `project.godot`、不改 `addons/godot_mcp/`、不杀进程；除台账 PR 外不开其他 PR；除「请合账」与退出码 4 时的「请求排查」两句外不 @ 任何成员
 - 不 spawn 子代理、不持有 godot-mcp bridge
-- 不修改任何仓库文件、不推送任何分支
+- 评审对象全程只读：KOL 仓库零写入、零推送；dev-forge 侧只写台账与期号计数器两个文件，且只推到本执行 issue 的共享分支
+- 不自行合并台账 PR
 - 不新开任何 issue（检查汇报直接发到本次创建的执行 issue 下）、不自动升级到 in_progress；升级走「滚动台账 → Atlas 周会裁决 → Atlas @ 责任人」单一决策链
 
 ---
 
 ## 6. 仓库结构周检（Repo Structure Check）
 
-> 每周六 05:00（Asia/Hong_Kong）只读检查仓库文件与目录层面的结构健康：目录结构是否合理、文件是否归位、冗余文件清理候选。不深入代码内部。description 即完整指引（Agent 评审型，无脚本）。
+> 每周六 05:00（Asia/Hong_Kong）只读检查仓库文件与目录层面的结构健康：目录结构是否合理、文件是否归位、冗余文件清理候选。不深入代码内部。Agent 评审型，无拼装脚本、无期号：完整指引见仓内模板 `autopilots/review-prompts/repo-structure/prompts/repo_structure_review_prompt.md`，平台 description 只做薄壳（检出 → 读模板 → 收尾）。
 
 - **Autopilot ID**: `4669e3e9-f85a-4294-844f-91fcbc8ca51f`
-- **Assignee**: Archi（agent `809951ab-c70c-48c3-b0d6-7b16b49e1ce3`）
+- **Assignee**: Refacty（agent `3c6b6d88-ce6c-4e02-a78e-24ee08e70c85`）
 - **执行模式**: `create_issue`
 - **执行 issue 标题模板**: `仓库结构周检报告 {{date}}`（UTC YYYY-MM-DD；检查汇报以评论形式发到该执行 issue 下，不新开 issue）
 - **调度**: cron `0 5 * * 6` Asia/Hong_Kong（trigger id `d2df657d-aa2b-4277-b61b-6c433349dec7`；与半周检 02:30/03:00 周二五、日检 03:30/04:00 每日错开）
-- **检查范围**: 游戏代码域（包括但不限于 `autoload/`、`systems/`、`scenes/`、`resources/`、`tests/`、`docs/`；对照 `docs/project/DESIGN.MD` 归集约定）+ 工具链域（包括但不限于 `.dev/`、`.claude/hooks/`、`.github/workflows/`）
-- **滚动台账**: `.dev/repo-structure/ledger/YYYY-MM.md`
-- **防疲劳**: 不自动 @、不指派、不催办；fingerprint 去重；无发现仍发汇报评论；清理建议只提报不执行
+- **检查模板**: `autopilots/review-prompts/repo-structure/prompts/repo_structure_review_prompt.md`（全文即当期指引：检查范围、要做与禁止的事、报告骨架、台账体例）
+- **检查范围**: 游戏代码域（KOL）+ 工具链域（dev-forge 为主，KOL 侧仅余 `.dev/` 与 `.github/workflows/`）；细目见模板 §1.1
+- **滚动台账**: `docs/ledger/repo-structure/YYYY-MM.md`
+- **收尾**: 本执行 issue 置 backlog（done 归 Owner）
+- **防疲劳**: 除报告末尾那一句「请合账」外不 @、不指派、不催办；fingerprint 去重；无发现仍发汇报评论；清理建议只提报不执行
+
+### 执行步骤
+
+1. 检出被检仓库 `master`（只读）：`multica repo checkout https://github.com/tadki/KingOfLikes-Godot.git --ref master`；dev-forge 既是被检仓库也是台账所在，用本执行 issue 的共享分支检出：`multica repo checkout https://github.com/tadki/dev-forge.git`
+2. 读当期检查指引并照做：`dev-forge/autopilots/review-prompts/repo-structure/prompts/repo_structure_review_prompt.md`
+3. 按模板 §3 追加台账条目，把检查汇报作为评论发到本执行 issue 下。台账落 main（Owner 2026-11-25 定案）：台账推到本执行 issue 的共享分支（`shared/<本期 issue 标识号>`），开台账 PR（目标 `main`），不自行合并、不直推 `main`；汇报评论的最末一段用正文写一句 `[@Atlas](mention://agent/fac3e3a1-dcda-498d-8613-e8c2811f3ef5) 请合账`，这是本流程唯一允许的 @。合入由 Atlas 按「台账合账」一节的固定步骤执行
+4. 本执行 issue 置 backlog
 
 ### 严禁行为
 
 - 不修复、不重构、不删文件、不挪文件（只检查提建议，清理决策归 Owner）
 - 不深入代码内部（只看文件与目录层面）
 - 不触碰 `addons/godot_mcp/`（vendored 只读红线）
+- 除 dev-forge 的台账文件外不写任何仓库文件；KOL 仓库零写入、零推送
+- 不自行合并台账 PR
 - 不新开任何 issue（检查汇报直接发到本次创建的执行 issue 下）
+
+---
+
+## 7. 台账合账（三个周检系列共用，SEE-1634）
+
+周检的台账只有进了 dev-forge `main` 才算落账。自 2026-11-25 起（Owner 定案，SEE-1634）合账固定由 Atlas 承接：执行者不自己合并，发完报告后请 Atlas 合；Atlas 按下面的固定步骤执行。本节是流程约定，不新增脚本。
+
+### 三个系列的落点
+
+| 系列 | 仓内指引 | 台账 | 期号计数器 |
+|---|---|---|---|
+| 工具链半周检 | `autopilots/review-prompts/toolchain/prompts/toolchain_review_prompt.md`（经拼装脚本生成当期任务） | `autopilots/review-prompts/toolchain/ledger/YYYY-MM.md` | 与台账同目录的 `review-state.json` |
+| 架构半周检 | `autopilots/review-prompts/architecture/prompts/architecture_review_prompt.md`（经拼装脚本生成当期任务） | `autopilots/review-prompts/architecture/ledger/YYYY-MM.md` | 与台账同目录的 `review-state.json` |
+| 仓库结构周检 | `autopilots/review-prompts/repo-structure/prompts/repo_structure_review_prompt.md`（无拼装脚本，全文即指引） | `docs/ledger/repo-structure/YYYY-MM.md` | 无 |
+
+### 触发
+
+执行者把台账（工具链、架构连同期号计数器）推到**本执行 issue 的共享分支**（`shared/<本期 issue 标识号>`），开一个台账 PR（目标 `main`），然后在报告评论的最末一段用正文写一句「请合账」并 @Atlas。Atlas 收到后随到随合。
+
+周检流程里只允许两处 @Atlas：一处是上面的「请合账」；另一处是拼装器以退出码 4 结束时的「请求排查」——那一期没有派生期号，执行者不写台账、不重试，把拼装器输出的那行错误原样作为一条简短评论发到本执行 issue 并 @Atlas 请求排查（工具链、架构两个系列适用；仓库结构周检没有拼装脚本）。探测失败就宁可不跑一期，前提是失败要有人看见。其余场合一律不 @。
+
+### Atlas 合账的固定步骤
+
+1. **定位**：从「请合账」所在的报告 issue 找到台账 PR 与共享分支；同一系列若有更早的、仍开着的台账 PR，一并找出来。
+2. **承接不丢行**：逐行核对 `main` 上该台账文件的每一行都仍按原顺序留在 PR 版本里——只允许追加，不允许改写或删除既有行，历史期次条目一行不动。
+3. **期号同步**（工具链、架构）：PR 内台账最大期号等于期号计数器的 `nth`，合入后 `main` 上这个等式仍成立（日检 F6 对工具链的核对口径）。仓库结构周检无期号，跳过。
+4. **CI**：台账 PR 的 lint、engine-tests、console 三项检查全部通过。
+5. **rebase 合入**：用 rebase 方式合入 `main`（本仓只允许 rebase，不产生 merge commit、不 squash）；合入后关闭被本期承接、取代的旧台账 PR，在旧 PR 上注明由哪个 PR 承接。
+6. **归档前人工核对**：要归档（置 cancelled）或收起一期报告 issue 之前，先确认该期条目已经在 `main` 的台账里；没落账的不归档。
+
+以上任一项不成立就不合入，缺什么在该台账 PR 上写明。
 
 ---
 
@@ -290,9 +242,9 @@ autopilot 共用，见 `autopilots/kill_switch.py`）：
 
 - `autopilots/multica_helpers.py`: 提供 `AGENT_MAP`、`AGENT_NAME_MAP`、`multica_cli`、`multica_stdin_cmd`、文件锁、退避重试等。
 - `autopilots/kill_switch.py`: Kill Switch 单源（paused 文件 + `KILL_SWITCH` env）。
-- `autopilots/watchdog_report.py` / `autopilots/watchdog_state.py`: 仅 Agent Watchdog 使用。
 
 ## 通用原则
 
 - 脚本型 autopilot 的 description 只保留"检出仓库 → 执行脚本 → 静默结束"，不重复脚本细节。
+- Agent 评审型 autopilot（工具链半周检、架构半周检、仓库结构周检）的 description 同样只做薄壳：检出、运行拼装脚本（仓库结构周检是读仓内模板）、收尾三步。评审规则与报告骨架只在仓内模板里，description 不复述；收尾一步只留「台账推共享分支、开台账 PR、报告末尾请合账」这一句约定，另带退出码说明——拼装器以退出码 4 结束时没有拼装产物，执行者只能从 description 读到处置。
 - 所有脚本相关说明以本文档为准。

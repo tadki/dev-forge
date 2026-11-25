@@ -192,10 +192,10 @@ assert_no_deny "1e: v1_compat=false ignores v1 file"
 if echo "$HOOK_STDOUT" | grep -q "v1-leak"; then fail "1e: v1 rule leaked into v2 output"; else pass "1e: no v1 rule leakage"; fi
 
 #####################################################################
-# 2. 9 时点路由（on.in 匹配 hook_event_name）
+# 2. 11 时点路由（on.in 匹配 hook_event_name）
 #####################################################################
-separator "2. Nine hook-point routing"
-POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact)
+separator "2. Eleven hook-point routing"
+POINTS=(PreToolUse PostToolUse SessionStart SessionEnd Stop SubagentStop UserPromptSubmit Notification PreCompact PostCompact PermissionRequest)
 for ((i=0; i<${#POINTS[@]}; i++)); do
     P="${POINTS[$i]}"
     OTHER="${POINTS[$(( (i+1) % ${#POINTS[@]} ))]}"

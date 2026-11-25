@@ -604,35 +604,6 @@
       }
     },
     {
-      "id": "autopilot-script:issue_status_check",
-      "kind": "autopilot-script",
-      "name": "issue_status_check",
-      "summary": "issue 状态扫描+催促评论",
-      "attach": {
-        "level": "user"
-      },
-      "enforcement": "derived",
-      "platforms": [
-        "multica"
-      ],
-      "provenance": "first-party",
-      "tags": [
-        "autopilot",
-        "devforge",
-        "scripted"
-      ],
-      "enabled": true,
-      "source": {
-        "collector": "fixture",
-        "path": "/e2e/autopilots/issue_status_check.py"
-      },
-      "payload": {
-        "script": true,
-        "lines": 300,
-        "purpose": "issue 状态扫描"
-      }
-    },
-    {
       "id": "custom:toolchain-latest",
       "kind": "custom",
       "name": "工具链日检",
@@ -999,12 +970,6 @@
       }
     }
   ],
-  "relations": [
-    {
-      "from": "autopilot-script:issue_status_check",
-      "to": "autopilot-registration:multica-issue-st",
-      "type": "derived-from"
-    }
-  ],
+  "relations": [],
   "diagnostics": []
 }

@@ -1,9 +1,9 @@
 # 架构半周检 Agent 评审 Prompt 模板
 
-> 版本：v2.3（2026-08-28，Owner 指令 SEE-1191 第八轮：补 refactor 覆盖缺口；v2.1 结构重组——拼装产物连续编号为 §1 评审任务（当期主题与对标参考注入 §1.1）/ §2 指引和规则（要做的事 + 禁止做的事）/ §3 产出；禁止行为全篇归一；删除防疲劳独立节与解释性缀语；与 toolchain v2.1 同步）
+> 版本：v2.5（2026-11-25，SEE-1634 续轮：写明拼装器以退出码 4 结束时的处置；v2.4 补上台账落 main 条款——台账与期号计数器推到本执行 issue 共享分支、开台账 PR、报告末尾 @Atlas 请合账，订正过期路径；v2.3 补 refactor 覆盖缺口；v2.1 结构重组——拼装产物连续编号为 §1 评审任务（当期主题与对标参考注入 §1.1）/ §2 指引和规则（要做的事 + 禁止做的事）/ §3 产出；禁止行为全篇归一；删除防疲劳独立节与解释性缀语；与 toolchain v2.1 同步）
 > 调度方：Multica autopilot `a08b4ae1-737f-4c63-bc6f-fa0943b965f1`（每周二 / 周五 03:00 Asia/Hong_Kong）
 > 执行方：具备仓库只读访问权限的评审 agent（默认 Refacty；可按主题轮换或固定）
-> 性质：模板（prompt 文本），非可执行脚本。**拼装已脚本化**：执行 agent 每期运行 `dev-forge/review-prompts/architecture/build_review_prompt.py`，脚本输出即当期完整评审 prompt（期次自增、四主题轮换、当期对标参考随主题注入、占位符替换、Kill Switch 检查均已内置）。本文件是脚本的拼装素材与设计规格。
+> 性质：模板（prompt 文本），非可执行脚本。**拼装已脚本化**：执行 agent 每期运行 `dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py`，脚本输出即当期完整评审 prompt（期号派生、四主题轮换、当期对标参考随主题注入、占位符替换、Kill Switch 检查均已内置）。本文件是脚本的拼装素材与设计规格。
 > **章节归属约定**：「§N」指拼装产物中的第 N 节（§1 评审任务 / §2 指引和规则 / §3 产出）；本文件第 4-7 节为主题素材，仅供脚本按期取材注入 §1.1，不独立出现在拼装产物中。
 > **指引粒度约定（Owner 指令）**：本模板只给框架与方向——评什么主题、什么算好、怎么汇报、什么不能做。**不规定怎么查、查哪些文件、跑哪些命令**；具体执行方法由评审 agent 自主决定，允许发挥。
 
@@ -16,17 +16,17 @@
 | 调度频率 | 每周 2 次（周二 / 周五 03:00 Asia/Hong_Kong，= 工具链半周检 + 30 分钟） | 与工具链半周检错峰 |
 | 主题轮换 | 数据流与耦合 → 状态机与生命周期 → 模块边界与扩展点 → 可测性与反模式 → 回到数据流 | 每两周一轮，四主题全覆盖 |
 | 主题注入 | §4-§7 主题素材按 `(nth-1) % 4` 轮换，正文注入 §1.1，对标参考随主题注入（非本期参考不进 prompt） | 由脚本完成 |
-| 输出回写 | 见 §3 产出 | 检查汇报以评论形式发到本次 autopilot 创建的执行 issue 下（不新开 issue）；台账同步追加 |
+| 输出回写 | 见 §3 产出 | 检查汇报以评论形式发到本次 autopilot 创建的执行 issue 下（不新开 issue），评论末尾带一句「请合账」；台账与期号计数器推到本执行 issue 的共享分支并开台账 PR，由 Atlas 合入 main（见 §2.1） |
 | Kill Switch | 在台账目录放置 `DISABLED` 文件，或在 `~/.multica/arch-patrol/` 放置 `DISABLED` 文件即跳过本次 | 由 Owner / Atlas 手动放置（两处任一存在即生效） |
-| 失败处理 | 单次执行失败只记录到台账 `errors:` 字段，**不重试** | 连续 2 次失败由日检红色阈值捕获 |
+| 失败处理 | 单次执行失败只记录到台账 `errors:` 字段，**不重试**；例外：拼装器以退出码 4 结束时不写台账，改为在执行 issue 发评论请 Atlas 排查（见 §2.1） | 连续 2 次失败由日检红色阈值捕获 |
 
 **拼装规则（已脚本化）**：执行 agent 每期只需一条命令——
 
 ```bash
-python3 dev-forge/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md
+python3 dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py --output ./review_prompt.md
 ```
 
-脚本自动完成：① 期次自增（本地计数器）并按 `(nth-1) % 4` 从 §4-§7 取当期主题素材（含该主题对标参考）注入 §1.1；② 按 §1 → §2 → §3 顺序拼接（连续编号，无跳号）；③ 替换全部 `{{var}}` 占位符（date/nth/theme_zh/theme_body/executor_agent/daily_report_dir/ledger_path）；④ Kill Switch 预检（exit=3 表示本期跳过）。**脚本输出即当期完整评审 prompt，直接执行其中要求即可**。本节仅供脚本维护者参考（脚本源码 `dev-forge/review-prompts/architecture/build_review_prompt.py` 内 `ASSEMBLE_SECTIONS_ORDER` 为拼装顺序的单一事实源）。
+脚本自动完成：① 派生本期期号（期号与合并解耦，规则以拼装脚本为准；探测不到有没有未合入期次时不派生，以 exit=4 结束——那一期没有拼装产物，执行者不写台账，把拼装器输出的那行错误原样发到本执行 issue 并 @Atlas 请求排查，见 §2.1）并按 `(nth-1) % 4` 从 §4-§7 取当期主题素材（含该主题对标参考）注入 §1.1；② 按 §1 → §2 → §3 顺序拼接（连续编号，无跳号）；③ 替换全部 `{{var}}` 占位符（date/nth/theme_zh/theme_body/executor_agent/daily_report_dir/ledger_path）；④ Kill Switch 预检（exit=3 表示本期跳过）。**脚本输出即当期完整评审 prompt，直接执行其中要求即可**。本节仅供脚本维护者参考（脚本源码 `dev-forge/autopilots/review-prompts/architecture/build_review_prompt.py` 内 `ASSEMBLE_SECTIONS_ORDER` 为拼装顺序的单一事实源）。
 
 ---
 
@@ -59,16 +59,18 @@ python3 dev-forge/review-prompts/architecture/build_review_prompt.py --output ./
   - 上一期半周检台账：`{{ledger_path}}`（用于趋势线比对与条目去重）；
   - 按主题用 hindsight recall 检索过往架构决策与教训。
 - 评审完成后把本期条目追加到台账 `{{ledger_path}}`，供下期去重与趋势比对。
+- 台账落 main（Owner 2026-11-25 定案，SEE-1634）：本期台账连同期号计数器（与台账同目录的 `review-state.json`）推到**本执行 issue 的共享分支**（`shared/<本期 issue 标识号>`，即 issue 元数据的 `working_branch`），并以它开一个台账 PR（目标 `main`，标题含「台账」二字）。**不自行合并**、不直推 `main`，合入由 Atlas 负责：汇报评论的最末一段用正文写一句 `[@Atlas](mention://agent/fac3e3a1-dcda-498d-8613-e8c2811f3ef5) 请合账`（不要放进代码块或反引号，否则不触发）。「请合账」与下面退出码 4 时的「请求排查」是本流程仅有的两处 @，其余场合仍适用 §2.2。本条只动 dev-forge 的台账与期号计数器两个文件，评审对象 KOL 全程只读。同一系列更早一期的台账 PR 若还没合入，先把它的台账内容原样承接进来（不改其行）再追加本期条目——本期 PR 取代旧 PR，旧 PR 由 Atlas 合账时关闭。Atlas 合账的固定步骤见 `docs/autopilots.md` 的「台账合账」一节。
 - 评审过程中遇到结构看不懂、上下文不足以支撑判断的情况时，先用 `/recall` 召回相关记忆（历史决策、既有教训）再下结论，不要靠猜。
 - 遇到已拍板裁决的违反项直接提报，不需重新论证：消耗类数值必须 effect 化（OQ-1）；派生值永不入 save（OQ-3）；类型分发走 Registry 而非核心 switch（SEE-1148）。
 - 遇到 CRITICAL 级问题按红线升级通道处理（见 §3.4）。
 - 评审自身运行失败时：只在台账 `errors:` 字段记一行，不发汇报评论、不重试（连续 2 次失败由日检阈值捕获）。
+- 拼装器以退出码 4 结束（无法确认有没有未合入的期次）的那一期不走上一条：本期不派生期号、不写台账、不重试，也不用 `--nth` 强行补跑，改为把拼装器输出的那行错误原样作为一条简短评论发到本执行 issue，并在评论里按「台账落 main」那一句的写法 @Atlas 请求排查。那种情形下没有本 prompt，执行者读到的是平台 description 里的同一句处置。
 
 ### 2.2 禁止做的事
 
 - 不修复、不重构、不写代码（只评审）；
 - 不新开任何 issue / discussion——检查汇报只发一条评论到本次执行 issue（见 §3）；
-- 不自动 @ 任何人、不设 assignee、不催办；
+- 除 §2.1 的「请合账」与退出码 4 时的「请求排查」这两处外，不 @ 任何人；不设 assignee、不催办；
 - 不重复提报台账中已存在且状态未变化的条目（去重规则见 §3.3）；
 - 不评审工具链（dev-forge 仓库 hooks / autopilots / toolchain 等，属工具链半周检范围）；
 - 不评审 skills / Multica 平台配置；
@@ -78,7 +80,7 @@ python3 dev-forge/review-prompts/architecture/build_review_prompt.py --output ./
 
 ## 3. 产出
 
-评审完成后做三件事：① 把 §3.1 骨架改写/填空（删占位行）写入 `./architecture_review_report.md`；② 以该文件为正文发评论到本执行 issue；③ 把本期条目追加到台账。
+评审完成后依次做四件事：① 把本期条目追加到台账（§3.2）；② 台账落 main——推共享分支、开台账 PR，不自行合并（§2.1）；③ 把 §3.1 骨架改写/填空（删占位行，填上台账 PR 号）写入 `./architecture_review_report.md`；④ 以该文件为正文发评论到本执行 issue，评论最末一段按 §2.1 的写法用正文写「请合账」。
 
 ```bash
 multica issue comment add <本执行IssueID> \
@@ -122,11 +124,15 @@ multica issue comment add <本执行IssueID> \
 ## CRITICAL 提案区（无则写「本期无」）
 
 - （如有：标题 + 问题描述 + 建议负责人；台账同步打 `severity: CRITICAL`，由日检转草稿走 Owner 审批）
+
+## 台账 PR（落 main）
+
+- 台账 PR：<#号或链接>（台账与期号计数器已推到本执行 issue 的共享分支，未自行合并）
 ```
 
 ### 3.2 台账
 
-追加本期条目到 `{{ledger_path}}`（`review-prompts/architecture/ledger/YYYY-MM.md`，每个主题一节，含 fingerprint 全量明细），供下期去重与趋势比对。
+追加本期条目到 `{{ledger_path}}`（`autopilots/review-prompts/architecture/ledger/YYYY-MM.md`，每个主题一节，含 fingerprint 全量明细），供下期去重与趋势比对。台账只追加本期条目，不改写、不删除既有行——Atlas 合账前会逐行核对 `main` 上的既有行都还在原位（见 `docs/autopilots.md` 的「台账合账」一节）。
 
 ### 3.3 条目去重
 
@@ -134,7 +140,7 @@ multica issue comment add <本执行IssueID> \
 
 ### 3.4 红线升级通道
 
-如评审中遇到 **CRITICAL**（架构层面存在严重缺陷、可能导致系统不稳定或数据丢失），不自行开整改 issue、不自动 @ 任何人。改为：
+如评审中遇到 **CRITICAL**（架构层面存在严重缺陷、可能导致系统不稳定或数据丢失），不自行开整改 issue、不为此 @ 任何人（§2.1 的「请合账」照常）。改为：
 
 1. 在台账该条目上打 `severity: CRITICAL` 标签；
 2. 在条目末尾添加 `proposal:` 字段，写一份**草稿 issue 提案**（标题 + 一段问题描述 + 建议负责人）；
@@ -179,6 +185,8 @@ multica issue comment add <本执行IssueID> \
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| v2.5 | 2026-11-25 | Leader 裁定第 12 条（SEE-1634）：写明拼装器以退出码 4 结束时的处置——不派生期号、不写台账、不重试、不用 `--nth` 强行补跑，把拼装器输出的那行错误原样发到本执行 issue 并 @Atlas 请求排查，这是除「请合账」外唯一允许的 @（§0 失败处理与拼装说明、§2.1 新增一条、§2.2 放行这一处；与 toolchain v2.7 同步） |
+| v2.4 | 2026-11-25 | Owner 定案（SEE-1634，合账触发方式 A）：§2.1 新增「台账落 main」条款（与 toolchain v2.6 同构）——台账与期号计数器推到本执行 issue 的共享分支、开台账 PR、不自行合并，汇报评论末尾 @Atlas 说「请合账」且这是唯一允许的 @；更早一期台账 PR 未合入时先原样承接再追加；KOL 全程只读，本条只动 dev-forge 的台账与期号计数器；§2.2 与 §3 同步（产出改为四步、骨架加「台账 PR」一节、台账只追加、红线通道注明「请合账」照常）；订正过期路径（拼装脚本路径与台账路径补 `autopilots/`）；§0 拼装说明改为期号派生（与合并解耦，探测不到不派生） |
 | v2.3 | 2026-08-28 | Owner 指令（SEE-1191 第八轮）：补 refactor 覆盖缺口——架构侧主题 C 加「重复实现提取共用模块」、主题 D 反模式枚举加「无人调用的函数/过期实现」；工具链侧主题 B（autopilots 编排）加同向关切（双份脚本）（与 toolchain v2.3 同步） |
 | v2.2 | 2026-08-28 | Owner 指令（SEE-1191 第五轮）：§2.1 要做的事新增一条——评审中遇到结构看不懂或上下文不足时，必须先用 /recall 召回相关记忆再下结论（与 toolchain v2.2 同步） |
 | v2.1 | 2026-08-28 | Owner 指令（SEE-1191 第四轮）：结构重组——拼装产物连续编号 §1 评审任务 / §2 指引和规则 / §3 产出，消除 3→7 跳号；主题节并入 §1.1（评审任务第一节），对标参考随主题注入（非本期参考不再进 prompt）；原 §1 通用输入改为 §2.1 要做的事的自明表述；禁止行为全篇归一到 §2.2（原 §2.4、§7 汇报硬约束、§8 防疲劳中的禁止项）；原 §8 防疲劳节整体删除，非禁止项并入 §2.1 / §3；删除「（每次评审都会注入）」类解释性缀语；「评审通用要求」改名「评审任务」（与 toolchain v2.1 同步） |

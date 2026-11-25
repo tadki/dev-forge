@@ -176,6 +176,57 @@ function gcLegacySentinels(root) {
   } catch (e) { /* /tmp 不可读 → 跳过 */ }
 }
 
+// SEE-1621 R2：压缩后补投的 session 级待提醒状态。PostCompact 记账（pending_set），
+// 下一次 PreToolUse 消费并注入（pending_context）；同一 compact 只补投一次。
+// 文件名按 session 隔离；session 缺失时拒绝写入/消费（防跨会话串扰，fail-open 审计）。
+function pendingKeyPath(key, sessionId) {
+  return path.join(STATE_ROOT, 'pending-' + sanitizeName(key) + '-' + sanitizeName(sessionId));
+}
+
+function setPending(key, sessionId, logFile, ruleName) {
+  if (!sessionId) {
+    firelog(logFile, `[unified-hook] WARN pending-set-skip rule=${ruleName} reason=no-session-id`);
+    return;
+  }
+  try {
+    fs.mkdirSync(STATE_ROOT, { recursive: true });
+    fs.writeFileSync(pendingKeyPath(key, sessionId), '');
+    firelog(logFile, `[unified-hook] pending-set rule=${ruleName} key=${key} session=${sanitizeName(sessionId)}`);
+  } catch (e) {
+    firelog(logFile, `[unified-hook] ERROR pending-set rule=${ruleName} err=${e.message}`);
+  }
+}
+
+function consumePending(key, sessionId, logFile, ruleName) {
+  if (!sessionId) {
+    firelog(logFile, `[unified-hook] WARN pending-consume-skip rule=${ruleName} reason=no-session-id`);
+    return false;
+  }
+  const p = pendingKeyPath(key, sessionId);
+  try {
+    if (!fs.existsSync(p)) return false;
+    fs.unlinkSync(p);
+    firelog(logFile, `[unified-hook] pending-consumed rule=${ruleName} key=${key} session=${sanitizeName(sessionId)}`);
+    return true;
+  } catch (e) {
+    firelog(logFile, `[unified-hook] ERROR pending-consume rule=${ruleName} err=${e.message}`);
+    return false;
+  }
+}
+
+// 待提醒标记同 one_shot 哨兵生命周期：session 结束后未再调工具的超龄标记 GC
+function gcPendingMarkers() {
+  try {
+    for (const name of fs.readdirSync(STATE_ROOT)) {
+      if (!name.startsWith('pending-')) continue;
+      const p = path.join(STATE_ROOT, name);
+      try {
+        if (Date.now() - fs.statSync(p).mtimeMs > SENTINEL_TTL_MS) fs.unlinkSync(p);
+      } catch (e) { /* 单文件失败跳过 */ }
+    }
+  } catch (e) { /* state 根不可读 → 跳过 */ }
+}
+
 // P1 通道桥接：脚本 ${HOOKS_DIR} 占位解析为 hooks 根目录（仓库布局与全局部署位一致）
 function resolveScriptPath(p, hooksDir) {
   const expanded = String(p || '').replace(/^\$\{HOOKS_DIR\}/, hooksDir);
@@ -245,6 +296,7 @@ function evaluateActions(actions, payload, logFile, ruleName, hooksDir, opts) {
   // opts.skipScripts（§SPEC-017）: 前序规则已 deny 时跳过 run_script 执行 —— 副作用
   // 短路优先于脚本动态 deny 文案（config deny 文案聚合不受影响）。
   const skipScripts = !!(opts && opts.skipScripts);
+  const sessionId = (opts && opts.sessionId) || '';
   const result = { denied: false, denyMessage: '', contextMessages: [], modified: false, protocol: null, exitChannel: null, scriptDeny: false, scriptSkipped: false };
   for (const action of actions) {
     if (!action || typeof action !== 'object') continue;
@@ -256,6 +308,15 @@ function evaluateActions(actions, payload, logFile, ruleName, hooksDir, opts) {
         break;
       case 'context':
         if (action.message) result.contextMessages.push(action.message);
+        break;
+      case 'pending_set':
+        setPending(action.key, sessionId, logFile, ruleName);
+        break;
+      case 'pending_context':
+        // 仅当本 session 存在待提醒标记时注入，并原子消费（同一 compact 只补投一次）
+        if (consumePending(action.key, sessionId, logFile, ruleName) && action.message) {
+          result.contextMessages.push(action.message);
+        }
         break;
       case 'modify':
         result.modified = true;
@@ -296,6 +357,8 @@ function main() {
 
   // /tmp 旧双根哨兵 GC（超龄孤儿清理；窗口语义与 fail-open 不受影响）
   gcLegacySentinels('/tmp');
+  // 待提醒标记 GC（session 结束后未再调工具的超龄 pending 清理）
+  gcPendingMarkers();
 
   let payload;
   try {
@@ -306,6 +369,8 @@ function main() {
   }
 
   const hookEvent = String(payload.hook_event_name || '');
+  // SEE-1621 R2：pending 补投按 CC session 隔离；payload.session_id 优先
+  const sessionId = String(payload.session_id || process.env.CLAUDE_CODE_SESSION_ID || '');
 
   const configFile = findConfigFile();
   if (!configFile) {
@@ -418,7 +483,7 @@ function main() {
       // （SEE-1330 多规则 deny 全输出），但 run_script 的副作用（git fetch /
       // multica CLI 等，被拦 push 白付至多 10s）不再执行 —— 求值短路与副作用
       // 短路分层：config deny/context（纯文案）继续收集，脚本执行跳过。
-      const r = evaluateActions(rule.action, payload, logFile, rule.name, hooksDir, { skipScripts: denied });
+      const r = evaluateActions(rule.action, payload, logFile, rule.name, hooksDir, { skipScripts: denied, sessionId });
       if (r.protocol && !scriptProtocol && !denied) scriptProtocol = r.protocol;
       if (r.denied) {
         denied = true;

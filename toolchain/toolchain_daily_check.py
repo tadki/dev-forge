@@ -11,7 +11,7 @@ Scope (per Atlas trigger 2026-08-27):
                      双前缀 tool 名 typo 率
   C hooks 体系       cc/git hooks 调用错误率 + 最近失败尾巴; 拦截分布; 三层链路由错误;
                      .claude/settings.json 权限漂移; 每-agent mcp-config 完整性 (含 timeout)
-  E autopilots 健康  run 状态 / PID 锁残留 / workspace 锁残留 / watchdog 重启节流
+  E autopilots 健康  PID 锁残留 / workspace 锁残留 / 脚本完整性
   F launch 脚本健康  toolchain-start.sh 硬编码路径 / systemd unit 静态+运行态 /
                      repo_sync_daemon 存活 (停摆 warn 观测；注册 enabled=false 停用
                      → info 登记, Owner 可手动开关, SEE-1519 §SPEC-003/004 修订)
@@ -69,7 +69,6 @@ PORT_REGISTRY = os.path.join(MULTICA_HOME, "godot-port-registry.json")
 REGISTRY_LOCK = os.path.join(MULTICA_HOME, "godot-port-registry.json.lock")
 LEASE_DIR = os.path.join(MULTICA_HOME, "godot-mcp-held")
 DAEMON_LOG = os.path.join(MULTICA_HOME, "daemon.log")
-WATCHDOG_STATE = os.path.join(MULTICA_HOME, "watchdog_state.json")
 WORKSPACE_LOCK = os.path.join(MULTICA_HOME, "autopilot_workspace.lock")
 HOOK_FIRE_LOG = os.path.join(HOME, ".claude", "hook-fire.log")
 CLAUDE_SETTINGS = os.path.join(HOME, ".claude", "settings.json")
@@ -1235,32 +1234,14 @@ class DailyCheck:
 
     # -- E autopilots 健康 --------------------------------------------------------
 
-    def _check_e1_watchdog_restarts(self, dim, issues):
-        # E1: watchdog 状态文件 (重启节流记录)
-        wd = read_json(WATCHDOG_STATE)
-        if isinstance(wd, dict) and wd.get("restarts"):
-            restarts = wd["restarts"]
-            recent = [r for r in restarts if parse_iso(r.get("at")) and
-                      (datetime.now(timezone.utc) - parse_iso(r.get("at"))) < timedelta(days=7)]
-            self.ok(dim, "e1", "watchdog 累计重启 %d 次, 近7天 %d 次" % (len(restarts), len(recent)))
-            if len(recent) >= 5:
-                issues.append("E1 近7天重启 %d 次, 超过节流容忍 (5)" % len(recent))
-        elif os.path.exists(WATCHDOG_STATE):
-            self.ok(dim, "e1", "watchdog 状态文件存在, 无重启记录")
-        else:
-            self.ok(dim, "e1", "无 watchdog 状态文件 (尚未运行过)")
-
     def _check_e2_pid_lock_residue(self, dim, issues):
         # E2: PID 锁残留 — flock 口径 (fingerprint d441deebc01d): 写锁文件不代
         # 表持有。候选 = 真实 /tmp pid 文件 (PidFileLock release 即删, 存在即
-        # 持锁或崩溃残留) + watchdog_state 常驻 sidecar (创建后不删, flock 探
-        # 测判定)。三态: flock 被占=存活并存(ok); flock 空闲且 PID 已死=残留
-        # (warn); 文件不存在/空文件=无锁或已释放态(ok)。原 watchdog.lock /
-        # agent_watchdog.lock 全仓无创建者, 不再探测 (恒假来源)。
+        # 持锁或崩溃残留)。三态: flock 被占=存活并存(ok); flock 空闲且 PID 已死
+        # =残留(warn); 文件不存在/空文件=无锁或已释放态(ok)。两个已退役巡检的
+        # pid 候选不再探测 (SEE-1634), 候选只剩 version_check。
         tmp = tempfile.gettempdir()
-        candidates = [WATCHDOG_STATE + ".lock"] + [
-            os.path.join(tmp, name) for name in
-            ("agent_watchdog.pid", "version_check.pid", "issue_status_check.pid")]
+        candidates = [os.path.join(tmp, name) for name in ("version_check.pid",)]
         residues = []
         for cand in candidates:
             if not os.path.exists(cand):
@@ -1310,7 +1291,6 @@ class DailyCheck:
     def dim_e(self):
         dim = "E"
         issues = []
-        self._check_e1_watchdog_restarts(dim, issues)
         self._check_e2_pid_lock_residue(dim, issues)
         self._check_e3_workspace_lock(dim, issues)
         self._check_e4_autopilot_scripts(dim)

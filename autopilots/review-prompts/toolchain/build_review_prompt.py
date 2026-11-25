@@ -22,18 +22,30 @@
     0  拼装成功，prompt 已输出
     2  参数错误 / 模板缺失
     3  Kill Switch 命中（~/.multica/toolchain-reports/DISABLED 或台账目录 DISABLED 存在）——本期跳过
+    4  无法确认未合入台账 PR 的期号（gh 缺失 / 未认证 / 查询出错）——本期不派生期号
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 TEMPLATE_PATH_REL = Path("autopilots/review-prompts/toolchain/prompts/toolchain_review_prompt.md")
+
+# 期号计数器随台账 PR 落 main；未合入 PR 头上的计数器也参与取 max（RCA-M02）。
+COUNTER_REL = "autopilots/review-prompts/toolchain/ledger/review-state.json"
+PENDING_SCAN_LIMIT = 200
+
+
+class PendingProbeError(RuntimeError):
+    """无法确认未合入期次。按 Leader 裁定 fail-closed：不派生期号、不动计数器。"""
 
 # 期次 -> (主题素材节号, 主题中文名, 主题英文 key)；素材节正文经 theme_body 注入 §1.1
 THEMES = [
@@ -103,8 +115,118 @@ def check_kill_switch(daily_report_dir: Path, ledger_path: Path) -> str | None:
     return None
 
 
-def next_nth(state_file: Path, forced: int | None) -> int:
-    """期次管理：forced 非 None 则用之；否则读 state_file 自增并写回。"""
+def _gh_env() -> dict[str, str]:
+    """gh 只认 GH_TOKEN/GITHUB_TOKEN；多代理运行时的 PAT 暴露为 GITHUB_PERSONAL_ACCESS_TOKEN，桥接过去。"""
+    env = dict(os.environ)
+    pat = env.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if pat and not env.get("GH_TOKEN") and not env.get("GITHUB_TOKEN"):
+        env["GH_TOKEN"] = pat
+    return env
+
+
+def _gh_json(args: list[str]):
+    """运行 gh 并解析 stdout；缺 gh / 未认证 / 非零退出 / 非法 JSON 一律抛 PendingProbeError。"""
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60, env=_gh_env())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PendingProbeError(f"gh 不可用：{exc}") from exc
+    if r.returncode != 0:
+        raise PendingProbeError(f"gh {' '.join(args)} exit {r.returncode}: {r.stderr.strip()[:200]}")
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError as exc:
+        raise PendingProbeError(f"gh 输出不是合法 JSON：{r.stdout[:120]!r}") from exc
+
+
+def repo_slug(repo_root: Path) -> str:
+    """从 origin remote 解析 owner/repo；读不到也按探测失败处理。"""
+    try:
+        r = subprocess.run(["git", "-C", str(repo_root), "remote", "get-url", "origin"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PendingProbeError(f"无法读取 git remote：{exc}") from exc
+    m = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?/?$", r.stdout.strip())
+    if r.returncode != 0 or not m:
+        # 不回吐 origin 原文：remote URL 可能带 userinfo（凭据）。
+        raise PendingProbeError("无法从 origin remote 解析 GitHub owner/repo，无法确认未合入期次")
+    return m.group(1)
+
+
+def _validated_pr_list(prs) -> list:
+    """pr list 返回必须是 JSON 数组、条目全是对象、且未触及扫描上限；否则 fail-closed。"""
+    if not isinstance(prs, list):
+        raise PendingProbeError(f"gh pr list 返回的不是 JSON 数组（{type(prs).__name__}），无法确认未合入期次")
+    if len(prs) >= PENDING_SCAN_LIMIT:
+        # --limit 处可能还有更多 open PR 被截断：漏探 = 可能重号，按失败处理。
+        raise PendingProbeError(f"open PR 数达到扫描上限 {PENDING_SCAN_LIMIT}，无法确认未合入期次")
+    for pr in prs:
+        if not isinstance(pr, dict):
+            raise PendingProbeError("gh pr list 的条目不是 JSON 对象，无法确认未合入期次")
+    return prs
+
+
+def _pending_counter_nth(slug: str, pr: dict, counter_rel: str) -> int:
+    """改了计数器的 PR 头上的 nth；读不出（缺 sha/content）或读不懂都 fail-closed。"""
+    sha = pr.get("headRefOid")
+    if not isinstance(sha, str) or not sha:
+        raise PendingProbeError(
+            f"改动 {counter_rel} 的 PR #{pr.get('number')} 缺 headRefOid，无法读取其计数器")
+    payload = _gh_json(["api", f"repos/{slug}/contents/{counter_rel}?ref={sha}"])
+    # GitHub 的 content 按 60 字符折行带换行，先去空白再严格解码；
+    # validate=True 保证尾巴混入非字母表字符（截断/污染）时直接报错。
+    try:
+        content = "".join(payload["content"].split())
+        nth = json.loads(base64.b64decode(content, validate=True).decode("utf-8")).get("nth")
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise PendingProbeError(
+            f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 读不出或读不懂：{exc}") from exc
+    if not isinstance(nth, int) or isinstance(nth, bool):
+        raise PendingProbeError(
+            f"未合入 PR #{pr.get('number')} 头上的 {counter_rel} 的 nth 不是整数：{nth!r}")
+    return nth
+
+
+def _pr_touches_counter(pr: dict, counter_rel: str) -> bool:
+    """PR 是否改了该计数器；files 形状读不出来就 fail-closed——读不出来等于
+    无法确认它改没改计数器，不能当「没改」放行。files 里的 null 条目安全忽略。"""
+    files = pr.get("files")
+    if not isinstance(files, list):
+        what = "缺失" if "files" not in pr else f"不是 JSON 数组（{type(files).__name__}）"
+        raise PendingProbeError(f"PR #{pr.get('number')} 的 files {what}，无法确认它是否改了 {counter_rel}")
+    touched = False
+    for f in files:
+        if f is None:
+            continue
+        if not isinstance(f, dict):
+            raise PendingProbeError(
+                f"PR #{pr.get('number')} 的 files 条目不是 JSON 对象（{type(f).__name__}），"
+                f"无法确认它是否改了 {counter_rel}")
+        if f.get("path") == counter_rel:
+            touched = True
+    return touched
+
+
+def max_pending_nth(repo_root: Path, counter_rel: str) -> int | None:
+    """open PR 中改过该系列计数器的，取它们头上的 nth 最大值；没有则 None。
+
+    「未合入」只按改动文件判定，不看 PR 标题；任何无法确认「没有未合入
+    期次」的形态都抛 PendingProbeError（fail-closed），绝不静默降级。
+    """
+    slug = repo_slug(repo_root)
+    prs = _validated_pr_list(_gh_json(["pr", "list", "--repo", slug, "--state", "open",
+                                       "--limit", str(PENDING_SCAN_LIMIT), "--json", "number,headRefOid,files"]))
+    best: int | None = None
+    for pr in prs:
+        if not _pr_touches_counter(pr, counter_rel):
+            continue
+        nth = _pending_counter_nth(slug, pr, counter_rel)
+        if best is None or nth > best:
+            best = nth
+    return best
+
+
+def next_nth(state_file: Path, forced: int | None, repo_root: Path, counter_rel: str) -> int:
+    """期次管理：forced 非 None 则用之；否则取 max(仓内计数器, 未合入 PR 期号) + 1 并写回。"""
     if forced is not None:
         return forced
     state = {"nth": 0}
@@ -113,7 +235,9 @@ def next_nth(state_file: Path, forced: int | None) -> int:
             state.update(json.loads(state_file.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             pass
-    state["nth"] = int(state.get("nth", 0)) + 1
+    # 先探测再写回：探测失败时必须保持计数器原样（fail-closed）。
+    pending = max_pending_nth(repo_root, counter_rel)
+    state["nth"] = max(int(state.get("nth", 0)), pending or 0) + 1
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(state), encoding="utf-8")
     return state["nth"]
@@ -144,10 +268,13 @@ def resolve_date(args: argparse.Namespace) -> tuple[str | None, int]:
         return None, 2
 
 
+def resolve_repo_root(args: argparse.Namespace) -> Path:
+    return Path(args.repo_root).resolve() if args.repo_root else find_repo_root(Path(__file__).resolve())
+
+
 def resolve_paths(args: argparse.Namespace, date_str: str) -> tuple[Path, Path, Path, Path]:
     """解析 template_path / daily_report_dir / ledger_path / state_file。"""
-    script_path = Path(__file__).resolve()
-    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root(script_path)
+    repo_root = resolve_repo_root(args)
     template_path = repo_root / TEMPLATE_PATH_REL
     daily_report_dir = Path(args.daily_report_dir or "~/.multica/toolchain-reports/").expanduser()
     ledger_path = Path(args.ledger_path) if args.ledger_path else Path(f"autopilots/review-prompts/toolchain/ledger/{date_str[:7]}.md")
@@ -233,7 +360,12 @@ def main() -> int:
         print(f"KILL-SWITCH: {kill} 存在，本期跳过（空输出）", file=sys.stderr)
         return 3
 
-    nth = next_nth(state_file, args.nth)
+    try:
+        nth = next_nth(state_file, args.nth, resolve_repo_root(args), COUNTER_REL)
+    except PendingProbeError as exc:
+        print(f"ERROR: 无法确认未合入台账 PR 的期号，本期不派生期号（exit 4）：{exc}",
+              file=sys.stderr)
+        return 4
 
     theme_section_num, theme_zh, theme_key = THEMES[(nth - 1) % 4]
 

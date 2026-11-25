@@ -400,8 +400,22 @@ def read_jsonl(path: str) -> list[dict]:
     return records
 
 
-def dedup_key(file: str, line: int, rule_id: str, severity: str) -> str:
-    return DEDUP_KEY_FMT.format(file=file, line=line, rule_id=rule_id, severity=severity)
+def dedup_key(
+    file: str, line: int, rule_id: str, severity: str, content_id: str = ""
+) -> str:
+    """Anti-fatigue dedup key.
+
+    ``content_id`` (SEE-1630) is an optional discriminator for findings that
+    share file/line/rule/severity but describe *different* content — a redline
+    file re-added or re-modified with new bytes must reach new_findings instead
+    of being silenced by a stale baseline key. Findings without a content id
+    keep the historical key verbatim (backwards compatible, so non-REDLINE
+    dedup is unchanged).
+    """
+    key = DEDUP_KEY_FMT.format(file=file, line=line, rule_id=rule_id, severity=severity)
+    if content_id:
+        return f"{key}:{content_id}"
+    return key
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +489,57 @@ def write_heartbeat(status: str, summary: str, dry_run: bool) -> None:
 # Redline manifest (addons/godot_mcp/)
 # ---------------------------------------------------------------------------
 
+# SEE-1630: `godot --headless --import` (run only by the L1 self-produced GUT
+# step) writes generated import byproducts into the redline tree — `*.import`
+# metadata beside every imported asset and a `.godot/` import cache. These are
+# generated, unversioned output (the vendored submodule's own .gitignore
+# declares `*.import`/`.godot/` ignored; its pinned commits track zero of them),
+# so counting them fabricated REDLINE_NEW:critical every Monday.
+#
+# R1 (QA HIGH): the exclusion must follow "unversioned", NOT the filename — a
+# `.import` (or any byproduct shape) that IS tracked in the pinned commit is
+# real redline content, so its add/modify/delete must stay critical. We
+# therefore only omit byproduct-shaped files absent from the pinned tree
+# (`_gitlink_blob_map`), and only when that map is readable (fail closed
+# otherwise). Tracked `.uid` sidecars are never byproducts — the addon versions
+# them deliberately.
+GODOT_IMPORT_SUFFIX = ".import"
+GODOT_CACHE_DIR = ".godot"
+
+
+def _is_godot_byproduct_shape(rel: str) -> bool:
+    """Pure shape test: is `rel` a Godot import byproduct *shape*?
+
+    True for `*.import` files and anything inside a `.godot/` cache dir. Shape
+    alone does not prove it is generated — callers must also confirm it is
+    unversioned (see `_is_generated_byproduct`)."""
+    parts = rel.replace("\\", "/").split("/")
+    if GODOT_CACHE_DIR in parts[:-1]:
+        return True
+    return parts[-1].endswith(GODOT_IMPORT_SUFFIX)
+
+
+def _is_generated_byproduct(rel: str, blob_map: dict) -> bool:
+    """True only for a byproduct-shaped path the pinned commit does NOT track.
+
+    `blob_map` is the pinned tree ({repo-relative path: git blob sha}); an empty
+    map means the tree was unresolvable, so nothing can be proven untracked —
+    fail closed and keep the file (it stays a real candidate the caller
+    reports). A byproduct-shaped file the pinned tree DOES track is versioned
+    redline content and is kept (SEE-1630 R1)."""
+    if not _is_godot_byproduct_shape(rel):
+        return False
+    return bool(blob_map) and rel not in blob_map
+
+
+def _strip_generated_byproducts(manifest: dict, blob_map: dict) -> dict:
+    """Drop generated (unversioned) byproducts from a manifest snapshot."""
+    return {
+        rel: sha
+        for rel, sha in manifest.items()
+        if not _is_generated_byproduct(rel, blob_map)
+    }
+
 
 def compute_redline_manifest(repo_root: str) -> dict:
     """Compute SHA256 manifest for addons/godot_mcp/. Returns {relpath: sha256}.
@@ -482,6 +547,10 @@ def compute_redline_manifest(repo_root: str) -> dict:
     Excludes `.git` (SEE-1289 HIGH-1): the submodule checkout's gitdir pointer
     embeds the host worktree name, so hashing it makes the baseline
     non-portable across worktrees. `.git` is git plumbing, not addon content.
+
+    Includes byproduct-shaped files as-is; `check_redline` strips the generated
+    (unversioned) ones against the pinned tree (SEE-1630 R1) so versioned
+    `.import`/`.godot` content stays under comparison.
     """
     addon_dir = os.path.join(repo_root, "addons", "godot_mcp")
     manifest = {}
@@ -645,14 +714,20 @@ def _gitlink_blob_map(repo_root: str, pointer: str) -> dict:
     return blobs
 
 
-def _redline_critical(rule_id: str, rel: str, message: str) -> dict:
-    return {
+def _redline_critical(rule_id: str, rel: str, message: str, content_id: str = "") -> dict:
+    """Build a REDLINE_* critical. ``content_id`` carries the offending content's
+    hash so the dedup key can distinguish a genuinely new violation at the same
+    path from a repeat of one already in the baseline (SEE-1630)."""
+    finding = {
         "rule_id": rule_id,
         "severity": SEVERITY_CRITICAL,
         "file": rel,
         "line": 0,
         "message": message,
     }
+    if content_id:
+        finding["content_id"] = content_id
+    return finding
 
 
 def _classify_redline_hits(repo_root: str, stored: dict, current: dict, blob_map: dict) -> tuple:
@@ -670,7 +745,12 @@ def _classify_redline_hits(repo_root: str, stored: dict, current: dict, blob_map
         if rel not in current:
             if not blob_map or rel in blob_map:
                 real.append(
-                    _redline_critical("REDLINE_DELETED", rel, f"Redline file deleted: {rel}")
+                    _redline_critical(
+                        "REDLINE_DELETED",
+                        rel,
+                        f"Redline file deleted: {rel}",
+                        content_id=sha,
+                    )
                 )
             else:
                 artifacts += 1
@@ -679,7 +759,12 @@ def _classify_redline_hits(repo_root: str, stored: dict, current: dict, blob_map
                 artifacts += 1
             else:
                 real.append(
-                    _redline_critical("REDLINE_MODIFIED", rel, f"Redline file modified: {rel}")
+                    _redline_critical(
+                        "REDLINE_MODIFIED",
+                        rel,
+                        f"Redline file modified: {rel}",
+                        content_id=current[rel],
+                    )
                 )
     for rel in current:
         if rel in stored:
@@ -687,7 +772,14 @@ def _classify_redline_hits(repo_root: str, stored: dict, current: dict, blob_map
         if rel in blob_map and blob_map[rel] == _git_blob_sha(os.path.join(repo_root, rel)):
             artifacts += 1
         else:
-            real.append(_redline_critical("REDLINE_NEW", rel, f"Redline file added: {rel}"))
+            real.append(
+                _redline_critical(
+                    "REDLINE_NEW",
+                    rel,
+                    f"Redline file added: {rel}",
+                    content_id=current[rel],
+                )
+            )
     return real, artifacts
 
 
@@ -755,13 +847,20 @@ def check_redline(repo_root: str, dry_run: bool) -> list[dict]:
         return [_redline_skipped_uninitialized()]
 
     findings = []
-    current = compute_redline_manifest(repo_root)
-    stored = load_redline_manifest()
+    pointer = _gitlink_pointer(repo_root)
+    blob_map = _gitlink_blob_map(repo_root, pointer)
+    # SEE-1630 R1: omit *generated* (unversioned) import byproducts from both
+    # sides — they must neither fabricate REDLINE_NEW nor be blessed into the
+    # manifest — while a byproduct-shaped file the pinned tree DOES track stays
+    # real redline content, so a versioned `.import` add/modify/delete is still
+    # a critical finding.
+    current = _strip_generated_byproducts(compute_redline_manifest(repo_root), blob_map)
+    stored = _strip_generated_byproducts(load_redline_manifest(), blob_map)
 
     if not stored:
         # First run: store the manifest and report info.
         save_redline_manifest(current, dry_run)
-        _save_pointer(_gitlink_pointer(repo_root), dry_run)
+        _save_pointer(pointer, dry_run)
         findings.append(
             {
                 "rule_id": "REDLINE_INIT",
@@ -773,8 +872,6 @@ def check_redline(repo_root: str, dry_run: bool) -> list[dict]:
         )
         return findings
 
-    pointer = _gitlink_pointer(repo_root)
-    blob_map = _gitlink_blob_map(repo_root, pointer)
     real, artifacts = _classify_redline_hits(repo_root, stored, current, blob_map)
     findings.extend(real)
 
@@ -1853,6 +1950,12 @@ def check_test_to_code_ratio(repo_root: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _report_findings(findings: list[dict]) -> list[dict]:
+    """Serialized projection of findings: drops the internal ``content_id``
+    dedup discriminator (SEE-1630) so the report JSON schema is unchanged."""
+    return [{k: v for k, v in f.items() if k != "content_id"} for f in findings]
+
+
 def build_report(
     findings: list[dict],
     metrics: dict,
@@ -1867,8 +1970,8 @@ def build_report(
             "new_findings": len(new_findings),
             "metrics": metrics,
         },
-        "findings": findings,
-        "new_findings": new_findings,
+        "findings": _report_findings(findings),
+        "new_findings": _report_findings(new_findings),
         "known_findings_count": len(known_keys),
         "kill_switch": bool(metrics.get("kill_switch", False)),
     }
@@ -2059,7 +2162,9 @@ def _dedup_findings(all_findings: list, known_keys: set) -> tuple:
     current_keys = set()
     new_findings = []
     for f in all_findings:
-        key = dedup_key(f["file"], f["line"], f["rule_id"], f["severity"])
+        key = dedup_key(
+            f["file"], f["line"], f["rule_id"], f["severity"], f.get("content_id", "")
+        )
         current_keys.add(key)
         if key not in known_keys:
             new_findings.append(f)

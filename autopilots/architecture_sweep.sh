@@ -150,9 +150,14 @@ fi
 # Read a quoted string value from the patrol config by key. Shell-side (sed)
 # on purpose: wrapper setup must not depend on a Python one-liner, and the
 # config is repo-owned with single-line string values.
+# A missing/unreadable file (e.g. no .gutconfig.json in the patrol repo on the
+# Monday-autoactivated L1 path, SEE-1625) yields an EMPTY value so each
+# caller's empty-value handling applies; sed's exit-2 on a missing input file
+# must not abort the wrapper via set -e/pipefail. Fail-loud contracts for a
+# missing kol.json stay owned by sweep_materialize's explicit pre-checks.
 sweep_config_value() {
   local key="$1" config_file="$2"
-  sed -n "s/^.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*$/\1/p" "$config_file" | head -n 1
+  sed -n "s/^.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*$/\1/p" "$config_file" 2>/dev/null | head -n 1 || true
 }
 
 # Mirror architecture_sweep.py _locate_repo_root: hash-slot layouts, direct

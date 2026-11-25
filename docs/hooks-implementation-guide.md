@@ -12,9 +12,9 @@
 ### 1.1 调用链路（v2 单轨）
 
 ```
-CC hook 事件（10 时点 × matcher *）
+CC hook 事件（11 时点 × matcher *）
   ↓
-settings.json（全局 ~）：10 时点统一注册，绝对路径直指本仓检出
+settings.json（全局 ~）：11 时点统一注册，绝对路径直指本仓检出
   "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh <HookType> unified-hook"
 ~/tools/dev-forge/claude-hooks/hook-wrapper.sh（记录日志 + exec dispatcher.sh unified-hook）
   ↓
@@ -36,7 +36,7 @@ unified/engine.js（配置驱动求值：on → agents → when → action）
 |------|------|------|
 | **入口** | `~/.claude/settings.json` → `claude-hooks/hook-wrapper.sh` | CC 触发 hook → 记录日志 → 委托 dispatcher |
 | **路由** | `claude-hooks/dispatcher.sh` | 仅识别 `unified-hook` 一个 alias（脚本自定位）；未知 alias 静默透传（fail-open） |
-| **求值** | `claude-hooks/unified/engine.js` | 读取规则配置（rules-v2.json + rules.d/*.json），按 `on`/`agents`/`when`/`one_shot` 求值，执行 `deny`/`context`/`modify`/`run_script` 动作 |
+| **求值** | `claude-hooks/unified/engine.js` | 读取规则配置（rules-v2.json + rules.d/*.json），按 `on`/`agents`/`when`/`one_shot` 求值，执行 `deny`/`context`/`modify`/`run_script`/`pending_set`/`pending_context` 动作 |
 | **配置真源** | `claude-hooks/unified/rules-v2.json` + `rules.d/` + `bootstrap/hooks-registration.json` | 规则与注册清单的声明式真源，由 `bootstrap/bootstrap.sh` + `bootstrap/registry-patch.js` 渲染进全局 settings（运行期零部署拷贝） |
 | **业务** | `claude-hooks/scripts/*.sh`（经 run_script 挂载） | 复合逻辑：push guard / mention 检查 / 格式化 / taskflow 记账 / auto-pr / repo-checkout |
 
@@ -57,7 +57,7 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
 | Multica Agent 在 workdir 运行 | 全局 `~/.claude/settings.json` | 同上（注册链始终指向 dev-forge 检出） |
 | 其他项目 / workdir 无代码 | 全局 `~/.claude/settings.json` | dispatcher 静默跳过（透传） |
 
-> **注意**：项目级 `.claude/settings.json` 不定义 hooks；settings 注册唯一真源为仓库 `bootstrap/hooks-registration.json`（声明式清单），由安装器渲染到全局 `~/.claude/settings.json`。10 时点 = PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / SubagentStop / UserPromptSubmit / Notification / PreCompact / PermissionRequest，matcher 全 `*`，触发面收敛在引擎内 when 树。
+> **注意**：项目级 `.claude/settings.json` 不定义 hooks；settings 注册唯一真源为仓库 `bootstrap/hooks-registration.json`（声明式清单），由安装器渲染到全局 `~/.claude/settings.json`。11 时点 = PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / SubagentStop / UserPromptSubmit / Notification / PreCompact / PostCompact / PermissionRequest，matcher 全 `*`，触发面收敛在引擎内 when 树。
 
 ---
 
@@ -96,12 +96,15 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
     ],
     "PreCompact": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh PreCompact unified-hook" } ] }
+    ],
+    "PostCompact": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "/home/jerry/tools/dev-forge/claude-hooks/hook-wrapper.sh PostCompact unified-hook" } ] }
     ]
   }
 }
 ```
 
-> **v2 终态形态**：10 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `bootstrap/hooks-registration.json`，由 `bootstrap/bootstrap.sh` 调 `registry-patch.js` 渲染（备份 + 幂等校验；回滚走 `bootstrap/rollback.sh`）。PermissionRequest 时点于 2026-11-03 增补（plan-mode 自动放行迁移，见 §5.1）。
+> **v2 终态形态**：11 时点 × matcher 全 `*`，全部指向同一 `unified-hook` alias；v1 散装注册（skill-check / mention-check / push-guard 等 11 项 wrapper 行）已全部移除。settings 注册无仓库主副本——声明式真源为 `bootstrap/hooks-registration.json`，由 `bootstrap/bootstrap.sh` 调 `registry-patch.js` 渲染（备份 + 幂等校验；回滚走 `bootstrap/rollback.sh`）。PermissionRequest 时点于 2026-11-03 增补（plan-mode 自动放行迁移，见 §5.1）；PostCompact 时点于 2026-11-22 增补（SEE-1621，压缩完成后触发，matcher `manual` / `auto`，载荷含 `trigger` / `compact_summary`，无决策控制位）。
 >
 > **路径说明**：生产环境使用上述 dev-forge 检出的绝对路径，避免 WSL 中 `~` 展开不一致；注册链不经过 `~/.claude/hooks/` 部署位。
 
@@ -114,25 +117,27 @@ dispatcher 找不到运行物时静默透传 stdin + `exit 0`（零影响，fail
    command 只写脚本路径 + 参数，不要添加 bash 前缀或引号嵌套。
 
 2. **每个 command 携带两个参数：HookType + Alias**
-   - `HookType`（$1）：CC 官方事件名（10 时点）
+   - `HookType`（$1）：CC 官方事件名（11 时点）
    - `Alias`（$2）：v2 终态恒为 `unified-hook`（dispatcher 仅路由该 alias）
 
 3. **matcher 全 `*`（v2 语义反转）**
    - v1 按 hook 拆多个注册项并在 matcher 层按工具过滤；v2 全时点统一 `*`，触发窗口收敛到引擎内 `when` 树（tool op / file op / command op / payload op / branch op 等组合）——单一注册 + 配置驱动，规则增删零 settings 变更
 
 4. **注册真源为声明式清单**
-   - `bootstrap/hooks-registration.json`：10 时点列表 + runtime_artifacts 部署清单 + per-phase 启用/禁用语义（P0–P3 历史 cutover 留档）
+   - `bootstrap/hooks-registration.json`：11 时点列表 + runtime_artifacts 部署清单 + per-phase 启用/禁用语义（P0–P3 历史 cutover 留档）
    - 任何 hooks 变更先改清单，再由安装器落地；禁止手工直改 settings
 
 ### 2.3 规则配置真源（v2 新增）
 
 | 文件 | 内容 | 维护约束 |
 |---|---|---|
-| `claude-hooks/unified/rules-v2.json` | 13 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
+| `claude-hooks/unified/rules-v2.json` | 15 条配置化规则（skill-check 12 条 v1 等价翻译 + tscn-tres-guard + atlas-postcompact-arm/deliver（SEE-1621 R2 补投）；doc-reminder 死规则已删，SEE-1388 SPEC-004）：`on`/`agents`/`owner`/`blocking`/`when`/`one_shot`/`action[deny\|context\|modify\|run_script\|pending_set\|pending_context]`；owner/blocking 为全规则强制字段，validate-rules.js 强制校验（见 §5.1） | 逐规则等价对照见迁移清单 §6.1；改动须过 validate-rules.js 状态机 |
 | `claude-hooks/unified/rules.d/runscript-mounts.json` | 8 条 run_script 挂载规则（push-guard / mention-check / gdformat-gdlint / taskflow×3 / auto-pr / repo-checkout）：`deny_exit_codes` / `on_fail` / `timeout_ms` | 挂载 lane 与 rules-v2 规则段互不交叉编辑 |
-| `claude-hooks/unified/rules.d/plan-mode-auto-allow.json` | 1 条 PermissionRequest 挂载规则（plan 模式自动放行，2026-11-03 自 Mac 全局 settings jq 一行式迁入）：payload op 字符串等值 + run_script 协议直通 | 同上；引擎侧依赖 validate-rules.js HOOK_POINTS 第 10 时点 + when-ops.js payload 字符串等值 |
+| `claude-hooks/unified/rules.d/plan-mode-auto-allow.json` | 1 条 PermissionRequest 挂载规则（plan 模式自动放行，2026-11-03 自 Mac 全局 settings jq 一行式迁入）：payload op 字符串等值 + run_script 协议直通 | 同上；引擎侧依赖 validate-rules.js HOOK_POINTS 第 11 时点 + when-ops.js payload 字符串等值 |
 | `claude-hooks/unified/rules.d/push-guard-gates.json` | 2 条声明式 deny 规则（push-guard-master-gate / push-guard-force-push-gate，SEE-1430b；owner/blocking 由 SEE-1516 §SPEC-018 补登）：`push_refspec` 结构化 op × `repo` op（repos.json 注册表判定 kol/gqt；devforge belt 豁免 SEE-1527；排除 `--delete`） | 配置化 deny（文案内置，无脚本挂载）；改动须过 validate-rules.js 状态机 |
+| `claude-hooks/unified/rules.d/taskstop-sidecar-sync.json` | 1 条 PostToolUse 时点挂载规则（taskstop-sidecar-finished-sync，SEE-1624 §SPEC-018）：tool=TaskStop 后仅接受明确成功且响应与请求 id 一致的停止事件；失败、not found、非法或穿越 id 均不写 | 同上；脚本 `taskstop-sidecar-sync.sh` 仅将既有 `<session>/subagents/agent-<key>.meta.json` 的 `finished` 原子置为 `true`（保留其余字段、幂等），全程 fail-open（异常 exit 0）；`stop-guard-subagents.sh` 语义不变，live 且缺 `finished` 的 agent 仍 exit 2 |
 | `claude-hooks/unified/rules.d/stop-guard-subagents.json` | 1 条 Stop 时点挂载规则（stop-guard-live-subagents，SEE-1559 §SPEC-005）：判定/防环在脚本内自检，`run_script` `deny_exit_codes:[2]` → 引擎 exit2 通道直通（非 PreToolUse 保真为 exit 2 + stderr 阻止 Stop） | 同上；脚本 `stop-guard-subagents.sh` 扫描 session `subagents/*.meta.json`，载荷/目录缺失 fail-open |
+| `claude-hooks/unified/rules.d/stop-guard-background-tasks.json` | 1 条 Stop 时点挂载规则（stop-guard-background-tasks，SEE-1636）：托管运行（`MULTICA_TASK_ID` 非空）结束回合时 Stop 载荷仍有未结束非 agent 后台任务即 exit 2；判定/门控/防环在脚本内自检，`run_script` `deny_exit_codes:[2]` → 引擎 exit2 通道直通 | 同上；脚本 `stop-guard-background-tasks.sh` 按 status 终态词表判定（缺失/未知按活任务计）、与 `stop-guard-subagents.sh` 并存时由脚本代送其指引（引擎 exitChannel 首条胜出），载荷级 fail-open |
 | `bootstrap/hooks-registration.json` | settings 注册声明式真源 + runtime_artifacts 部署清单 | 见 §2.1 |
 
 ---
@@ -305,7 +310,7 @@ INPUT="${INPUT%$'\n'}"
 
 ## 5. Hook 脚本清单（v2 终态）
 
-v2 单轨下「注册项」与「脚本」解耦：settings 共 10 条 unified-hook 注册（每时点一条）；业务脚本经 run_script 挂载规则触发（规则定义在 `unified/rules.d/runscript-mounts.json`），配置化规则在 `unified/rules-v2.json`。
+v2 单轨下「注册项」与「脚本」解耦：settings 共 11 条 unified-hook 注册（每时点一条）；业务脚本经 run_script 挂载规则触发（规则定义在 `unified/rules.d/runscript-mounts.json`），配置化规则在 `unified/rules-v2.json`。
 
 > **维护条款：本表与 `unified/rules-v2.json` + `unified/rules.d/` + `hooks-registration.json` 同步更新。** 任何规则增删、挂载或通道调整，都必须同时更新规则配置与本表，二者不一致视为文档缺陷。拦截型（阻断）hook 必须在表中登记 owner，无 owner 的拦截不允许存在。
 
@@ -323,12 +328,16 @@ v2 单轨下「注册项」与「脚本」解耦：settings 共 10 条 unified-h
 | `mention-confirm-check`（rules-v2） | PreToolUse | command `multica issue comment add` × content 提及正则；one_shot{scope:run} | 配置化（deny 文案内置） | **是**（permissionDecision=deny，SEE-1388 SPEC-005 修正：此前误登为提醒） | Atlas（评论 mention 自查规则，SEE-1151 系） |
 | `child-issue-guard`（rules-v2，SEE-1388 SPEC-005 补登） | PreToolUse | command `multica issue (create\|update)` × has_flag --parent | 配置化（deny 文案内置） | **是**（permissionDecision=deny） | Atlas（单 issue 任务纪律，SEE-747 系） |
 | `grepai-search-reminder`（rules-v2，SEE-1388 SPEC-005 补登） | PostToolUse | command grep/rg/ag/ack 或 tool Grep | 配置化（context 文案内置） | 否（additionalContext） | Atlas（grepai 语义检索引导，SEE-1238 系） |
+| `atlas-postcompact-arm`（rules-v2，SEE-1621 R2/R3） | PostCompact | agents include [Atlas]；无 when/repo 过滤（任意仓库/工作目录生效）；**不配置 one_shot（R3：Owner 方案一——每次 compact 均重臂）**，覆盖式写同一 key+session 标记（两次 compact 间无工具调用时单标记）；无 session 拒写（fail-open 审计） | 配置化（`pending_set`：按 CC session 写待提醒标记 `<state>/pending-<key>-<session>`；无输出、非阻断） | 否（非阻断，exit 0） | Atlas（压缩后记账，不直接注入） |
+| `atlas-postcompact-deliver`（rules-v2，SEE-1621 R2） | PreToolUse | agents include [Atlas]；任意工具；无 when/repo 过滤；**无 one_shot**（引擎在规则命中时即写 one_shot 哨兵、先于 pending 判定——deliver 若携带哨兵会被压缩前的任意 PreToolUse 永久禁用；补投窗口 = pending 存在性本身）；无 session 拒消费（fail-open 审计） | 配置化（`pending_context`：命中待提醒标记时以 additionalContext 注入完整提醒并清除标记；无标记则静默） | 否（additionalContext，非阻断） | Atlas（压缩后首次工具调用前补投恢复提醒） |
 | `atlas-taskflow-mark-a-mount` | PostToolUse | tool Skill（脚本内 taskflow 判定） | `atlas-taskflow-mark-a.sh` | 否（写 /taskflow 状态标记） | Atlas |
 | `atlas-taskflow-mark-b-mount` | PostToolUse | tool Bash（脚本内 issue create 判定） | `atlas-taskflow-mark-b.sh` | 否（写状态标记） | Atlas |
 | `atlas-taskflow-exit-reminder-mount` | PreToolUse | tool Bash（脚本内 comment add 判定；仅 Atlas 生效） | `atlas-taskflow-exit-reminder.sh` | 条件阻断（对新建任务 issue 评论时 deny） | Atlas（/taskflow 编排闭环） |
 | `gdformat-gdlint-mount` | PostToolUse | tool Write\|Edit × file *.gd | `gdformat-gdlint.sh` | **是**（exit 2 + stderr 直通，fail-close；含 SEE-1142 mcp-mouse-lint 追加规则） | Bachi（GDScript 代码质量） |
 | `auto-pr-stop-mount` | Stop | payload stop_hook_active equals false（+ 脚本内第二道防线） | `auto-pr-on-stop.sh` | 否（自动 commit/push/draft PR；恒 fail-open 不阻塞 Stop） | Bachi（SEE-1129 活跃维护） |
+| `taskstop-sidecar-finished-sync`（rules.d/taskstop-sidecar-sync.json，SEE-1624 §SPEC-018） | PostToolUse | tool TaskStop；仅明确成功且响应与请求 id 一致才写，失败/not found/非法或穿越 id 不写 | `taskstop-sidecar-sync.sh` | 否（仅将既有 sidecar meta `agent-<key>.meta.json` 的 `finished` 原子置为 `true`，保留其余字段且幂等；全程 fail-open、异常 exit 0；live 且缺 `finished` 仍由 stop-guard exit 2） | Bachi（§SPEC-018 停止事件与 meta 生命周期同步根修） |
 | `stop-guard-live-subagents`（rules.d/stop-guard-subagents.json，SEE-1559 §SPEC-005） | Stop | 脚本扫描 session `subagents/*.meta.json`，存在 `finished != true` 的 sub-agent 即阻断；`stop_hook_active=true` 自守放行；载荷/目录缺失 fail-open | `stop-guard-subagents.sh` | **是**（`deny_exit_codes[2]` → 引擎 exit2 通道直通，exit 2 + stderr 阻止 Stop；脚本失败 fail-open） | Archi（SEE-1559 根因防线） |
+| `stop-guard-background-tasks`（rules.d/stop-guard-background-tasks.json，SEE-1636） | Stop | 仅托管运行（`MULTICA_TASK_ID` 非空）；脚本按 Stop 载荷 `background_tasks` 判定，`type` 不含 agent 且 `status` 不在终态词表（completed/failed/killed/stopped/cancelled/exited/done/timed_out，缺失/未知按活任务计）即阻断；`stop_hook_active=true` 自守放行；载荷级 fail-open；与 sub-agent 守卫同命中时代送其指引（引擎 exitChannel 首条胜出） | `stop-guard-background-tasks.sh` | **是**（`deny_exit_codes[2]` → 引擎 exit2 通道直通，exit 2 + stderr 阻止 Stop） | Bachi（SEE-1636 本地止血防线） |
 | `repo-checkout-mount` | SessionStart | payload hook_event_name equals SessionStart | `repo-checkout.sh` | 否（session 启动自动 checkout 工作分支，additionalContext hint） | Bachi（SEE-1117 活跃维护） |
 | `plan-mode-permission-allow`（rules.d/plan-mode-auto-allow.json） | PermissionRequest | payload permission_mode equals "plan"（字符串精确等值） | `plan-mode-allow.sh` | 否（allow 放行；非 plan 输出为空 → 透传原审批流；脚本失败 fail-open 降级手动审批） | Owner（jerry，Mac 原始裁定 2026-10-29，2026-11-03 迁入） |
 
@@ -338,6 +347,15 @@ v2 单轨下「注册项」与「脚本」解耦：settings 共 10 条 unified-h
 - `atlas-taskflow-*` 三个钩子仅对 `MULTICA_AGENT_NAME=Atlas` 生效（规则 agents 顶层限定），配合 /taskflow 编排闭环使用。
 - `gdformat-gdlint` 的 SEE-1142 mcp-mouse-lint 追加规则实现在 `.dev/scripts/mcp-mouse-lint.sh`，通过 `PROJECT_ROOT` 定位。
 - 非 hook 挂载脚本：`mcp-tool-presence.sh`（被 repo-checkout.sh 从属调用，godot-mcp 工具审计）、`godot-mcp-launch-path.lib.sh`（source 库）——均保留原位；`reconcile-working-branch.sh`（Leader 手动调用，处理 shared working branch auto-rebase 冲突）位于本仓 `scripts/reconcile-working-branch.sh`（非 hook 工具，不进 hooks 部署清单）。
+
+#### Stop 后台任务守卫使用说明
+
+- **用途**：`stop-guard-background-tasks` 在 Multica 托管运行结束回合时，阻止仍有未结束非 agent 后台任务的 Stop，避免控制通道随回合关闭后，后续工具调用被冒充用户的取消文案打断。
+- **生效范围**：仅在 `MULTICA_TASK_ID` 非空的托管运行、Stop 时点生效；交互式会话直接放行。只处理 `background_tasks` 中 `type` 不含 `agent` 且 `status` 非终态的任务，状态缺失或未知按未结束计；载荷级异常 fail-open。
+- **每回合只拦一次**：首次命中以 exit 2 阻断并给出处置指引；`stop_hook_active=true` 时脚本自守放行。被拦后须在当前回合内前台等待并读取输出，完成收尾再结束；卡死任务先 `TaskStop`。
+- **常驻服务例外**：用户明确要求回合结束后继续常驻的服务属于例外；写清常驻交接说明（地址、日志、停止方式）后即可结束回合。
+- **与 sub-agent 守卫并存**：`stop-guard-live-subagents` 继续负责 agent 型任务，本守卫负责其余后台任务，二者不合并、互不替代。双命中时本守卫调用既有守卫脚本并附其原始指引，两段指引都送达模型；仅 sub-agent 存活时仍由既有守卫单独处理。
+- **回滚**：生产引擎侧删除 `claude-hooks/scripts/stop-guard-background-tasks.sh` 与 `claude-hooks/unified/rules.d/stop-guard-background-tasks.json`，或将规则 `enabled` 置为 `false`；不需要修改 `settings.json`。
 
 ### 5.2 已退役钩子（勿再引用）
 
@@ -489,7 +507,17 @@ INPUT="${INPUT%$'\n'}"
 
 ---
 
-*文档版本：2026-11-03（PermissionRequest 第 10 时点增补）*
+*文档版本：2026-11-25（SEE-1636 §SPEC-012 Stop 后台任务守卫使用说明补齐）*
+*更新记录：SEE-1636 §SPEC-012 文档更新（2026-11-25，Archi 实施）—— §5.1 增补 `stop-guard-background-tasks` 的用途、生效范围、单次拦截、常驻服务例外、双守卫并存与回滚说明；核对 §2.3、§5.1 登记行与脚本、规则及 runtime_artifacts 一致，登记行无需改动。零行为：仅文档说明补齐，未改规则/注册/代码/测试。*
+*更新记录：SEE-1624 §SPEC-018 文档复核（2026-11-24，Archi 实施）—— §2.3 补登 `rules.d/taskstop-sidecar-sync.json` 配置真源；§5.1 明确真实 sidecar 命名、成功/失败写入边界、fail-open 及与 stop-guard 的关系；`bootstrap/hooks-registration.json` 的 runtime_artifacts 已登记脚本与规则，本次复核未改该清单。零行为：仅文档描述补齐，未改规则/注册/代码/测试。*
+*更新记录：SEE-1621 文档复核（2026-11-23，Archi 实施，Atlas 派单）—— 现役文档与真源最终一致性核对：§2.3 plan-mode 行「HOOK_POINTS 第 10 时点」更正为「第 11 时点」（PostCompact 插入第 10 位、PermissionRequest 顺延为第 11）；§1.3 引擎求值动作清单补 `pending_set`/`pending_context`，与 rules-v2.json 实际支持的 6 个 action op 及 §2.3 表述对齐。零行为：仅文档一致性修订，未改规则/注册/代码/测试。*
+*更新记录：SEE-1621 R3（2026-11-23，Bachi 实施，Owner 批准方案一）—— Owner 重裁多次 compact 语义：钩子目标是「每次压缩后让 agent 重新恢复流程」，而非「每 issue 一次性」。`atlas-postcompact-arm` 移除 R2b 的 `one_shot.ids=[MULTICA_AGENT_NAME,HOOK_ISSUE_ID]`，每次 PostCompact 均触发并以覆盖模式写同一 key+session pending（两次 compact 间无工具调用时单标记）；`atlas-postcompact-deliver` 不变（无 one_shot、存在才消费、消费即删）。窗口 = compact→下一个 PreToolUse 提醒一次→同窗口不重复→下一次 compact 重新可提醒；此前 agent+issue 全局一次性判据被本项取代（R2b 的 arm 哨兵形态随 one_shot 移除消失）。测试 test_postcompact_delivery.sh 重写为 per-compact 语义（34 断言：重臂再提醒、覆盖式单标记、消费即清、无残留、保留 Harti 90e47f0 无 session 拒写/拒消费补强）；§5.1/usage-rules §1.4 同步。§SPEC-014 三入口零 diff 保持。*
+*更新记录：SEE-1621 R2c（2026-11-23，Bachi 实施，Owner 清理令/§SPEC-014）—— 最终树只保留有效路径：①移除不可达旧规则 `atlas-postcompact-reminder`（PostCompact additionalContext 不被 CC 消费，QA 实测到达 0/6；其唯一效力证明即 §SPEC-008 失败事实，保留该规则属无效路径）及其独立测试 test_postcompact_atlas_reminder.sh（由 test_postcompact_delivery.sh 承接有效判据）；②移除 PreCompact 试验残留：hook-wrapper.sh `HOOK_EVENT_NAME` 透传、dispatcher.sh PreCompact 直通分支、unified-hook.sh 空 stdout 抑制、engine.js PreCompact 纯 stdout 分支（全部为 §SPEC-010/011 obsolete 路线的载体，回退至 R1 前形态）；③test_v2_unified_engine_p0.sh PreCompact 断言回退常规 additionalContext 通道；④§2.3 规则数 16→15（6 deny + 7 context + 2 pending）、§5.1 移除旧规则行；usage-rules §1.4 同步。补投有效路径（arm one_shot horizon → deliver 消费即清）零改动。*
+*更新记录：SEE-1621 R2b（2026-11-23，Bachi 实施，Owner 纠正）—— Owner 明确补投 reminder 为一次性、horizon 与其他 reminder 钩子同型：`atlas-postcompact-arm` 增配 `one_shot.ids=[MULTICA_AGENT_NAME,HOOK_ISSUE_ID]`（同 agent+issue 首次 compact 记账后不再重臂/不再提醒，不同 issue 独立；窗口 env 缺失 fail-open 跳过，与其他 reminder 同语义）。`atlas-postcompact-deliver` 保持无 one_shot——引擎在规则命中时即写 one_shot 哨兵且先于 pending 判定，deliver 若携带会被该 issue 压缩前的任意 PreToolUse 永久禁用；一次性语义由 arm horizon + `pending_context` 消费即清共同保证，首次消费后无残留 pending。原 R2「连续 compact 各可再补投」被 Owner 裁定取代。测试 test_postcompact_delivery.sh 重写为 horizon 语义（同 agent+issue 第二次 compact 不提醒 / 不同 issue 独立 / 无残留 pending / horizon env 缺失 fail-open / 既有契约不回退，30 断言）；§5.1 两行与 usage-rules §1.4 同步。*
+*更新记录：SEE-1621 R2（2026-11-23，Bachi 实施，Owner 改定补投路线）—— Owner 判定 PreCompact stdout 仅「指导摘要生成」不等于压缩后强制提醒，Spec 切至补投路线（§SPEC-012，§SPEC-010/011 obsolete）：移除 `atlas-precompact-summary`；新增 `atlas-postcompact-arm`（PostCompact × [Atlas]，`pending_set` 按 session 记账）与 `atlas-postcompact-deliver`（PreToolUse 任意工具 × [Atlas]，`pending_context` 消费并 additionalContext 注入完整提醒，消费即清）；validator 新增 `pending_set`/`pending_context` action op（时点约束：PostCompact / PreToolUse；key 必填、pending_context message 必填）；引擎实现 session 级 pending 标记写入/消费/超龄 GC（`<state>/pending-<key>-<session>`，无 session 拒写防串扰）。保留 PreCompact 空 stdout 防污染契约（hook-wrapper 透传 HOOK_EVENT_NAME、dispatcher/entry 不回显 payload）。§2.3 规则数 15→16（6 deny + 8 context + 2 pending）、§5.1 两行新规则；测试新增 tests/test_postcompact_delivery.sh（真实链：记账→下一 PreToolUse 补投一次、无 compact 不触发、连续 compact 重臂、非 Atlas 隔离、session 隔离、跨 repo、任意工具、PostCompact 旧契约不回退、PreCompact 空 stdout）；validator 矩阵扩至 6 action op 并补 pending 参数用例；see764 规则数 16/context 8；hooks-usage-rules.md 补补投通道语义。*
+*更新记录：SEE-1621 R1（2026-11-23，Bachi 实施）—— §SPEC-008 实机失败（CC 2.1.329 不消费 PostCompact additionalContext，QA 6 次真实 compact 到达 0/6）后按 Owner 批准的 PreCompact 试验路线新增可达通道：rules-v2.json 新增 `atlas-precompact-summary`（PreCompact × [Atlas]、无 when/repo 过滤、无 one_shot、context 非阻断，文案同 PostCompact 规则）；引擎 `context` 在 PreCompact 时点改以**纯 stdout** 输出（官方契约：PreCompact 退出 0 时 stdout 即压缩摘要指令），无命中保持空 stdout；`hook-wrapper.sh` 透传 `HOOK_EVENT_NAME`，`dispatcher.sh` 对 PreCompact 原样直通引擎输出并**禁止 payload 回显**（修复既有污染：此前无命中时 dispatcher 会把 payload JSON 当摘要指令输出给 CC）；`unified-hook.sh` 同语义抑制空命中回显。§2.3 规则数 14→15、§5.1 新增该规则行；测试新增 tests/test_precompact_atlas_summary.sh（真实链 wrapper→dispatcher→entry→engine：纯文本通道、非 Atlas 空 stdout、跨仓库、重复 compact、PostCompact 契约不回退）并同步 test_v2_unified_engine_p0.sh（PreCompact 断言改纯 stdout）/ test_see764_unified_engine_regression.sh（规则数 15 = 6 deny + 9 context）；hooks-usage-rules.md §1.4 补 PreCompact 摘要指令语义。PostCompact 挂载支持保留不变。*
+*更新记录：SEE-1621 code（2026-11-22，Bachi 实施）—— validate-rules.js HOOK_POINTS/NO_TOOL_PAYLOAD 增至 11 时点（新增 PostCompact：压缩完成后触发，matcher manual/auto，载荷含 trigger/compact_summary，无决策控制位，context 注入与 PreCompact 同型）；bootstrap/hooks-registration.json hook_points 同步 11；rules-v2.json 新增 atlas-postcompact-reminder（agents include [Atlas]、无 when/repo 过滤全仓生效、无 one_shot 每次压缩重提醒、context 非阻断，文案覆盖压缩事实 / /task-explore / /recall owner-order + 页面 ID kp-cb6e073b333974583acdc872916438ff / Leader /task-run）；§1/§2/§2.3/§5.1 时点计数 10→11 与规则数 13→14 同步；测试新增 tests/test_postcompact_atlas_reminder.sh（真实引擎行为：Atlas 隔离、跨仓库命中、同 session 重复提醒、无 deny、他事件不误触发）并同步 validator.test.mjs / test_v2_installer_p0.sh / test_hook_registration_see270.sh / test_v2_unified_engine_p0.sh / test_see764_unified_engine_regression.sh 时点与数量断言；hooks-usage-rules.md 补 PostCompact 载荷语义。*
+*更新记录：SEE-1621 tidy（2026-11-22，Refacty 实施）—— §5 导语 settings unified-hook 注册计数 10→11（本批 code 漏同步的现役计数，维护条款「二者不一致视为文档缺陷」；声明真源 `bootstrap/hooks-registration.json` 已为 11 时点）。零行为：仅文档计数字。*
 *更新记录：SEE-1559 tidy 补充轮（2026-11-10，Leader 裁定 O4/O5）—— §2.3「规则配置真源」表补登 `rules.d/push-guard-gates.json`（存量缺口）与 `rules.d/stop-guard-subagents.json` 两行；stop-guard-subagents.json version_note 失实依据更正（when-ops.js payload 分支实读语义：equals:false 对缺省字段 undefined/null/false 视为未置位命中，非「求值不稳」；脚本内自检为权威道的设计不变）。零行为：仅文档表行与注释文字。*
 *更新记录：SEE-1559 tidy（2026-11-10）—— §5.1 表补登 stop-guard-live-subagents 行（rules.d/stop-guard-subagents.json，Stop 时点 sub-agent 存活防线，Archi 实施）；同步 bootstrap/hooks-registration.json runtime_artifacts 登记 `scripts/stop-guard-subagents.sh` 与 `unified/rules.d/stop-guard-subagents.json`（维护条款「规则增删须与本表 + hooks-registration.json 同步」）。零行为：仅文档与清单登记，未改规则配置/脚本/引擎。*
 *更新记录：SEE-1527 修复轮（2026-11-05）—— push-guard gates belt 豁免去字面量化：旧「命令串含 `/dev-forge` 子串」锚点路径敏感（dev-forge 检出目录名不含字面量时 KOL/gqt 会话合法 push 被跨仓误拦，生产可达），改为 push 有效目标仓 origin URL ∈ 注册表 devforge 项判定（repo op `target:"push"`：段内 `-C <dir>` 优先、其次前置 cd 链、否则会话 cwd；多 push 段 all 口径；任一目标不可解析即不豁免，保守方向 = 门禁照常）。配套：validate-rules.js repo target 值域校验 + variantOf 映射 cmd-cur；§5.1 两行条件列同步；测试 test_push_guard_devforge_exempt.sh B8 家族重锚（allow/deny 两侧对照、断言与套件检出位置解耦）*

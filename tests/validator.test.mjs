@@ -86,15 +86,29 @@ test('transSchema: 非对象/缺 name/坏 enabled 均 INVALID', () => {
 });
 
 test('transOn: 缺省=全时点; in/except 互斥 INVALID; 未知时点 INVALID; except 求补', () => {
-  assert.equal(V.HOOK_POINTS.length, 10); // plan-mode-allow 迁移新增第 10 时点
-  assert.equal(V.transOn('SCHEMA_OK', undefined).S_on.size, 10);
+  assert.equal(V.HOOK_POINTS.length, 11); // SEE-1621 PostCompact 新增第 11 时点
+  assert.equal(V.transOn('SCHEMA_OK', undefined).S_on.size, 11);
   const bad = V.transOn('SCHEMA_OK', { in: [PRE], except: ['Stop'] });
   assert.equal(bad.ok, false);
   assert.equal(bad.path, 'on');
   assert.ok(V.transOn('SCHEMA_OK', { in: ['Nope'] }).ok === false);
   const ex = V.transOn('SCHEMA_OK', { except: ['Stop'] });
-  assert.equal(ex.S_on.size, 9);
+  assert.equal(ex.S_on.size, 10);
   assert.ok(!ex.S_on.has('Stop'));
+});
+
+test('PostCompact 正式接纳（SEE-1621）：validator 接纳 + 无 tool 载荷约束仍拒绝 + context 协议合法', () => {
+  assert.ok(POINTS.includes('PostCompact'), 'PostCompact 必须在 HOOK_POINTS');
+  const on = V.transOn('SCHEMA_OK', { in: ['PostCompact'] });
+  assert.equal(on.ok, true, 'PostCompact 必须是已知时点（不再判未知）');
+  // M1：无 tool 载荷时点上 tool/file/command op 全时点不可用 → INVALID（既有约束保持）
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: { op: 'tool', in: ['Bash'] } }), undefined, 'when', '无对应载荷');
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: { op: 'file', patterns: ['*.md'] } }), undefined, 'when', '无对应载荷');
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: { op: 'command', scope: 'current', pattern: 'git push' } }), undefined, 'when', '无对应载荷');
+  // M5：event(仅 PostCompact) × tool 恒 false —— 证明 PostCompact ∈ NO_TOOL_PAYLOAD
+  assertInvalid(baseRule({ when: { op: 'all', args: [{ op: 'event', in: ['PostCompact'] }, { op: 'tool', in: ['Bash'] }] } }), undefined, 'when', '恒 false');
+  // context action 在 PostCompact 协议合法（M2 继承 HOOK_POINTS），缺省 when 恒真
+  assertValid(baseRule({ on: { in: ['PostCompact'] }, when: undefined }));
 });
 
 test('transAgents: 数组 desugar 形式 / 交集非空 INVALID / 双空 INVALID / 仅单边 VALID', () => {
@@ -171,11 +185,13 @@ test('M1 注记: 多值 on 部分可用 → 无 event 收窄 ⚠️；有 event 
 // ================================================================
 
 for (const point of POINTS) {
-  for (const actionOp of ['deny', 'context', 'modify', 'run_script']) {
+  for (const actionOp of ['deny', 'context', 'modify', 'run_script', 'pending_set', 'pending_context']) {
     const cellOk = V.M2_ACTION_POINTS[actionOp].has(point);
-    const action = actionOp === 'run_script'
-      ? { op: 'run_script', path: '/tmp/x.sh' }
-      : { op: actionOp, message: 'm' };
+    let action;
+    if (actionOp === 'run_script') action = { op: 'run_script', path: '/tmp/x.sh' };
+    else if (actionOp === 'pending_set') action = { op: 'pending_set', key: 'k' };
+    else if (actionOp === 'pending_context') action = { op: 'pending_context', key: 'k', message: 'm' };
+    else action = { op: actionOp, message: 'm' };
     const label = `M2[${point} × ${actionOp}] ${cellOk ? '✅' : '❌'}`;
     test(label, () => {
       // 隔离 action 维度：when 缺省，避免 M1 先行拒绝
@@ -185,6 +201,17 @@ for (const point of POINTS) {
     });
   }
 }
+
+test('pending ops（SEE-1621 R2）：时点约束 + key/message 参数校验', () => {
+  // pending_set 仅 PostCompact；pending_context 仅 PreToolUse
+  assertValid(baseRule({ on: { in: ['PostCompact'] }, when: undefined, action: [{ op: 'pending_set', key: 'k' }] }));
+  assertValid(baseRule({ on: { in: ['PreToolUse'] }, when: undefined, action: [{ op: 'pending_context', key: 'k', message: 'm' }] }));
+  assertInvalid(baseRule({ on: { in: ['PreToolUse'] }, when: undefined, action: [{ op: 'pending_set', key: 'k' }] }), undefined, 'action[0].op', 'M2');
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: undefined, action: [{ op: 'pending_context', key: 'k', message: 'm' }] }), undefined, 'action[0].op', 'M2');
+  // key 必填非空；pending_context message 必填
+  assertInvalid(baseRule({ on: { in: ['PostCompact'] }, when: undefined, action: [{ op: 'pending_set' }] }), undefined, 'action[0].key', 'key');
+  assertInvalid(baseRule({ on: { in: ['PreToolUse'] }, when: undefined, action: [{ op: 'pending_context', key: 'k' }] }), undefined, 'action[0].message', 'message');
+});
 
 // ================================================================
 // M3: when op × action（8×4 全格；modify 列判定目标存在性）

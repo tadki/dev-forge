@@ -10,7 +10,7 @@
     {
       "id": "kol",
       "git": "https://github.com/tadki/KingOfLikes-Godot.git",
-      "notes": "KingOfLikes host worktree（/mnt/d/GodotProjects/king-of-likes）"
+      "notes": "KingOfLikes host worktree（本机主检出，实际路径不入库）"
     },
     {
       "id": "gqt",
