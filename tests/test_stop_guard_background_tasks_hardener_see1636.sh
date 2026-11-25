@@ -71,11 +71,12 @@ else
     fail "H3: description 未入清单 rc=$RUN_RC"
 fi
 
-# H4: 清单行格式——换行 + 两空格缩进 + `<id> [`（多行逐项形态，非单行串接）
-run_guard '[{"id":"h4","type":"shell","status":"running","description":"fmt check"}]'
+# H4: 清单行格式——换行 + 两空格缩进 + `<id> [`（多行逐项形态，非单行串接；
+#     双活任务使条目间分隔符进入判定面，join 形态失真即红）
+run_guard '[{"id":"h4","type":"shell","status":"running","description":"fmt check"},{"id":"h4b","type":"monitor","status":"pending","description":"second entry"}]'
 ERR_H4="$(cat "$RUN_ERR" 2>/dev/null)"
-if [ "$RUN_RC" -eq 2 ] && grep -q $'\n  h4 \[' <<< "$ERR_H4"; then
-    pass "H4: 清单行格式 = 换行 + 两空格缩进 + '<id> ['"
+if [ "$RUN_RC" -eq 2 ] && grep -q $'\n  h4 \[' <<< "$ERR_H4" && grep -q $'\n  h4b \[' <<< "$ERR_H4"; then
+    pass "H4: 清单行格式 = 换行 + 两空格缩进 + '<id> ['（双条目逐行）"
 else
     fail "H4: 清单行格式失真 rc=$RUN_RC"
 fi
