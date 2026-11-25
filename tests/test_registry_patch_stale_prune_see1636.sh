@@ -348,6 +348,16 @@ else
     fail "P6: 空事件键残留 rc=$MERGE_RC"
 fi
 
+# P7 (§SPEC-018): merge 的其他异常不借用改指闸出口——未知 phase 原样抛出，
+# 不得被报成 MERGE REFUSED（改动前该错误即为原样抛出）
+run_merge_env "-" "$FIXTURE/p5.json" NOPE
+if [ "$MERGE_RC" -ne 0 ] && ! grep -q "MERGE REFUSED" "$MERGE_ERR" \
+   && grep -q "未知 phase" "$MERGE_ERR"; then
+    pass "P7: 未知 phase → 原样抛出（非零退出、stderr 无 MERGE REFUSED）"
+else
+    fail "P7: merge 错误出口未被区分 rc=$MERGE_RC err='$(cat "$MERGE_ERR" 2>/dev/null | head -c 100)'"
+fi
+
 # =====================================================================
 separator "Summary"
 echo ""
