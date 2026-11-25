@@ -261,7 +261,6 @@ fi
 
 # A16: 拦截文案要点必含（§SPEC-002）：前台等待并同回合收尾 / 卡死先 TaskStop /
 #      常驻服务例外 / 控制通道后果说明；沿用附件原型实测有效文案
-ERR16="$(cat "$RUN_ERR" 2>/dev/null)"  # 承接 A14 的 run；此处重跑 A1 场景保证 ERR 干净
 run_guard "see1636-test" "$(bg_payload "[$(bg_task t16 shell running)]" false sa16)"
 ERR16="$(cat "$RUN_ERR" 2>/dev/null)"
 TXT_OK=1
