@@ -81,13 +81,17 @@ function collectUnifiedHookPaths(settings) {
 // 时拒绝整体改指（SEE-1621 事故形态：从临时检出跑 bootstrap 把现役检出的注册
 // 清成指向临时检出，临时检出删除后零可用注册）。REGISTRY_PATCH_REPOINT=1 =
 // 显式改指放行；本检出已是现役检出（settings 已含其注册）或首次安装不触发。
+// §SPEC-018：拒绝使用专用错误类型——MERGE REFUSED 出口只为改指闸保留，merge
+// 的其他异常（如未知 phase）保持原有抛出行为，不借用该出口。
+class RepointRefusedError extends Error {}
+
 function assertRepointAllowed(settings, globalHooks) {
   if (process.env.REGISTRY_PATCH_REPOINT === '1') return;
   const paths = collectUnifiedHookPaths(settings);
   if (paths.has(globalHooks)) return;
   const livingOther = Array.from(paths).filter(p => p !== globalHooks && checkoutAlive(p));
   if (livingOther.length > 0) {
-    throw new Error(`settings 的 unified-hook 注册仍指向存活的检出 ${livingOther.join(', ')}，而本检出尚无注册；拒绝整体改指。如确需改指，设 REGISTRY_PATCH_REPOINT=1 重跑`);
+    throw new RepointRefusedError(`settings 的 unified-hook 注册仍指向存活的检出 ${livingOther.join(', ')}，而本检出尚无注册；拒绝整体改指。如确需改指，设 REGISTRY_PATCH_REPOINT=1 重跑`);
   }
 }
 
@@ -242,7 +246,9 @@ function main() {
     try {
       changed = merge(settings, manifest, globalHooks, args.phase);
     } catch (e) {
-      // SEE-1636 §SPEC-016 改指闸拒绝：exit 非零、零写盘、stderr 说明原因与补救
+      // SEE-1636 §SPEC-016 改指闸拒绝：exit 非零、零写盘、stderr 说明原因与补救。
+      // §SPEC-018：仅改指闸拒绝走此出口；其余 merge 异常原样抛出（保持既有行为）。
+      if (!(e instanceof RepointRefusedError)) throw e;
       process.stderr.write(`[registry-patch] MERGE REFUSED: ${e.message}\n`);
       process.exit(3);
     }
