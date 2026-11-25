@@ -46,7 +46,9 @@
     "unified/unified-hook.sh",
     "unified/when-ops.js",
     "scripts/taskstop-sidecar-sync.sh",
-    "unified/rules.d/taskstop-sidecar-sync.json"
+    "unified/rules.d/taskstop-sidecar-sync.json",
+    "scripts/stop-guard-background-tasks.sh",
+    "unified/rules.d/stop-guard-background-tasks.json"
   ],
   "executable_artifacts": [
     "unified/unified-hook.sh"
