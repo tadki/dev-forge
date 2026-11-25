@@ -348,6 +348,15 @@ v2 单轨下「注册项」与「脚本」解耦：settings 共 11 条 unified-h
 - `gdformat-gdlint` 的 SEE-1142 mcp-mouse-lint 追加规则实现在 `.dev/scripts/mcp-mouse-lint.sh`，通过 `PROJECT_ROOT` 定位。
 - 非 hook 挂载脚本：`mcp-tool-presence.sh`（被 repo-checkout.sh 从属调用，godot-mcp 工具审计）、`godot-mcp-launch-path.lib.sh`（source 库）——均保留原位；`reconcile-working-branch.sh`（Leader 手动调用，处理 shared working branch auto-rebase 冲突）位于本仓 `scripts/reconcile-working-branch.sh`（非 hook 工具，不进 hooks 部署清单）。
 
+#### Stop 后台任务守卫使用说明
+
+- **用途**：`stop-guard-background-tasks` 在 Multica 托管运行结束回合时，阻止仍有未结束非 agent 后台任务的 Stop，避免控制通道随回合关闭后，后续工具调用被冒充用户的取消文案打断。
+- **生效范围**：仅在 `MULTICA_TASK_ID` 非空的托管运行、Stop 时点生效；交互式会话直接放行。只处理 `background_tasks` 中 `type` 不含 `agent` 且 `status` 非终态的任务，状态缺失或未知按未结束计；载荷级异常 fail-open。
+- **每回合只拦一次**：首次命中以 exit 2 阻断并给出处置指引；`stop_hook_active=true` 时脚本自守放行。被拦后须在当前回合内前台等待并读取输出，完成收尾再结束；卡死任务先 `TaskStop`。
+- **常驻服务例外**：用户明确要求回合结束后继续常驻的服务属于例外；写清常驻交接说明（地址、日志、停止方式）后即可结束回合。
+- **与 sub-agent 守卫并存**：`stop-guard-live-subagents` 继续负责 agent 型任务，本守卫负责其余后台任务，二者不合并、互不替代。双命中时本守卫调用既有守卫脚本并附其原始指引，两段指引都送达模型；仅 sub-agent 存活时仍由既有守卫单独处理。
+- **回滚**：生产引擎侧删除 `claude-hooks/scripts/stop-guard-background-tasks.sh` 与 `claude-hooks/unified/rules.d/stop-guard-background-tasks.json`，或将规则 `enabled` 置为 `false`；不需要修改 `settings.json`。
+
 ### 5.2 已退役钩子（勿再引用）
 
 以下在 v2 收敛中退役；物理删除裁定见迁移对照清单 §7.2（执行归属 Atlas 收尾批）：
@@ -498,7 +507,8 @@ INPUT="${INPUT%$'\n'}"
 
 ---
 
-*文档版本：2026-11-24（SEE-1624 §SPEC-018 配置真源与防线语义补齐）*
+*文档版本：2026-11-25（SEE-1636 §SPEC-012 Stop 后台任务守卫使用说明补齐）*
+*更新记录：SEE-1636 §SPEC-012 文档更新（2026-11-25，Archi 实施）—— §5.1 增补 `stop-guard-background-tasks` 的用途、生效范围、单次拦截、常驻服务例外、双守卫并存与回滚说明；核对 §2.3、§5.1 登记行与脚本、规则及 runtime_artifacts 一致，登记行无需改动。零行为：仅文档说明补齐，未改规则/注册/代码/测试。*
 *更新记录：SEE-1624 §SPEC-018 文档复核（2026-11-24，Archi 实施）—— §2.3 补登 `rules.d/taskstop-sidecar-sync.json` 配置真源；§5.1 明确真实 sidecar 命名、成功/失败写入边界、fail-open 及与 stop-guard 的关系；`bootstrap/hooks-registration.json` 的 runtime_artifacts 已登记脚本与规则，本次复核未改该清单。零行为：仅文档描述补齐，未改规则/注册/代码/测试。*
 *更新记录：SEE-1621 文档复核（2026-11-23，Archi 实施，Atlas 派单）—— 现役文档与真源最终一致性核对：§2.3 plan-mode 行「HOOK_POINTS 第 10 时点」更正为「第 11 时点」（PostCompact 插入第 10 位、PermissionRequest 顺延为第 11）；§1.3 引擎求值动作清单补 `pending_set`/`pending_context`，与 rules-v2.json 实际支持的 6 个 action op 及 §2.3 表述对齐。零行为：仅文档一致性修订，未改规则/注册/代码/测试。*
 *更新记录：SEE-1621 R3（2026-11-23，Bachi 实施，Owner 批准方案一）—— Owner 重裁多次 compact 语义：钩子目标是「每次压缩后让 agent 重新恢复流程」，而非「每 issue 一次性」。`atlas-postcompact-arm` 移除 R2b 的 `one_shot.ids=[MULTICA_AGENT_NAME,HOOK_ISSUE_ID]`，每次 PostCompact 均触发并以覆盖模式写同一 key+session pending（两次 compact 间无工具调用时单标记）；`atlas-postcompact-deliver` 不变（无 one_shot、存在才消费、消费即删）。窗口 = compact→下一个 PreToolUse 提醒一次→同窗口不重复→下一次 compact 重新可提醒；此前 agent+issue 全局一次性判据被本项取代（R2b 的 arm 哨兵形态随 one_shot 移除消失）。测试 test_postcompact_delivery.sh 重写为 per-compact 语义（34 断言：重臂再提醒、覆盖式单标记、消费即清、无残留、保留 Harti 90e47f0 无 session 拒写/拒消费补强）；§5.1/usage-rules §1.4 同步。§SPEC-014 三入口零 diff 保持。*
