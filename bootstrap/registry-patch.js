@@ -40,6 +40,39 @@ function commandOf(entry) {
   return hooks.map(h => h.command || '').join('|');
 }
 
+// SEE-1636 §SPEC-013/014：unified-hook 注册漂移判定。命令形如
+//   [env 前缀… ]<path>/hook-wrapper.sh <HookPoint> unified-hook
+// 返回其中的 <path>；与 globalHooks 相同（本检出）或非 unified-hook 形态返回 null。
+function staleUnifiedHookPath(command, globalHooks) {
+  const m = /(?:^|[ \t])(\S+)\/hook-wrapper\.sh \S+ unified-hook$/.exec(String(command || ''));
+  if (!m) return null;
+  return m[1] === globalHooks ? null : m[1];
+}
+
+// §SPEC-013：收敛悬空注册——清除指向其他检出路径的 unified-hook 条目
+//（一组被清空则整组移除；组内其他命令如 hindsight 挂载原样保留）。
+function pruneStaleRegistrations(settings, globalHooks) {
+  let changed = false;
+  for (const point of Object.keys(settings.hooks)) {
+    const groups = settings.hooks[point];
+    if (!Array.isArray(groups)) continue;
+    const filtered = [];
+    for (const g of groups) {
+      if (!Array.isArray(g.hooks)) { filtered.push(g); continue; }
+      const hooks = g.hooks.filter(h => !(h && typeof h.command === 'string'
+        && staleUnifiedHookPath(h.command, globalHooks) !== null));
+      if (hooks.length === 0) { changed = true; continue; } // 整组移除
+      if (hooks.length !== g.hooks.length) {
+        g.hooks = hooks;
+        changed = true;
+      }
+      filtered.push(g);
+    }
+    settings.hooks[point] = filtered;
+  }
+  return changed;
+}
+
 function merge(settings, manifest, globalHooks, phaseName) {
   const wrapper = manifest.wrapper;
   const alias = manifest.alias;
@@ -90,10 +123,33 @@ function merge(settings, manifest, globalHooks, phaseName) {
       settings.hooks[point] = filtered;
     }
   }
+
+  // SEE-1636 §SPEC-013：渲染本检出注册后收敛——settings 里指向其他检出路径的
+  // unified-hook 注册一律清除（成因事故：从临时检出跑过 bootstrap.sh 的会话
+  // 在全局 settings 留下悬空条目，每次 hook 触发报错；merge 只按命令全等判幂等，
+  // 从不清理他检出注册）。
+  if (pruneStaleRegistrations(settings, globalHooks)) changed = true;
   return changed;
 }
 
 function verify(settings, manifest, globalHooks) {
+  // SEE-1636 §SPEC-014：漂移可检出——settings 仍有指向其他路径的 unified-hook
+  // 注册时判失败并列出条目（此前只查期望条目存在，检不出这种漂移）。
+  const stale = [];
+  for (const point of Object.keys(settings.hooks || {})) {
+    const groups = settings.hooks[point];
+    if (!Array.isArray(groups)) continue;
+    for (const g of groups) {
+      if (!Array.isArray(g.hooks)) continue;
+      for (const h of g.hooks) {
+        if (!h || typeof h.command !== 'string') continue;
+        if (staleUnifiedHookPath(h.command, globalHooks) !== null) {
+          stale.push(`${point}: ${h.command}`);
+        }
+      }
+    }
+  }
+  if (stale.length > 0) return { ok: false, stale };
   for (const point of manifest.hook_points) {
     const want = v2Command(globalHooks, manifest.wrapper, point, manifest.alias);
     const groups = Array.isArray(settings.hooks && settings.hooks[point]) ? settings.hooks[point] : [];
@@ -115,7 +171,13 @@ function main() {
     if (action === 'verify') {
       const r = verify(settings, manifest, globalHooks);
       if (!r.ok) {
-        process.stderr.write(`[registry-patch] VERIFY FAIL: missing ${r.missing}\n`);
+        if (r.stale && r.stale.length > 0) {
+          process.stderr.write('[registry-patch] VERIFY FAIL: stale unified-hook registrations pointing to other checkouts:\n');
+          for (const s of r.stale) process.stderr.write(`  ${s}\n`);
+        }
+        if (r.missing) {
+          process.stderr.write(`[registry-patch] VERIFY FAIL: missing ${r.missing}\n`);
+        }
         process.exit(1);
       }
       process.stdout.write('verified\n');
