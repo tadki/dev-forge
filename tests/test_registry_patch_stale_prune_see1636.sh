@@ -11,6 +11,11 @@
 #      经 merge 收敛后 verify 输出 verified。
 #   C. doctor 联动（CLAUDE_SETTINGS 指向 fixture、隔离 HOME）——漂移时判失败
 #      （inconsistent with manifest）；收敛后 §5 阶段判 PASS。
+#   D. §SPEC-016 改指闸——settings 被另一个仍然存在的检出占位而本检出尚无注册
+#      时 merge 拒绝（exit 非零、不写盘、stderr 说明原因与 REGISTRY_PATCH_REPOINT
+#      补救）；REGISTRY_PATCH_REPOINT=1 显式改指放行；REGISTRY_PATCH_REPOINT=0
+#      仍拒绝；本检出已是现役检出时照常清漂（活他检出注册也清）；首次安装照常
+#      渲染；收敛后空事件键删除，不留空数组。
 #
 # 约束：全部状态在 mktemp fixture 内；不对真实 ~/.claude/settings.json 运行；
 # bootstrap.sh 与 doctor.sh 零改动（doctor 经 CLAUDE_SETTINGS 注入被测）。
@@ -69,6 +74,45 @@ run_merge() {  # run_merge <settings-file> [phase]
     node "$PATCH" merge --settings "$1" --manifest "$MANIFEST" --global-hooks "$HOOKS" \
         ${2:+--phase "$2"} > "$MERGE_OUT" 2> "$MERGE_ERR"
     MERGE_RC=$?
+}
+
+run_merge_env() {  # run_merge_env <VAR=value 或 '-'> <settings-file> [phase]
+    local ENVASSIGN="$1"
+    MERGE_OUT="$FIXTURE/merge.out"; MERGE_ERR="$FIXTURE/merge.err"
+    if [ "$ENVASSIGN" = "-" ]; then
+        node "$PATCH" merge --settings "$2" --manifest "$MANIFEST" --global-hooks "$HOOKS" \
+            ${3:+--phase "$3"} > "$MERGE_OUT" 2> "$MERGE_ERR"
+    else
+        env "$ENVASSIGN" node "$PATCH" merge --settings "$2" --manifest "$MANIFEST" --global-hooks "$HOOKS" \
+            ${3:+--phase "$3"} > "$MERGE_OUT" 2> "$MERGE_ERR"
+    fi
+    MERGE_RC=$?
+}
+
+# §SPEC-016 fixture：构造一个「仍然存在」的检出（含 wrapper 工件），其路径可被
+# 注册指向；存活判定 = 该路径下 hook-wrapper.sh 在本机存在。
+make_living_checkout() {  # make_living_checkout <base-dir>
+    mkdir -p "$1/claude-hooks"
+    printf '#!/bin/bash\n' > "$1/claude-hooks/hook-wrapper.sh"
+}
+
+# §SPEC-016 fixture：settings 被指定检出占位（若干时点 unified-hook 注册 + hindsight）
+make_occupied_settings() {  # make_occupied_settings <out-file> <checkout-claude-hooks-path>
+    cat > "$1" <<JSON
+{
+  "hooks": {
+    "Stop": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "$2/hook-wrapper.sh Stop unified-hook" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "$2/hook-wrapper.sh PreToolUse unified-hook" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "hindsight recall --hook" } ] }
+    ]
+  }
+}
+JSON
 }
 
 run_verify() {  # run_verify <settings-file>
@@ -220,6 +264,88 @@ if grep -q "settings registered → this checkout" "$FIXTURE/doctor-ok.log" \
     pass "C2: 收敛后 → doctor §5 判 registered → this checkout"
 else
     fail "C2: doctor 收敛判定失效 tail='$(tail -5 "$FIXTURE/doctor-ok.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | head -c 160)'"
+fi
+
+# =====================================================================
+separator "D. §SPEC-016 改指闸（不把注册从仍存在的检出改走）"
+# =====================================================================
+
+# P1: SEE-1621 事故形态——活检出 A 占位、settings 无本检出注册、无 env → 拒绝：
+#     exit 非零、不写盘（逐字节一致）、stderr 说明原因与 REGISTRY_PATCH_REPOINT
+make_living_checkout "$FIXTURE/living-checkout"
+make_occupied_settings "$FIXTURE/p1.json" "$FIXTURE/living-checkout/claude-hooks"
+cp "$FIXTURE/p1.json" "$FIXTURE/p1.snapshot"
+run_merge_env "-" "$FIXTURE/p1.json"
+if [ "$MERGE_RC" -ne 0 ] && grep -q "MERGE REFUSED" "$MERGE_ERR" \
+   && grep -q "REGISTRY_PATCH_REPOINT" "$MERGE_ERR" \
+   && [ "$(sha256sum < "$FIXTURE/p1.json" | cut -d' ' -f1)" = "$(sha256sum < "$FIXTURE/p1.snapshot" | cut -d' ' -f1)" ] \
+   && ! grep -q "changed" "$MERGE_OUT"; then
+    pass "P1: 活检出占位 + 本检出无注册 → merge 拒绝（非零/不写盘/stderr 说明）"
+else
+    fail "P1: 改指闸未拒 rc=$MERGE_RC out='$(cat "$MERGE_OUT" 2>/dev/null | head -c 40)' err='$(cat "$MERGE_ERR" 2>/dev/null | head -c 80)'"
+fi
+
+# P2: REGISTRY_PATCH_REPOINT=1 显式改指 → 放行：活检出注册清除、本检出 11 时点渲染
+run_merge_env "REGISTRY_PATCH_REPOINT=1" "$FIXTURE/p1.json"
+if [ "$MERGE_RC" -eq 0 ] && grep -q "changed" "$MERGE_OUT" \
+   && ! grep -q "$FIXTURE/living-checkout" "$FIXTURE/p1.json" \
+   && grep -q "$HOOKS/hook-wrapper.sh Stop unified-hook" "$FIXTURE/p1.json"; then
+    pass "P2: REGISTRY_PATCH_REPOINT=1 → 显式改指放行（活检出清除 + 本检出渲染）"
+else
+    fail "P2: 显式改指未放行 rc=$MERGE_RC"
+fi
+
+# P3: REGISTRY_PATCH_REPOINT=0（非 '1'）→ 仍拒绝
+make_occupied_settings "$FIXTURE/p3.json" "$FIXTURE/living-checkout/claude-hooks"
+run_merge_env "REGISTRY_PATCH_REPOINT=0" "$FIXTURE/p3.json"
+if [ "$MERGE_RC" -ne 0 ] && grep -q "MERGE REFUSED" "$MERGE_ERR"; then
+    pass "P3: REGISTRY_PATCH_REPOINT=0 → 仍拒绝（仅 '1' 放行）"
+else
+    fail "P3: 非 '1' 值误放行 rc=$MERGE_RC"
+fi
+
+# P4: 本检出已是现役检出（settings 已含其注册）→ 照常清漂：活他检出注册也清
+cat > "$FIXTURE/p4.json" <<JSON
+{
+  "hooks": {
+    "Stop": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "$HOOKS/hook-wrapper.sh Stop unified-hook" } ] },
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "$FIXTURE/living-checkout/claude-hooks/hook-wrapper.sh PostCompact unified-hook" } ] }
+    ]
+  }
+}
+JSON
+run_merge_env "-" "$FIXTURE/p4.json"
+if [ "$MERGE_RC" -eq 0 ] && ! grep -q "$FIXTURE/living-checkout" "$FIXTURE/p4.json" \
+   && grep -q "$HOOKS/hook-wrapper.sh PostCompact unified-hook" "$FIXTURE/p4.json"; then
+    pass "P4: 现役检出清漂照常（活他检出注册一并清除，本检出注册补齐）"
+else
+    fail "P4: 现役清漂回退 rc=$MERGE_RC"
+fi
+
+# P5: 首次安装（settings 无任何 unified-hook 注册）→ 照常渲染
+printf '{"hooks":{"UserPromptSubmit":[{"matcher":"*","hooks":[{"type":"command","command":"hindsight recall --hook"}]}]}}\n' > "$FIXTURE/p5.json"
+run_merge_env "-" "$FIXTURE/p5.json"
+MISSING_P5=0
+for pt in Stop PreToolUse PostCompact PermissionRequest; do
+    grep -q "$HOOKS/hook-wrapper.sh $pt unified-hook" "$FIXTURE/p5.json" || MISSING_P5=$((MISSING_P5+1))
+done
+if [ "$MERGE_RC" -eq 0 ] && [ "$MISSING_P5" -eq 0 ] \
+   && grep -q 'hindsight recall --hook' "$FIXTURE/p5.json"; then
+    pass "P5: 首次安装照常渲染（抽样时点 + hindsight 保留）"
+else
+    fail "P5: 首次安装被误拒/漏渲染 rc=$MERGE_RC missing=$MISSING_P5"
+fi
+
+# P6: 收敛后空事件键删除——非现役时点的悬空注册清空后，事件键不留空数组
+printf '{"hooks":{"LegacyEvent":[{"matcher":"*","hooks":[{"type":"command","command":"%s/hook-wrapper.sh LegacyEvent unified-hook"}]}]}}\n' \
+    "$FIXTURE/gone-checkout/claude-hooks" > "$FIXTURE/p6.json"
+run_merge_env "-" "$FIXTURE/p6.json"
+if [ "$MERGE_RC" -eq 0 ] && ! grep -q '"LegacyEvent"' "$FIXTURE/p6.json" \
+   && grep -q "$HOOKS/hook-wrapper.sh Stop unified-hook" "$FIXTURE/p6.json"; then
+    pass "P6: 空事件键删除（LegacyEvent 键移除，不留 []）"
+else
+    fail "P6: 空事件键残留 rc=$MERGE_RC"
 fi
 
 # =====================================================================
