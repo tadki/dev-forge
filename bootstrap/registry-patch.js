@@ -129,6 +129,11 @@ function merge(settings, manifest, globalHooks, phaseName) {
   settings.hooks = settings.hooks && typeof settings.hooks === 'object' ? settings.hooks : {};
   let changed = false;
 
+  // SEE-1636 §SPEC-016（QA 复核收窄）：只删除「本收敛清空」的事件键——
+  // merge 前已存在的空事件键与本收敛无关，原样保留。
+  const preExistingEmptyKeys = new Set(Object.keys(settings.hooks)
+    .filter(k => Array.isArray(settings.hooks[k]) && settings.hooks[k].length === 0));
+
   // SEE-1636 §SPEC-016：改指闸先于任何渲染/清理执行——拒绝时零写盘。
   assertRepointAllowed(settings, globalHooks);
 
@@ -179,10 +184,11 @@ function merge(settings, manifest, globalHooks, phaseName) {
   // 从不清理他检出注册）。
   if (pruneStaleRegistrations(settings, globalHooks)) changed = true;
 
-  // SEE-1636 §SPEC-016：收敛后清空的事件键删除，不留空数组（悬空注册清空某事件
-  // 或显式改指清空非现役时点后，残留 `"Event": []` 属无效注册组）。
+  // SEE-1636 §SPEC-016：收敛把某事件的组全部清掉时删除该事件键，不留空数组；
+  // 与本收敛无关的既有空事件键（preExistingEmptyKeys）原样保留。
   for (const key of Object.keys(settings.hooks)) {
-    if (Array.isArray(settings.hooks[key]) && settings.hooks[key].length === 0) {
+    if (Array.isArray(settings.hooks[key]) && settings.hooks[key].length === 0
+        && !preExistingEmptyKeys.has(key)) {
       delete settings.hooks[key];
       changed = true;
     }

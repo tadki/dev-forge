@@ -358,6 +358,19 @@ else
     fail "P7: merge 错误出口未被区分 rc=$MERGE_RC err='$(cat "$MERGE_ERR" 2>/dev/null | head -c 100)'"
 fi
 
+# P8 (§SPEC-016 收窄): 只删「本收敛清空」的事件键——既有无关空事件键
+# （LegacyEvent: []）原样保留；本次把悬空注册清空的 OtherEvent 键删除
+printf '{"hooks":{"LegacyEvent":[],"OtherEvent":[{"matcher":"*","hooks":[{"type":"command","command":"%s/hook-wrapper.sh OtherEvent unified-hook"}]}]}}\n' \
+    "$FIXTURE/gone-checkout/claude-hooks" > "$FIXTURE/p8.json"
+run_merge_env "-" "$FIXTURE/p8.json"
+if [ "$MERGE_RC" -eq 0 ] && grep -q '"LegacyEvent": \[\]' "$FIXTURE/p8.json" \
+   && ! grep -q '"OtherEvent"' "$FIXTURE/p8.json" \
+   && grep -q "$HOOKS/hook-wrapper.sh Stop unified-hook" "$FIXTURE/p8.json"; then
+    pass "P8: 既有空事件键保留、本次清空的键删除（收窄边界）"
+else
+    fail "P8: 空事件键收窄失效 rc=$MERGE_RC file='$(head -c 200 "$FIXTURE/p8.json" 2>/dev/null | tr '\n' ' ')'"
+fi
+
 # =====================================================================
 separator "Summary"
 echo ""
