@@ -239,8 +239,8 @@ workspaces:
   - id: jerry
     name: Jerry's Forge
     projects:                       # 成员 project（路径）
-      - /mnt/d/GodotProjects/king-of-likes
-      - /mnt/d/GodotProjects/king-of-likes/addons/godot_mcp
+      - <KingOfLikes 主检出根目录>
+      - <KingOfLikes 主检出根目录>/addons/godot_mcp
       - /home/jerry/tools/dev-forge
       - /home/jerry/tools/grepai
       - /home/jerry/tools/godot-qa-toolkit
