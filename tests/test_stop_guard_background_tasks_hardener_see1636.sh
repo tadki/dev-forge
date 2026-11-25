@@ -71,12 +71,15 @@ else
     fail "H3: description 未入清单 rc=$RUN_RC"
 fi
 
-# H4: 清单行格式——换行 + 两空格缩进 + `<id> [`（多行逐项形态，非单行串接；
-#     双活任务使条目间分隔符进入判定面，join 形态失真即红）
+# H4: 清单行格式——每个条目独占一行且行首为两空格缩进 + `<id> [`（多行逐项形态，
+#     非单行串接；双活任务使条目间分隔符进入判定面，join 形态失真即红。
+#     行锚定用 awk 判定：grep 模式内嵌换行会被当作多模式分隔符，空模式恒匹配）
 run_guard '[{"id":"h4","type":"shell","status":"running","description":"fmt check"},{"id":"h4b","type":"monitor","status":"pending","description":"second entry"}]'
 ERR_H4="$(cat "$RUN_ERR" 2>/dev/null)"
-if [ "$RUN_RC" -eq 2 ] && grep -q $'\n  h4 \[' <<< "$ERR_H4" && grep -q $'\n  h4b \[' <<< "$ERR_H4"; then
-    pass "H4: 清单行格式 = 换行 + 两空格缩进 + '<id> ['（双条目逐行）"
+LIST_FMT=0
+awk '/^  h4 \[/{a=1} /^  h4b \[/{b=1} END{exit !(a&&b)}' <<< "$ERR_H4" && LIST_FMT=1
+if [ "$RUN_RC" -eq 2 ] && [ "$LIST_FMT" -eq 1 ]; then
+    pass "H4: 清单行格式 = 独占行 + 两空格缩进行首 + '<id> ['（双条目逐行）"
 else
     fail "H4: 清单行格式失真 rc=$RUN_RC"
 fi
