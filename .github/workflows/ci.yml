@@ -29,6 +29,10 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck -S warning $(find bootstrap launch adapters -name "*.sh")
+          # SEE-1642 §SPEC-003 (fingerprint 195308ebc961): SC2006 门拦旧式反引号
+          # —— push-guard.sh 的 node -e "..." 双引号串内一个反引号即命令替换，
+          # 会在每次 Bash 工具调用前于会话目录隐式执行 git push。
+          shellcheck -S style --include=SC2006 claude-hooks/scripts/push-guard.sh
       # gqt measure complexity gate（SEE-1463 §SPEC-009；SEE-1583 四入口
       # 更名）：CI 守护复杂度治理回归。安装行 pin git tag v0.3.0（SEE-1583
       # Stage B bump，原 v0.1.0）。
