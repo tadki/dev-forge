@@ -100,6 +100,38 @@ else
   fail "bare remote refs mutated: before=[$BEFORE] after=[$AFTER]"
 fi
 
+# --- Hardened (SEE-1642 hardener): parser fail-open safety net ---
+# When the Phase-1 parser produces an unexpected/empty result (the only path
+# where the safety net is reachable — node itself must exit 0), the safety net
+# must default the non-push payload to NOT_PUSH: pass through, exit 0, refs
+# intact. Falling through to any Phase-3 verdict instead would mis-block
+# non-push payloads (exit 2).
+mkdir -p "$FIXTURE/fakebin"
+printf '#!/bin/sh\nexit 0\n' > "$FIXTURE/fakebin/node"
+chmod +x "$FIXTURE/fakebin/node"
+OUT2="$(cd "$WORK" && env -u PROJECT_ROOT -u TARGET_REPO_ROOT -u GQT_REPO_ROOT -u MULTICA_TASK_ID \
+  PATH="$FIXTURE/fakebin:$PATH" bash "$PUSH_GUARD" <<< "$PAYLOAD" 2>"$FIXTURE/stderr2.log")"
+RC2=$?
+AFTER2="$(snapshot_refs)"
+
+if [ "$RC2" -eq 0 ]; then
+  pass "parser-degenerate payload exits 0 (fail-open, got $RC2)"
+else
+  fail "parser-degenerate exit code: got $RC2, want 0 (stderr: $(head -c 200 "$FIXTURE/stderr2.log"))"
+fi
+
+if [ "$OUT2" = "$PAYLOAD" ]; then
+  pass "parser-degenerate payload passed through unchanged"
+else
+  fail "parser-degenerate passthrough mismatch: got '$OUT2'"
+fi
+
+if [ "$AFTER2" = "$AFTER" ]; then
+  pass "bare remote refs unchanged with parser-degenerate output (no implicit push)"
+else
+  fail "bare remote refs mutated with parser-degenerate output: before=[$AFTER] after=[$AFTER2]"
+fi
+
 # --- Summary ---
 echo "Results: $PASS passed, $FAIL failed"
 echo "FAIL=$FAIL"
