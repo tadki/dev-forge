@@ -479,8 +479,11 @@ separator "Suite D: Regression safety (existing rules)"
 echo ""
 echo "[D1] Non-grep tool calls on clean task still remind existing rules only"
 # D1 显式 PreToolUse 直调（remind-5 回 v1 时点；run_tool 缺省 PostToolUse 不适用于本用例）
+# MULTICA_ISSUE_ID 等价注入（SEE-1646）：生产环境平台注入该变量；bachi-coding-reminder
+# 自 SEE-1381 §SPEC-014 起为 agent × issue 窗口，缺注入 → 引擎 fail-open 跳过 → 本用例
+# 在无 daemon log 的环境假红。补注入对齐窗口输入，断言不变。
 printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"}}' \
-  | MULTICA_AGENT_NAME=Bachi MULTICA_TASK_ID="${TASK_TAG}-d1" \
+  | MULTICA_AGENT_NAME=Bachi MULTICA_TASK_ID="${TASK_TAG}-d1" MULTICA_ISSUE_ID="${TASK_TAG}-issue" \
     PWD="$PROJECT_ROOT" PROJECT_ROOT="$PROJECT_ROOT" HOOK_SCOPE_ID="${TASK_TAG}-d1" \
     UNIFIED_RULES_FILE="$RULES" HOOK_FIRE_LOG="$TMP_LOG" \
     bash "$HOOK" > "$TMP_OUT" 2>/dev/null
