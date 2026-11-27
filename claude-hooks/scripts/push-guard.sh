@@ -41,7 +41,9 @@ PHASE1_OUTPUT=$(printf '%s' "$INPUT" | node -e "
 
       // Find 'git' token, then find 'push' subcommand after skipping global flags
       // SEE-1530 RC-A 同族精化（与 unified 引擎 scanGitInvocation 同判定）：
-      //   -C/-c 带值跳旗标+值；-p/-P 无值不吞词（`git -p push` 曾吞掉 push 词判
+      //   -C/-c 带值跳旗标+值；-p/-P 无值不吞词（'git -p push' 曾吞掉 push 词判；
+      //   引号用单引号而非反引号：本注释位于 bash 双引号 node -e 串内，反引号
+      //   会被 bash 当命令替换，在每次 Bash 调用前隐式执行 git push（SEE-1642）
       //   NOT_PUSH，绕过 Check 4 裸 push 直推 master 唯一拦截点）；合并簇逐字符
       //   （-pC dir = -p + -C dir）；未知旗标按无值；长旗标逐个跳过。
       let isPush = false;

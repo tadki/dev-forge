@@ -325,6 +325,7 @@ v2 单轨下「注册项」与「脚本」解耦：settings 共 11 条 unified-h
 | `mention-check-mount` | PreToolUse | tool Bash + command `multica issue comment add`；agents except [Chekky] | `mention-check.sh` | **是**（permissionDecision=deny） | Atlas（评论 mention 规范，SEE-1053 系） |
 | skill-check block 规则 ×4（rules-v2）＝ `atlas-workflow-skill-check` / `revy-testing-skill-check` / `archi-doc-edit-skill-check` / `bachi-coding-skill-check` | PreToolUse | agents include × not used_skill；one_shot{scope:run} | 配置化（deny 文案内置） | **是**（规则命中时 permissionDecision=deny） | Atlas（规则引擎，逐规则 owner 同规则 agents 维度） |
 | skill-check remind 规则 ×5（rules-v2）＝ `atlas-bash-skill-reminder` / `archi-doc-edit-reminder` / `revy-testing-reminder` / `bachi-coding-reminder` / `recall-reminder` | PreToolUse | agents include / 无 agents（全匹配）；one_shot{scope:run} | 配置化（context 文案内置） | 否（additionalContext） | Atlas（规则引擎） |
+| `hindsight-reminder`（rules-v2，SEE-1646 自 recall-reminder 拆分） | PreToolUse | 无 agents（全匹配）、无 when；one_shot{ids:[MULTICA_AGENT_NAME, HOOK_ISSUE_ID]}（agent × issue 窗口，与 recall-reminder 的 agent × run 窗口独立去重）；除名称、文案、窗口外与 recall-reminder 配置一致 | 配置化（context 文案内置：hindsight 召回 owner-order 提醒） | 否（additionalContext） | Atlas（规则引擎） |
 | `mention-confirm-check`（rules-v2） | PreToolUse | command `multica issue comment add` × content 提及正则；one_shot{scope:run} | 配置化（deny 文案内置） | **是**（permissionDecision=deny，SEE-1388 SPEC-005 修正：此前误登为提醒） | Atlas（评论 mention 自查规则，SEE-1151 系） |
 | `child-issue-guard`（rules-v2，SEE-1388 SPEC-005 补登） | PreToolUse | command `multica issue (create\|update)` × has_flag --parent | 配置化（deny 文案内置） | **是**（permissionDecision=deny） | Atlas（单 issue 任务纪律，SEE-747 系） |
 | `grepai-search-reminder`（rules-v2，SEE-1388 SPEC-005 补登） | PostToolUse | command grep/rg/ag/ack 或 tool Grep | 配置化（context 文案内置） | 否（additionalContext） | Atlas（grepai 语义检索引导，SEE-1238 系） |
@@ -347,6 +348,11 @@ v2 单轨下「注册项」与「脚本」解耦：settings 共 11 条 unified-h
 - `atlas-taskflow-*` 三个钩子仅对 `MULTICA_AGENT_NAME=Atlas` 生效（规则 agents 顶层限定），配合 /taskflow 编排闭环使用。
 - `gdformat-gdlint` 的 SEE-1142 mcp-mouse-lint 追加规则实现在 `.dev/scripts/mcp-mouse-lint.sh`，通过 `PROJECT_ROOT` 定位。
 - 非 hook 挂载脚本：`mcp-tool-presence.sh`（被 repo-checkout.sh 从属调用，godot-mcp 工具审计）、`godot-mcp-launch-path.lib.sh`（source 库）——均保留原位；`reconcile-working-branch.sh`（Leader 手动调用，处理 shared working branch auto-rebase 冲突）位于本仓 `scripts/reconcile-working-branch.sh`（非 hook 工具，不进 hooks 部署清单）。
+
+#### push-guard 非 push 契约与防复发（SEE-1642）
+
+- **行为契约**：非 push Bash 载荷必须 exit 0、原样透传，且不改变任何远端 ref。`tests/test_push_guard_no_implicit_push_see1642.sh` 在本地分支领先同名 upstream 的夹具中，以本地 bare 远端全部 ref 的前后快照钉住该性质；测试不访问真实远端。
+- **CI 静态门**：lint job 执行 `shellcheck -S style --include=SC2006 claude-hooks/scripts/push-guard.sh`，防止 `node -e "..."` 双引号串内的旧式反引号命令替换复发。静态门与行为回归互补，不替代行为验证。
 
 #### Stop 后台任务守卫使用说明
 
@@ -507,7 +513,8 @@ INPUT="${INPUT%$'\n'}"
 
 ---
 
-*文档版本：2026-11-25（SEE-1636 §SPEC-012 Stop 后台任务守卫使用说明补齐）*
+*文档版本：2026-11-27（SEE-1642 §SPEC-006 push-guard 非 push 无副作用契约与 SC2006 静态门说明补齐）*
+*更新记录：SEE-1642 §SPEC-006 文档闭环（2026-11-27，Archi 实施）—— §5.1 增补非 push 载荷 exit 0、原样透传且不改变远端 ref 的行为契约，以及 lint job 的 SC2006 静态门；行为回归与静态门职责互补。零行为：仅文档说明补齐，未改 workflow、脚本、规则或测试。*
 *更新记录：SEE-1636 §SPEC-012 文档更新（2026-11-25，Archi 实施）—— §5.1 增补 `stop-guard-background-tasks` 的用途、生效范围、单次拦截、常驻服务例外、双守卫并存与回滚说明；核对 §2.3、§5.1 登记行与脚本、规则及 runtime_artifacts 一致，登记行无需改动。零行为：仅文档说明补齐，未改规则/注册/代码/测试。*
 *更新记录：SEE-1624 §SPEC-018 文档复核（2026-11-24，Archi 实施）—— §2.3 补登 `rules.d/taskstop-sidecar-sync.json` 配置真源；§5.1 明确真实 sidecar 命名、成功/失败写入边界、fail-open 及与 stop-guard 的关系；`bootstrap/hooks-registration.json` 的 runtime_artifacts 已登记脚本与规则，本次复核未改该清单。零行为：仅文档描述补齐，未改规则/注册/代码/测试。*
 *更新记录：SEE-1621 文档复核（2026-11-23，Archi 实施，Atlas 派单）—— 现役文档与真源最终一致性核对：§2.3 plan-mode 行「HOOK_POINTS 第 10 时点」更正为「第 11 时点」（PostCompact 插入第 10 位、PermissionRequest 顺延为第 11）；§1.3 引擎求值动作清单补 `pending_set`/`pending_context`，与 rules-v2.json 实际支持的 6 个 action op 及 §2.3 表述对齐。零行为：仅文档一致性修订，未改规则/注册/代码/测试。*
