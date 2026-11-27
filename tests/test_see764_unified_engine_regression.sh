@@ -17,11 +17,16 @@
 #  - SEE-1388 SPEC-004 物理删除 doc-reminder 死规则（v1 PostToolUse-only 断言已按
 #    "不触发" 语义收紧）；9753dc0 起 atlas-workflow-skill-check 为唯一有意停用规则
 #   （enabled=false → 引擎在 when 求值前 continue，永不触发）。
-#  - 规则集 15 条 = 6 deny（4 agent skill-check + mention-confirm-check +
-#    child-issue-guard；其中 atlas-workflow-skill-check 停用）+ 7 context（4 agent
-#    reminder + recall-reminder + grepai-search-reminder + tscn-tres-guard）
-#    + 2 pending 补投（atlas-postcompact-arm / atlas-postcompact-deliver，
-#    op=pending_set/pending_context，SEE-1621 R2），enabled=14。
+#  - 规则集 16 条 = 6 deny（4 agent skill-check + mention-confirm-check +
+#    child-issue-guard；其中 atlas-workflow-skill-check 停用）+ 8 context（4 agent
+#    reminder + recall-reminder + hindsight-reminder + grepai-search-reminder +
+#    tscn-tres-guard）+ 2 pending 补投（atlas-postcompact-arm /
+#    atlas-postcompact-deliver，op=pending_set/pending_context，SEE-1621 R2），
+#    enabled=15。
+#  - SEE-1646 拆分：recall-reminder 只保留 /task-explore 提醒（agent × run 窗口 =
+#    MULTICA_AGENT_NAME × HOOK_RUN_SCOPE_ID）；hindsight-reminder 独立承载
+#    owner-order 提醒（agent × issue 窗口 = MULTICA_AGENT_NAME × HOOK_ISSUE_ID），
+#    其余配置与 recall-reminder 一致。双窗口互不串扰断言见 SEE-1646 段。
 #  - used_skill 拓扑（v1 D5 漂移）：v2 引擎 used_skill 真实执行 `multica issue
 #    run-messages <uuid> --output json`。本套件注入 multica shim：无 MOCK_TRANSCRIPT
 #    时返回 `[]`（transcriptAvailable=true、无技能使用 → not(any used_skill)=true →
@@ -331,14 +336,15 @@ else
     fail "rules-v2.json is INVALID JSON"
 fi
 
-# Verify 15 rules（SEE-1388 SPEC-004：doc-reminder 死规则物理删除；SEE-1621 R2 增补
-# atlas-postcompact-arm/deliver（R2c 移除不可达 atlas-postcompact-reminder）
-# → v2: 6 deny + 7 context + 2 pending）
+# Verify 16 rules（SEE-1388 SPEC-004：doc-reminder 死规则物理删除；SEE-1621 R2 增补
+# atlas-postcompact-arm/deliver（R2c 移除不可达 atlas-postcompact-reminder）；
+# SEE-1646 增补 hindsight-reminder（recall-reminder 拆分）
+# → v2: 6 deny + 8 context + 2 pending）
 RULE_COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')).rules.length)")
-if [ "$RULE_COUNT" -eq 15 ]; then
-    pass "Rule count: $RULE_COUNT (expected 15)"
+if [ "$RULE_COUNT" -eq 16 ]; then
+    pass "Rule count: $RULE_COUNT (expected 16)"
 else
-    fail "Rule count: $RULE_COUNT (expected 15)"
+    fail "Rule count: $RULE_COUNT (expected 16)"
 fi
 
 # Verify 6 deny rules (4 agent skill-check + mention-confirm-check + child-issue-guard)
@@ -349,12 +355,13 @@ else
     fail "Deny rules: $BLOCK_COUNT (expected 6)"
 fi
 
-# Verify 7 context rules (4 agent reminders + recall-reminder + grepai + tscn-tres-guard)
+# Verify 8 context rules (4 agent reminders + recall-reminder + hindsight-reminder
+# + grepai + tscn-tres-guard)
 REMIND_COUNT=$(node -e "const r=JSON.parse(require('fs').readFileSync('$RULES_FILE','utf8')).rules; console.log(r.filter(x=>x.enabled!==false&&Array.isArray(x.action)&&x.action.some(a=>a&&a.op==='context')).length)")
-if [ "$REMIND_COUNT" -eq 7 ]; then
-    pass "Context rules: $REMIND_COUNT (expected 7)"
+if [ "$REMIND_COUNT" -eq 8 ]; then
+    pass "Context rules: $REMIND_COUNT (expected 8)"
 else
-    fail "Context rules: $REMIND_COUNT (expected 7)"
+    fail "Context rules: $REMIND_COUNT (expected 8)"
 fi
 
 # SEE-1388 SPEC-004（fingerprint b9361f0c8695）：doc-reminder 死规则已物理删除，
@@ -825,8 +832,9 @@ run_hook_preserve_sentinel '{"tool_input":{"command":"ls -la"}}' "Atlas" "$TASK_
 assert_remind "P2-2a: first call — remind fires" "atlas-bash-skill-reminder"
 
 # Check sentinel was created (v2 key: /tmp/.hook-fired-<rule>-<scope>)
+# SEE-1646：hindsight-reminder 哨兵落 agent × issue 窗口（ Atlas × HOOK_ISSUE_ID）
 SENTINEL_FOUND=0
-for f in "$STATE_DIR/.hook-fired-atlas-bash-skill-reminder-Atlas-$ISSUE_ID" "$STATE_DIR/.hook-fired-recall-reminder-Atlas-$TASK_ID"; do
+for f in "$STATE_DIR/.hook-fired-atlas-bash-skill-reminder-Atlas-$ISSUE_ID" "$STATE_DIR/.hook-fired-recall-reminder-Atlas-$TASK_ID" "$STATE_DIR/.hook-fired-hindsight-reminder-Atlas-$ISSUE_ID"; do
     if [ -f "$f" ]; then
         SENTINEL_FOUND=1
         pass "P2-2b: sentinel created: $(basename "$f")"
@@ -857,6 +865,74 @@ assert_exit_0 "P2-2d2: exit 0"
 # Third call with DIFFERENT issue ID（同 task）: issue-window one-shot 重新触发
 run_hook_preserve_sentinel '{"tool_input":{"command":"ls -la"}}' "Atlas" "$TASK_ID" "see764-other-issue"
 assert_remind "P2-2e: different issue ID — remind fires again (issue-window one-shot)" "atlas-bash-skill-reminder"
+
+cleanup_sentinels
+
+#####################################################################
+# SEE-1646: recall / hindsight 提醒拆分与双窗口回归
+# §SPEC-001：recall-reminder 只承载 /task-explore 提醒（agent × run）；
+#   hindsight-reminder 独立承载 owner-order 提醒（agent × issue），非阻断注入。
+# §SPEC-002：双窗口互不串扰（正反两向）——同 issue 新 run 仅 recall 重新提醒；
+#   同 run 新 issue 仅 hindsight 重新提醒；且不得残留重复文案（recall 行不得再
+#   携带 owner-order/hindsight 语句）或误阻断工具调用。
+# 隔离：Bachi 触发（match-all 规则对其生效），独立 TASK/ISSUE 变量 +
+#   run_hook_preserve_sentinel 保持哨兵存续以观察窗口语义。
+#####################################################################
+separator "SEE-1646: recall/hindsight split — independent windows (§SPEC-001/002)"
+
+W_TASK_A="$(new_task_id)"
+W_ISSUE_X="see1646-issue-x"
+cleanup_sentinels
+
+# Run A：issue X × run A 首次命中 —— 双提醒均注入且均非阻断
+run_hook_preserve_sentinel '{"tool_input":{"command":"ls -la"}}' "Bachi" "$W_TASK_A" "$W_ISSUE_X"
+assert_remind "S1646-1a: 首次命中 — recall-reminder 注入" "recall-reminder"
+assert_remind "S1646-1b: 首次命中 — hindsight-reminder 注入" "hindsight-reminder"
+# 文案拆分断言（注入内容行为，防写反/残留重复文案）：
+# 全部 recall 行只允许 task-explore 语句；hindsight 行承载 owner-order 语句
+RECALL_LINES=$(printf '%s' "$HOOK_STDOUT" | grep -o '\[recall-reminder\][^"\\]*')
+if printf '%s' "$RECALL_LINES" | grep -q "task-explore" && ! printf '%s' "$RECALL_LINES" | grep -q "owner-order"; then
+    pass "S1646-1c: recall 文案只含 task-explore、无 owner-order 残留"
+else
+    fail "S1646-1c: recall 文案拆分不干净: '$RECALL_LINES'"
+fi
+HINDSIGHT_LINE=$(printf '%s' "$HOOK_STDOUT" | grep -o '\[hindsight-reminder\][^"\\]*' | head -1)
+if printf '%s' "$HINDSIGHT_LINE" | grep -q "owner-order"; then
+    pass "S1646-1d: hindsight 文案承载 owner-order 语句"
+else
+    fail "S1646-1d: hindsight 文案缺 owner-order 语句: '$HINDSIGHT_LINE'"
+fi
+assert_remind_not_deny "S1646-1e: 首次注入非阻断（不 deny）"
+assert_exit_0 "S1646-1f: 首次注入 exit 0"
+
+# Run B：同 issue X × 新 run（新 MULTICA_TASK_ID）—— 仅 recall 重新提醒
+W_TASK_B="$(new_task_id)"
+run_hook_preserve_sentinel '{"tool_input":{"command":"ls -la"}}' "Bachi" "$W_TASK_B" "$W_ISSUE_X"
+if printf '%s' "$HOOK_STDOUT" | grep -q "recall-reminder"; then
+    pass "S1646-2a: 同 issue 新 run — recall-reminder 重新提醒（agent × run 窗口）"
+else
+    fail "S1646-2a: 同 issue 新 run — recall-reminder 未重新提醒（窗口写反或过宽）"
+fi
+if printf '%s' "$HOOK_STDOUT" | grep -q "hindsight-reminder"; then
+    fail "S1646-2b: 同 issue 新 run — hindsight-reminder 不应重新提醒（窗口写反或过窄）"
+else
+    pass "S1646-2b: 同 issue 新 run — hindsight-reminder 保持抑制（agent × issue 窗口）"
+fi
+assert_remind_not_deny "S1646-2c: run B 注入非阻断"
+
+# Run C：同 run B × 新 issue Y —— 仅 hindsight 重新提醒
+run_hook_preserve_sentinel '{"tool_input":{"command":"ls -la"}}' "Bachi" "$W_TASK_B" "see1646-issue-y"
+if printf '%s' "$HOOK_STDOUT" | grep -q "hindsight-reminder"; then
+    pass "S1646-3a: 同 run 新 issue — hindsight-reminder 重新提醒（agent × issue 窗口）"
+else
+    fail "S1646-3a: 同 run 新 issue — hindsight-reminder 未重新提醒（窗口写反或过窄）"
+fi
+if printf '%s' "$HOOK_STDOUT" | grep -q "recall-reminder"; then
+    fail "S1646-3b: 同 run 新 issue — recall-reminder 不应重新提醒（窗口写反或过宽）"
+else
+    pass "S1646-3b: 同 run 新 issue — recall-reminder 保持抑制（agent × run 窗口）"
+fi
+assert_remind_not_deny "S1646-3c: run C 注入非阻断"
 
 cleanup_sentinels
 

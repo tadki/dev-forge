@@ -330,13 +330,36 @@
       "action": [
         {
           "op": "context",
-          "message": "[recall-reminder] 必须激活 /task-explore 技能探索任务 \n[recall-reminder] 必须使用 hindsight 工具召回「owner-order」页面并遵守规则。"
+          "message": "[recall-reminder] 必须激活 /task-explore 技能探索任务"
         }
       ],
       "one_shot": {
         "ids": [
           "MULTICA_AGENT_NAME",
           "HOOK_RUN_SCOPE_ID"
+        ]
+      },
+      "owner": "Atlas",
+      "blocking": false
+    },
+    {
+      "name": "hindsight-reminder",
+      "on": {
+        "in": [
+          "PreToolUse"
+        ]
+      },
+      "enabled": true,
+      "action": [
+        {
+          "op": "context",
+          "message": "[hindsight-reminder] 必须使用 hindsight 工具召回「owner-order」页面并遵守规则。"
+        }
+      ],
+      "one_shot": {
+        "ids": [
+          "MULTICA_AGENT_NAME",
+          "HOOK_ISSUE_ID"
         ]
       },
       "owner": "Atlas",
