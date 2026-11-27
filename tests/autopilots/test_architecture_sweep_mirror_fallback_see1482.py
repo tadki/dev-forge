@@ -171,7 +171,18 @@ def stub_env(tmp_path):
         encoding="utf-8",
     )
     stub.chmod(0o755)
-    return {"bin": bin_dir, "log": log}
+    # SEE-1650: the wrapper resolves its L1 batch log from MULTICA_HOME and
+    # probes paused-file / mirror-cache paths under $HOME; hand the runner a
+    # fully scratch pair so a host-Monday L1 run can only write here. The
+    # scratch git config carries the file-transport allow the file:// submodule
+    # fixtures rely on (otherwise only present in the developer's real
+    # ~/.gitconfig), keeping behavior identical with HOME sandboxed.
+    gitconfig = tmp_path / "gitconfig"
+    gitconfig.write_text('[protocol "file"]\n\tallow = always\n',
+                         encoding="utf-8")
+    return {"bin": bin_dir, "log": log, "gitconfig": gitconfig,
+            "state_home": tmp_path / "multica-home",
+            "home": tmp_path / "home"}
 
 
 def _install_script_dir(tmp_path, config):
@@ -188,6 +199,10 @@ def _install_script_dir(tmp_path, config):
 def _run_wrapper(script_dir, workspace_root, stub_env, cwd, env_extra=None, extra_args=None):
     env = os.environ.copy()
     env.pop("KILL_SWITCH", None)  # deterministic baseline; tests opt in via env_extra
+    # SEE-1650: sandbox the wrapper's state resolution away from the host.
+    env["MULTICA_HOME"] = str(stub_env["state_home"])
+    env["HOME"] = str(stub_env["home"])
+    env["GIT_CONFIG_GLOBAL"] = str(stub_env["gitconfig"])
     env["PATH"] = f"{stub_env['bin']}{os.pathsep}{env['PATH']}"
     env["STUB_LOG"] = str(stub_env["log"])
     env.update(env_extra or {})

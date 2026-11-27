@@ -559,6 +559,10 @@ def _run_wrapper_capture(tmp_path, extra_args):
 
     env = os.environ.copy()
     env.pop("KILL_SWITCH", None)
+    # SEE-1650: pin the wrapper's MULTICA_HOME / HOME to scratch dirs so no
+    # invocation path (present or future) can resolve real ~/.multica state.
+    env["MULTICA_HOME"] = str(tmp_path / "multica-home")
+    env["HOME"] = str(tmp_path / "home")
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["STUB_LOG"] = str(log)
     proc = subprocess.run(
