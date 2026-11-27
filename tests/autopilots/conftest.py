@@ -8,6 +8,12 @@ def isolate_arch_patrol_state(tmp_path, monkeypatch):
     SEE-1593: ``check_gut_silent_skip`` consults the previous L1 report for
     no-input escalation, so tests must never read or write the machine's real
     ``~/.multica/arch-patrol`` state.
+
+    This fixture covers only in-process module state. Tests that execute
+    ``architecture_sweep.sh`` as a subprocess must also pin ``MULTICA_HOME``
+    and ``HOME`` in the child environment to their own scratch directories;
+    monkeypatching these module attributes does not affect the wrapper
+    (SEE-1650).
     """
     import architecture_sweep as sweep
 
