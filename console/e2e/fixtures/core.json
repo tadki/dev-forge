@@ -210,6 +210,12 @@
       },
       "payload": {
         "description": "前端工程师",
+        "deployments": [
+          {
+            "platform": "multica",
+            "platformId": "fronti-1"
+          }
+        ],
         "instructions": "# Fronti\n\n你是 KOL 的前端实现 agent。负责 Godot UI 场景与像素风格一致性。",
         "instructionsHash": "cccc3333",
         "model": "agent-fronti[1m]",
