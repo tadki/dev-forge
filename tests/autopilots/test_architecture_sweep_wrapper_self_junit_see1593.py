@@ -150,7 +150,9 @@ def env(tmp_path):
     cwd = tmp_path / "run_cwd"
     cwd.mkdir()
     return {"ws": ws, "repo": repo, "stub": stub,
-            "script_dir": script_dir, "cwd": cwd}
+            "script_dir": script_dir, "cwd": cwd,
+            "state_home": tmp_path / "multica-home",
+            "home": tmp_path / "home"}
 
 
 def _run(env, extra_args=None, env_extra=None):
@@ -158,6 +160,13 @@ def _run(env, extra_args=None, env_extra=None):
     proc_env.pop("KILL_SWITCH", None)
     proc_env.pop("DRY_RUN", None)
     proc_env.pop("ARCH_SWEEP_L1", None)
+    # SEE-1650: the wrapper resolves its L1 batch log (and the paused-file /
+    # mirror-cache probes) from MULTICA_HOME / $HOME; pin both to the harness
+    # scratch so a local test run can never touch the machine's real
+    # ~/.multica patrol state. env_extra may still override (e.g. the
+    # home-fallback regression pins the fallback shape itself).
+    proc_env["MULTICA_HOME"] = str(env["state_home"])
+    proc_env["HOME"] = str(env["home"])
     proc_env["PATH"] = f"{env['stub']['bin']}{os.pathsep}{proc_env['PATH']}"
     proc_env["STUB_LOG"] = str(env["stub"]["log"])
     proc_env["GODOT"] = str(env["stub"]["bin"] / "godot")
@@ -350,3 +359,55 @@ def test_stale_timestamped_variants_also_cleared(env):
     assert proc.returncode == 0, proc.stderr
     assert not (reports / "junit_report_1788253530.xml").exists()
     assert not (reports / "junit_report.xml_1788253530.xml").exists()
+
+
+# =============================================================================
+# SEE-1650 — the suite must never touch the machine's real patrol state
+#
+# The wrapper resolves the L1 batch log as
+# ``${MULTICA_HOME:-$HOME/.multica}/arch-patrol/gut-last-run.log`` and the
+# ``>"$log"`` redirect truncates it before the import runs. These tests pin
+# WHERE that truncation lands: the harness must own MULTICA_HOME / HOME so a
+# local test run can only ever truncate its own scratch copy. SEE-1649: each
+# unprotected run zeroed the production gut-last-run.log (the Monday L1 batch
+# evidence).
+# =============================================================================
+
+
+def _seed_sentinel(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("SENTINEL-SEE1650\n", encoding="utf-8")
+    return path
+
+
+def test_l1_gut_log_truncation_lands_in_harness_scratch_state(env):
+    sentinel = _seed_sentinel(
+        env["state_home"] / "arch-patrol" / "gut-last-run.log")
+    proc = _run(env, extra_args=["--l1"], env_extra={"STUB_WEEKDAY": "2"})
+    assert proc.returncode == 0, proc.stderr
+    assert _godot_lines(env, "--import"), (
+        "L1 import must actually run for this probe to be meaningful")
+    assert sentinel.stat().st_size == 0, (
+        "the L1 batch log must be truncated inside the harness scratch "
+        "MULTICA_HOME; left intact means the harness did not own that "
+        "variable and the run wrote the host's real patrol state")
+
+
+def test_home_fallback_gut_log_lands_in_harness_scratch_home(env):
+    # Empty MULTICA_HOME forces the wrapper's ${MULTICA_HOME:-$HOME/.multica}
+    # fallback; that fallback must land in the harness scratch HOME too, so
+    # an unset/empty MULTICA_HOME on the host can never reach the real one.
+    state_sentinel = _seed_sentinel(
+        env["state_home"] / "arch-patrol" / "gut-last-run.log")
+    home_sentinel = _seed_sentinel(
+        env["home"] / ".multica" / "arch-patrol" / "gut-last-run.log")
+    proc = _run(env, extra_args=["--l1"],
+                env_extra={"STUB_WEEKDAY": "2", "MULTICA_HOME": ""})
+    assert proc.returncode == 0, proc.stderr
+    assert _godot_lines(env, "--import")
+    assert home_sentinel.stat().st_size == 0, (
+        "the $HOME/.multica fallback for the L1 batch log must land inside "
+        "the harness scratch HOME")
+    assert state_sentinel.stat().st_size == len("SENTINEL-SEE1650\n"), (
+        "an empty MULTICA_HOME must resolve the fallback, not the scratch "
+        "MULTICA_HOME state dir")

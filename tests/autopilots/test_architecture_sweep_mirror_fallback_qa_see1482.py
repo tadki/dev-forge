@@ -104,7 +104,13 @@ def _make_stub(base):
         encoding="utf-8",
     )
     stub.chmod(0o755)
-    return bin_dir, log
+    # SEE-1650: scratch state pair so the wrapper can only resolve MULTICA_HOME
+    # / $HOME inside the test sandbox, never the machine's real patrol state.
+    state_home = Path(base) / "multica-home"
+    home = Path(base) / "home"
+    state_home.mkdir()
+    home.mkdir()
+    return bin_dir, log, state_home, home
 
 
 def _run_wrapper(script_dir, workspace, stub, cwd, mirror_root, global_config):
@@ -116,6 +122,8 @@ def _run_wrapper(script_dir, workspace, stub, cwd, mirror_root, global_config):
             env.pop(key)
     env["PATH"] = f"{stub[0]}{os.pathsep}{env['PATH']}"
     env["STUB_LOG"] = str(stub[1])
+    env["MULTICA_HOME"] = str(stub[2])
+    env["HOME"] = str(stub[3])
     env["ARCH_SWEEP_MIRROR_ROOT"] = str(mirror_root)
     env["MULTICA_WORKSPACE_ID"] = "revy-ws"
     env["GIT_CONFIG_GLOBAL"] = str(global_config)
