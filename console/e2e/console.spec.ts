@@ -194,6 +194,8 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   // 默认平台（claude-code）：契约列表全 15 kind（deployment 已退役折入 agent payload.deployments），默认详情在右侧（agent）
   await expect(page.locator('.kind-item')).toHaveCount(15);
   await expect(page.getByText('CC subagent 定义文件').first()).toBeVisible();
+  // 不适用 kind 仍在契约列表：adapter applicable:false → 「不适用」徽标（Platforms.tsx 的 notApplicable 路径）
+  await expect(page.locator('.kind-item').filter({ hasText: 'adapter' })).toContainText('不适用');
   // 切到 multica：列表单行 + 右侧详情（默认 agent：读/写命令 + 资产）
   await multicaItem.click();
   await expect(page.getByText('multica agent list').first()).toBeVisible();
