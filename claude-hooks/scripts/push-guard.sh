@@ -261,9 +261,10 @@ resolve_git_root() {
   return 1
 }
 
-# --- Phase 1b: dev-forge 仓库豁免（Owner 指令 2026-11-03）---
-# dev-forge = 直推 main 工作流，push-guard 全部检查（master 门禁 / force 拦截 /
-# 祖先检查 / NO_REFSPEC 门禁 / 共享分支语义）对其不适用。与 rules.d/
+# --- Phase 1b: dev-forge 仓库本地钩子豁免（Owner 指令 2026-11-03）---
+# dev-forge 的本地 push-guard 检查（master 门禁 / force 拦截 /
+# 祖先检查 / NO_REFSPEC 门禁 / 共享分支语义）全部豁免；这只是本地钩子放行，
+# 远端 main 仍须按 GitHub ruleset 经 PR、保持线性且只开 rebase merge。与 rules.d/
 # push-guard-gates.json 两条声明式门禁的 dev-forge 豁免同口径；本脚本侧锚定
 # 「push 目标仓库」，覆盖命令串不含路径的场景。锚点二选一命中即豁免：
 #   1. 目标仓库根 == 本脚本部署仓库根（hooks 部署位自身 = canonical 检出）；

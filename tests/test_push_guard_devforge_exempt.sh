@@ -5,7 +5,8 @@
 # 演进（Owner 正式方案 2026-11-03）：豁免升级为仓库门控作用域——
 # 声明式门禁（rules.d/push-guard-gates.json）when 追加 repo op
 # in:[kol,gqt]（凭 repos.json 注册的 origin git URL 判定），dev-forge
-# 不在作用域即豁免。
+# 不在作用域即豁免。这里只指本地 gates 放行；远端 main 仍受 GitHub ruleset
+# 约束，必须经 PR、保持线性且只开 rebase merge，不是直推 main 工作流。
 # 演进（SEE-1527）：belt 豁免去字面量化——旧「命令串含 /dev-forge 子串」锚点
 # 路径敏感（检出目录名不含字面量时 KOL/gqt 会话对 dev-forge 检出的合法 push
 # 被跨仓误拦），改为 push 有效目标仓 origin URL ∈ 注册表 devforge 项判定

@@ -5,7 +5,7 @@
     {
       "id": "devforge",
       "git": "https://github.com/tadki/dev-forge.git",
-      "notes": "hooks 部署位自身；push-guard 对其全量豁免（直推 main 工作流）"
+      "notes": "hooks 部署位自身；本地 push-guard 对其全量豁免；远端 main 仍须按 GitHub ruleset 经 PR、保持线性且只开 rebase merge"
     },
     {
       "id": "kol",

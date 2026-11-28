@@ -49,7 +49,7 @@ Actions runs 总览：https://github.com/tadki/dev-forge/actions
 | require pull request | true（0 approvals） |
 | `allow_force_pushes` | false（禁 force push，PR-10 服务端兜底） |
 | `allow_deletions` | false（禁删除） |
-| `enforce_admins` | **false**（admin 不受限，保留 Owner 应急通道） |
+| `enforce_admins` | **false**（仅 branch protection 层；main ruleset 无 bypass actor，仍禁止直推） |
 
 ### 2.4 对 gqt 基线的显式偏离
 
@@ -65,4 +65,4 @@ Actions runs 总览：https://github.com/tadki/dev-forge/actions
 
 可选确认项（仅知会，无需操作）：
 - 分支保护生效后，所有 PR 合并前 `lint` + `engine-tests` 必须全绿；若未来新增/改名 job，需同步更新 required checks（check 名必须与实跑 job 名一致，否则会卡死合并）。
-- `enforce_admins=false`：Owner 直推 main 不受门禁拦截，属有意保留的应急通道。
+- `enforce_admins=false`：仅 branch protection 层；main 的 GitHub ruleset 仍要求 PR、线性历史，且无 bypass actor，不能据此直推 main。
