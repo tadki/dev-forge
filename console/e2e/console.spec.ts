@@ -191,12 +191,9 @@ test('platforms: platform rail + kind list, detail pane on the right', async ({ 
   await expect(page.locator('.platform-item').filter({ hasText: 'Claude Code（本地文件系统）' })).toBeVisible();
   const multicaItem = page.locator('.platform-item').filter({ hasText: 'multica 平台' });
   await expect(multicaItem).toBeVisible();
-  // 默认平台（claude-code）：契约列表全 16 kind（含 patch），默认详情在右侧（agent）
-  await expect(page.locator('.kind-item')).toHaveCount(16);
+  // 默认平台（claude-code）：契约列表全 15 kind（deployment 已退役折入 agent payload.deployments），默认详情在右侧（agent）
+  await expect(page.locator('.kind-item')).toHaveCount(15);
   await expect(page.getByText('CC subagent 定义文件').first()).toBeVisible();
-  await expect(depRow).toContainText('不适用');
-  await depRow.click();
-  await expect(page.getByText('Claude Code 无部署实例对象').first()).toBeVisible();
   // 切到 multica：列表单行 + 右侧详情（默认 agent：读/写命令 + 资产）
   await multicaItem.click();
   await expect(page.getByText('multica agent list').first()).toBeVisible();
