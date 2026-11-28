@@ -1,6 +1,7 @@
 # dev-forge 工作流与编码规则（Owner 指令）
 
-- **PR 只在 Owner 明确要求时提交**。未明确要求时，改动直接 commit 到当前分支（main 可直推），不要建分支、不要提 PR、不要自行合并。
+- **本地改动直接 commit 到当前分支（包括本地 main），不必先建分支或提 PR**。
+- **远端（GitHub）main 须经 PR 合入**：本地提交要进远端 main 时，推到共享分支并开 PR；远端 main 保持线性历史，只使用 rebase merge，`lint`、`engine-tests` 必需检查通过，禁止 force-push 与删除；合并须 Owner 批准，agent 不自行合并。
 - 提交消息用约定式格式（feat/fix/refactor/docs/test/chore/perf/ci），无归属行。
 
 ## 编码规范
